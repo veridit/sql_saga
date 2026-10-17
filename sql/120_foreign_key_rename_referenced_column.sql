@@ -236,6 +236,65 @@ SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT check_trigger_bad_fk_column;
 ROLLBACK;
 
+\echo '--- A helper replaced by its owner with an unrelated body is not regenerated: the key column rename is refused'
+-- The rename regenerates only a helper it can attribute to sql_saga (the canonical body for the key
+-- columns before the rename, SECURITY DEFINER). Anything else is refused before any change, so the
+-- user's function (body, SECURITY INVOKER) and the catalog stay as they were.
+-- Autocommit statements, so the state after the ALTER is what the ALTER left behind.
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY INVOKER
+AS $$ SELECT $1 IS NOT NULL; $$;
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+ALTER TABLE fkk.par RENAME COLUMN pid TO pkey;
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+SELECT a.attname FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'fkk.par'::regclass AND a.attnum = 1;
+TABLE fkk.uk_state;
+TABLE fkk.fk_state;
+TABLE fkk.par_triggers;
+SELECT sql_saga.check_integrity();
+-- Restore the canonical helper (and the column name, should the rename have gone through).
+DO $restore$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS a
+               WHERE a.attrelid = 'fkk.par'::regclass AND a.attname = 'pkey' AND NOT a.attisdropped) THEN
+        ALTER TABLE fkk.par RENAME COLUMN pkey TO pid;
+    END IF;
+END;
+$restore$;
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY DEFINER SET search_path = pg_catalog
+AS $$ SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pid OPERATOR(pg_catalog.=) $1); $$;
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+SELECT sql_saga.check_integrity();
+
+\echo '--- A canonical helper keeps its owner, ACL, SECURITY DEFINER and full proconfig through the rename'
+BEGIN;
+ALTER FUNCTION fkk.par_id_exists(integer) SET statement_timeout = '1234ms';
+GRANT EXECUTE ON FUNCTION fkk.par_id_exists(integer) TO sql_saga_unprivileged_user;
+CREATE TABLE fkk.helper_props_before AS
+SELECT p.proowner, p.proacl, p.prosecdef, p.proconfig FROM pg_catalog.pg_proc AS p
+WHERE p.oid = 'fkk.par_id_exists(integer)'::regprocedure;
+SELECT p.proconfig, p.prosecdef FROM fkk.helper_props_before AS p;
+ALTER TABLE fkk.par RENAME COLUMN pid TO pkey;
+SELECT p.oid::regprocedure AS helper,
+       p.proowner = b.proowner AS owner_unchanged,
+       p.proacl = b.proacl AS acl_unchanged,
+       EXISTS (SELECT 1 FROM pg_catalog.aclexplode(p.proacl) AS a
+               WHERE a.grantee = 'sql_saga_unprivileged_user'::regrole AND a.privilege_type = 'EXECUTE') AS grant_kept,
+       p.prosecdef, p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body
+FROM pg_catalog.pg_proc AS p, fkk.helper_props_before AS b
+WHERE p.oid = 'fkk.par_id_exists(integer)'::regprocedure;
+TABLE fkk.uk_state;
+TABLE fkk.par_triggers;
+INSERT INTO fkk.rchild VALUES (4, 3);
+SAVEPOINT missing_parent;
+INSERT INTO fkk.rchild VALUES (5, 99);
+ROLLBACK TO SAVEPOINT missing_parent;
+SELECT sql_saga.check_integrity();
+SELECT 'integrity checked with extra helper settings' AS done;
+ROLLBACK;
+
 \echo '--- Final check_integrity'
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked' AS done;

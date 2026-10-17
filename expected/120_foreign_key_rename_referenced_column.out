@@ -411,6 +411,147 @@ SELECT sql_saga.check_integrity();
 ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
 ROLLBACK TO SAVEPOINT check_trigger_bad_fk_column;
 ROLLBACK;
+\echo '--- A helper replaced by its owner with an unrelated body is not regenerated: the key column rename is refused'
+--- A helper replaced by its owner with an unrelated body is not regenerated: the key column rename is refused
+-- The rename regenerates only a helper it can attribute to sql_saga (the canonical body for the key
+-- columns before the rename, SECURITY DEFINER). Anything else is refused before any change, so the
+-- user's function (body, SECURITY INVOKER) and the catalog stay as they were.
+-- Autocommit statements, so the state after the ALTER is what the ALTER left behind.
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY INVOKER
+AS $$ SELECT $1 IS NOT NULL; $$;
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+         helper         | owner_unchanged | prosecdef | proconfig |          body          
+------------------------+-----------------+-----------+-----------+------------------------
+ par_id_exists(integer) | t               | f         |           | SELECT $1 IS NOT NULL;
+(1 row)
+
+ALTER TABLE fkk.par RENAME COLUMN pid TO pkey;
+ERROR:  sql_saga: cannot rename a column of unique key "par_id_valid" on table "fkk.par": helper function fkk.par_id_exists(integer) of regular foreign key "rchild2_owner_id_fkey" is not the canonical sql_saga helper; restore it, or drop the foreign key with drop_foreign_key first
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+         helper         | owner_unchanged | prosecdef | proconfig |          body          
+------------------------+-----------------+-----------+-----------+------------------------
+ par_id_exists(integer) | t               | f         |           | SELECT $1 IS NOT NULL;
+(1 row)
+
+SELECT a.attname FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'fkk.par'::regclass AND a.attnum = 1;
+ attname 
+---------
+ pid
+(1 row)
+
+TABLE fkk.uk_state;
+ unique_key_name | column_names | unique_constraint 
+-----------------+--------------+-------------------
+ par_id_valid    | {pid}        | par_id_valid_uniq
+(1 row)
+
+TABLE fkk.fk_state;
+   foreign_key_name    |         type         | column_names |  fk_check_constraint   |     fk_helper_function     |        fk_index_name         |        uk_update_trigger        |        uk_delete_trigger        
+-----------------------+----------------------+--------------+------------------------+----------------------------+------------------------------+---------------------------------+---------------------------------
+ rchild2_owner_id_fkey | regular_to_temporal  | {owner_id}   | rchild2_owner_id_check | fkk.par_id_exists(integer) | rchild2_owner_id_idx         | rchild2_owner_id_fkey_uk_update | rchild2_owner_id_fkey_uk_delete
+ rchild_par_id_fkey    | regular_to_temporal  | {par_id}     | rchild_par_id_check    | fkk.par_id_exists(integer) | rchild_par_id_idx            | rchild_par_id_fkey_uk_update    | rchild_par_id_fkey_uk_delete
+ tchild_par_id_valid   | temporal_to_temporal | {par_id}     |                        |                            | tchild_par_id_valid_gist_idx |                                 | 
+(3 rows)
+
+TABLE fkk.par_triggers;
+             tgname              | tgenabled |           function           | arg_fk_table | arg_fk_columns | arg_uk_columns 
+---------------------------------+-----------+------------------------------+--------------+----------------+----------------
+ rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c() | rchild2      | {owner_id}     | {pid}
+ rchild2_owner_id_fkey_uk_update | O         | sql_saga.uk_update_check_c() | rchild2      | {owner_id}     | {pid}
+ rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c() | rchild       | {par_id}       | {pid}
+ rchild_par_id_fkey_uk_update    | R         | sql_saga.uk_update_check_c() | rchild       | {par_id}       | {pid}
+(4 rows)
+
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+-- Restore the canonical helper (and the column name, should the rename have gone through).
+DO $restore$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS a
+               WHERE a.attrelid = 'fkk.par'::regclass AND a.attname = 'pkey' AND NOT a.attisdropped) THEN
+        ALTER TABLE fkk.par RENAME COLUMN pkey TO pid;
+    END IF;
+END;
+$restore$;
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY DEFINER SET search_path = pg_catalog
+AS $$ SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pid OPERATOR(pg_catalog.=) $1); $$;
+SELECT helper, owner_unchanged, prosecdef, proconfig, body FROM fkk.helper;
+         helper         | owner_unchanged | prosecdef |        proconfig         |                                        body                                         
+------------------------+-----------------+-----------+--------------------------+-------------------------------------------------------------------------------------
+ par_id_exists(integer) | t               | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pid OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+\echo '--- A canonical helper keeps its owner, ACL, SECURITY DEFINER and full proconfig through the rename'
+--- A canonical helper keeps its owner, ACL, SECURITY DEFINER and full proconfig through the rename
+BEGIN;
+ALTER FUNCTION fkk.par_id_exists(integer) SET statement_timeout = '1234ms';
+GRANT EXECUTE ON FUNCTION fkk.par_id_exists(integer) TO sql_saga_unprivileged_user;
+CREATE TABLE fkk.helper_props_before AS
+SELECT p.proowner, p.proacl, p.prosecdef, p.proconfig FROM pg_catalog.pg_proc AS p
+WHERE p.oid = 'fkk.par_id_exists(integer)'::regprocedure;
+SELECT p.proconfig, p.prosecdef FROM fkk.helper_props_before AS p;
+                     proconfig                     | prosecdef 
+---------------------------------------------------+-----------
+ {search_path=pg_catalog,statement_timeout=1234ms} | t
+(1 row)
+
+ALTER TABLE fkk.par RENAME COLUMN pid TO pkey;
+SELECT p.oid::regprocedure AS helper,
+       p.proowner = b.proowner AS owner_unchanged,
+       p.proacl = b.proacl AS acl_unchanged,
+       EXISTS (SELECT 1 FROM pg_catalog.aclexplode(p.proacl) AS a
+               WHERE a.grantee = 'sql_saga_unprivileged_user'::regrole AND a.privilege_type = 'EXECUTE') AS grant_kept,
+       p.prosecdef, p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body
+FROM pg_catalog.pg_proc AS p, fkk.helper_props_before AS b
+WHERE p.oid = 'fkk.par_id_exists(integer)'::regprocedure;
+         helper         | owner_unchanged | acl_unchanged | grant_kept | prosecdef |                     proconfig                     |                                         body                                         
+------------------------+-----------------+---------------+------------+-----------+---------------------------------------------------+--------------------------------------------------------------------------------------
+ par_id_exists(integer) | t               | t             | t          | t         | {search_path=pg_catalog,statement_timeout=1234ms} | SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pkey OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+TABLE fkk.uk_state;
+ unique_key_name | column_names | unique_constraint 
+-----------------+--------------+-------------------
+ par_id_valid    | {pkey}       | par_id_valid_uniq
+(1 row)
+
+TABLE fkk.par_triggers;
+             tgname              | tgenabled |           function           | arg_fk_table | arg_fk_columns | arg_uk_columns 
+---------------------------------+-----------+------------------------------+--------------+----------------+----------------
+ rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c() | rchild2      | {owner_id}     | {pkey}
+ rchild2_owner_id_fkey_uk_update | O         | sql_saga.uk_update_check_c() | rchild2      | {owner_id}     | {pkey}
+ rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c() | rchild       | {par_id}       | {pkey}
+ rchild_par_id_fkey_uk_update    | R         | sql_saga.uk_update_check_c() | rchild       | {par_id}       | {pkey}
+(4 rows)
+
+INSERT INTO fkk.rchild VALUES (4, 3);
+SAVEPOINT missing_parent;
+INSERT INTO fkk.rchild VALUES (5, 99);
+ERROR:  new row for relation "rchild" violates check constraint "rchild_par_id_check"
+DETAIL:  Failing row contains (5, 99).
+ROLLBACK TO SAVEPOINT missing_parent;
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+SELECT 'integrity checked with extra helper settings' AS done;
+                     done                     
+----------------------------------------------
+ integrity checked with extra helper settings
+(1 row)
+
+ROLLBACK;
 \echo '--- Final check_integrity'
 --- Final check_integrity
 SELECT sql_saga.check_integrity();
