@@ -1056,7 +1056,8 @@ BEGIN
                OR NOT EXISTS (
                     SELECT 1 FROM pg_catalog.pg_constraint AS c
                     WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name))
-                      AND c.conname = r.fk_check_constraint AND c.contype = 'c') THEN
+                      AND c.conname = r.fk_check_constraint AND c.contype = 'c')
+               OR NOT sql_saga.__internal_regular_foreign_key_is_attributable(r.foreign_key_name) THEN
                 RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key',
                     r.table_schema, r.table_name;
             END IF;

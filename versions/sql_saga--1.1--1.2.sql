@@ -1428,6 +1428,346 @@ $__internal_recreate_regular_fk_uk_triggers$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_recreate_regular_fk_uk_triggers(name) FROM PUBLIC;
 
+/*
+ * The canonical body of a regular foreign key's helper function, for the current columns of the
+ * referenced unique key: exactly what add_regular_foreign_key generates. NULL when a key column is
+ * missing or has no default btree equality operator.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_helper_body(foreign_key_name name)
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_helper_body$
+    SELECT CASE WHEN w.missing OR w.found_columns IS DISTINCT FROM w.stable_columns THEN NULL
+           ELSE pg_catalog.format($body$
+                SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);
+            $body$, uk.table_schema, uk.table_name, w.where_clause)
+           END
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    CROSS JOIN LATERAL (
+        SELECT pg_catalog.string_agg(pg_catalog.format('uk.%I OPERATOR(%I.=) $%s',
+                                                       u.name, coalesce(eq.nspname, ''), u.ordinality),
+                                     ' AND ' ORDER BY u.ordinality) AS where_clause,
+               pg_catalog.bool_or(eq.oid IS NULL) AS missing,
+               pg_catalog.count(*) AS found_columns,
+               (SELECT pg_catalog.count(*) FROM pg_catalog.unnest(uk.column_names) AS c(name)
+                WHERE c.name OPERATOR(pg_catalog.<>) e.range_column_name) AS stable_columns
+        FROM pg_catalog.unnest(ARRAY(
+                 SELECT c.name FROM pg_catalog.unnest(uk.column_names) WITH ORDINALITY AS c(name, n)
+                 WHERE c.name OPERATOR(pg_catalog.<>) e.range_column_name ORDER BY c.n))
+             WITH ORDINALITY AS u(name, ordinality)
+        JOIN pg_catalog.pg_attribute AS ua
+          ON ua.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+         AND ua.attname = u.name AND ua.attnum > 0 AND NOT ua.attisdropped
+        LEFT JOIN LATERAL (
+            SELECT o.oid, n.nspname
+            FROM pg_catalog.pg_opclass AS opc
+            JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
+            JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
+                 AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
+                 AND amop.amopstrategy = 3
+            JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = o.oprnamespace
+            WHERE opc.opcdefault
+              AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
+                                   FROM pg_catalog.pg_type AS t WHERE t.oid = ua.atttypid)
+            LIMIT 1
+        ) AS eq ON true
+    ) AS w
+    WHERE fk.foreign_key_name = $1 AND fk.type = 'regular_to_temporal';
+$__internal_regular_fk_helper_body$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_helper_body(name) FROM PUBLIC;
+
+/*
+ * The canonical arguments (pg_trigger.tgargs) of a regular foreign key's referenced-side triggers,
+ * built from the catalog exactly as add_regular_foreign_key passes them.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_trigger_args(foreign_key_name name)
+RETURNS bytea
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_trigger_args$
+    SELECT pg_catalog.string_agg(
+               pg_catalog.convert_to(a.arg, pg_catalog.getdatabaseencoding()) OPERATOR(pg_catalog.||) '\x00'::bytea,
+               ''::bytea ORDER BY a.n)
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    CROSS JOIN LATERAL pg_catalog.unnest(ARRAY[
+        fk.foreign_key_name::text, fk.table_schema::text, fk.table_name::text, fk.column_names::text,
+        '', '', '',
+        uk.table_schema::text, uk.table_name::text, uk.column_names::text, e.era_name::text,
+        coalesce(e.valid_from_column_name::text, 'null'), coalesce(e.valid_until_column_name::text, 'null'),
+        fk.match_type::text, fk.update_action::text, fk.delete_action::text, 'regular_to_temporal'
+    ]) WITH ORDINALITY AS a(arg, n)
+    WHERE fk.foreign_key_name = $1 AND fk.type = 'regular_to_temporal';
+$__internal_regular_fk_trigger_args$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_trigger_args(name) FROM PUBLIC;
+
+/*
+ * Whether a regular foreign key's helper function body and both referenced-side trigger argument
+ * lists are the canonical ones for the current catalog (used by check_integrity).
+ */
+CREATE FUNCTION sql_saga.__internal_regular_foreign_key_is_attributable(foreign_key_name name)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_foreign_key_is_attributable$
+    SELECT coalesce((
+        SELECT pg_catalog.btrim(p.prosrc, E' \t\r\n')
+               OPERATOR(pg_catalog.=) pg_catalog.btrim(sql_saga.__internal_regular_fk_helper_body(fk.foreign_key_name), E' \t\r\n')
+        FROM pg_catalog.pg_proc AS p
+        WHERE p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function)
+    ) AND NOT EXISTS (
+        SELECT FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+          AND t.tgname IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+          AND t.tgargs IS DISTINCT FROM sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name)
+    ), false)
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    WHERE fk.foreign_key_name = $1 AND fk.type = 'regular_to_temporal';
+$__internal_regular_foreign_key_is_attributable$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_foreign_key_is_attributable(name) FROM PUBLIC;
+
+/*
+ * The canonical body of a regular foreign key helper function for the given referenced key columns
+ * (stable columns, in key order). Each column is compared with the default btree equality operator
+ * of the helper's argument type at the same position; add_regular_foreign_key requires equal
+ * referencing and referenced column types, so this equals the body generated from the referenced
+ * table, and it does not need the named columns to exist (it also describes the helper as it was
+ * before a referenced column rename). NULL when an argument type has no such operator or the column
+ * count differs from the argument count.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_helper_body_for(helper regprocedure, uk_schema name, uk_table name, uk_columns name[])
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_helper_body_for$
+    SELECT CASE WHEN w.missing OR w.found_columns IS DISTINCT FROM p.pronargs::bigint THEN NULL
+           ELSE pg_catalog.format($body$
+                SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);
+            $body$, uk_schema, uk_table, w.where_clause)
+           END
+    FROM pg_catalog.pg_proc AS p
+    CROSS JOIN LATERAL (
+        SELECT pg_catalog.string_agg(pg_catalog.format('uk.%I OPERATOR(%I.=) $%s',
+                                                       u.name, coalesce(eq.nspname, ''), u.ordinality),
+                                     ' AND ' ORDER BY u.ordinality) AS where_clause,
+               pg_catalog.bool_or(eq.oid IS NULL) AS missing,
+               pg_catalog.count(*) AS found_columns
+        FROM pg_catalog.unnest(uk_columns) WITH ORDINALITY AS u(name, ordinality)
+        LEFT JOIN LATERAL (
+            SELECT o.oid, n.nspname
+            FROM pg_catalog.pg_opclass AS opc
+            JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
+            JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
+                 AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
+                 AND amop.amopstrategy = 3
+            JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = o.oprnamespace
+            WHERE opc.opcdefault
+              AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
+                                   FROM pg_catalog.pg_type AS t
+                                   WHERE t.oid = p.proargtypes[(u.ordinality - 1)::integer])
+            LIMIT 1
+        ) AS eq ON true
+    ) AS w
+    WHERE p.oid = helper;
+$__internal_regular_fk_helper_body_for$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_helper_body_for(regprocedure, name, name, name[]) FROM PUBLIC;
+
+/*
+ * Whether a function is exactly the helper add_regular_foreign_key generates for the given
+ * referenced key columns: an SQL, STABLE STRICT, SECURITY DEFINER boolean function with only IN
+ * arguments, the canonical body, and search_path = pg_catalog as its only search_path setting
+ * (other per-function settings are the owner's choice and are kept).
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_helper_is_canonical(helper regprocedure, uk_schema name, uk_table name, uk_columns name[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_helper_is_canonical$
+    SELECT coalesce((
+        SELECT p.prolang OPERATOR(pg_catalog.=) (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname OPERATOR(pg_catalog.=) 'sql')
+           AND p.prorettype OPERATOR(pg_catalog.=) 'pg_catalog.bool'::pg_catalog.regtype
+           AND p.prokind OPERATOR(pg_catalog.=) 'f' AND NOT p.proretset
+           AND p.proisstrict AND p.provolatile OPERATOR(pg_catalog.=) 's'
+           AND p.prosecdef
+           AND p.proargmodes IS NULL
+           AND 'search_path=pg_catalog' OPERATOR(pg_catalog.=) ANY (p.proconfig)
+           AND NOT EXISTS (
+               SELECT FROM pg_catalog.unnest(p.proconfig) AS c(setting)
+               WHERE c.setting LIKE 'search\_path=%' AND c.setting OPERATOR(pg_catalog.<>) 'search_path=pg_catalog')
+           AND pg_catalog.btrim(p.prosrc, E' \t\r\n') OPERATOR(pg_catalog.=)
+               pg_catalog.btrim(sql_saga.__internal_regular_fk_helper_body_for(helper, uk_schema, uk_table, uk_columns), E' \t\r\n')
+        FROM pg_catalog.pg_proc AS p
+        WHERE p.oid OPERATOR(pg_catalog.=) helper
+    ), false);
+$__internal_regular_fk_helper_is_canonical$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_helper_is_canonical(regprocedure, name, name, name[]) FROM PUBLIC;
+
+/*
+ * Regenerate, in place, the helper function of a regular foreign key with the canonical body for
+ * the current referenced key columns (after a referenced-column rename). Only the body changes:
+ * the function is re-created from its own pg_get_functiondef header, so its identity, owner,
+ * privileges, SECURITY DEFINER and every per-function setting (proconfig) are kept, and the CHECK
+ * constraints that call it stay valid. The caller has attributed the helper beforehand.
+ */
+CREATE FUNCTION sql_saga.__internal_regenerate_regular_fk_helper(foreign_key_name name)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regenerate_regular_fk_helper$
+#variable_conflict use_variable
+DECLARE
+    helper regprocedure;
+    body text;
+    definition text;
+    old_source text;
+    dollar_tag text := '$function';
+    old_suffix text;
+BEGIN
+    SELECT pg_catalog.to_regprocedure(fk.fk_helper_function) INTO helper
+    FROM sql_saga.foreign_keys AS fk
+    WHERE fk.foreign_key_name = foreign_key_name AND fk.type = 'regular_to_temporal';
+    body := sql_saga.__internal_regular_fk_helper_body(foreign_key_name);
+    IF helper IS NULL OR body IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: cannot regenerate the helper function of foreign key "%"', foreign_key_name;
+    END IF;
+    definition := pg_catalog.pg_get_functiondef(helper);
+    SELECT p.prosrc INTO old_source FROM pg_catalog.pg_proc AS p WHERE p.oid = helper;
+    -- pg_get_functiondef quotes the body with "$function", extended by "x" while the body contains
+    -- that prefix, then "$". Derive the same tag, so the expected suffix is exact for any body.
+    WHILE pg_catalog.strpos(old_source, dollar_tag) > 0 LOOP
+        dollar_tag := dollar_tag || 'x';
+    END LOOP;
+    dollar_tag := dollar_tag || '$';
+    old_suffix := 'AS ' || dollar_tag || old_source || dollar_tag || E'\n';
+    IF pg_catalog.left(definition, 27) IS DISTINCT FROM 'CREATE OR REPLACE FUNCTION '
+       OR pg_catalog.right(definition, pg_catalog.length(old_suffix)) IS DISTINCT FROM old_suffix THEN
+        RAISE EXCEPTION 'sql_saga: cannot regenerate the helper function of foreign key "%"', foreign_key_name;
+    END IF;
+    EXECUTE pg_catalog.left(definition, pg_catalog.length(definition) - pg_catalog.length(old_suffix))
+        || pg_catalog.format('AS %L', body);
+END;
+$__internal_regenerate_regular_fk_helper$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regenerate_regular_fk_helper(name) FROM PUBLIC;
+
+/*
+ * Before a referenced key column rename changes anything: for the unique keys on the given
+ * relations (those touched by the ALTER TABLE) that are referenced by a regular foreign key and
+ * have a catalogued column missing from the table (a renamed key column), require that every such
+ * foreign key's helper function and referenced-side triggers are exactly what sql_saga generated for
+ * the columns before the rename. Refuses otherwise, so nothing a user changed is overwritten.
+ * Returns the key columns before the rename, by unique key name.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_key_rename_prepare(table_oids oid[])
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_key_rename_prepare$
+#variable_conflict use_variable
+DECLARE
+    uk_rec record;
+    fk_rec record;
+    stable_columns name[];
+    columns_before jsonb := '{}'::jsonb;
+BEGIN
+    FOR uk_rec IN
+        SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.column_names, e.range_column_name, c.oid AS uk_table_oid
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        JOIN sql_saga.unique_keys AS uk ON (uk.table_schema, uk.table_name) = (n.nspname, c.relname)
+        JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+        WHERE c.oid = ANY (table_oids)
+          AND EXISTS (SELECT FROM sql_saga.foreign_keys AS fk
+                      WHERE fk.unique_key_name = uk.unique_key_name AND fk.type = 'regular_to_temporal')
+          AND EXISTS (SELECT FROM pg_catalog.unnest(uk.column_names) AS col(name)
+                      WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                                        WHERE a.attrelid = c.oid AND a.attname = col.name
+                                          AND a.attnum > 0 AND NOT a.attisdropped))
+        ORDER BY uk.unique_key_name COLLATE "C"
+    LOOP
+        stable_columns := ARRAY(
+            SELECT col.name FROM pg_catalog.unnest(uk_rec.column_names) WITH ORDINALITY AS col(name, n)
+            WHERE col.name <> uk_rec.range_column_name ORDER BY col.n);
+        FOR fk_rec IN
+            SELECT fk.foreign_key_name, fk.fk_helper_function, fk.uk_update_trigger, fk.uk_delete_trigger
+            FROM sql_saga.foreign_keys AS fk
+            WHERE fk.unique_key_name = uk_rec.unique_key_name AND fk.type = 'regular_to_temporal'
+            ORDER BY fk.foreign_key_name COLLATE "C"
+        LOOP
+            IF NOT sql_saga.__internal_regular_fk_helper_is_canonical(
+                    pg_catalog.to_regprocedure(fk_rec.fk_helper_function),
+                    uk_rec.table_schema, uk_rec.table_name, stable_columns) THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of unique key "%" on table "%.%": helper function % of regular foreign key "%" is not the canonical sql_saga helper; restore it, or drop the foreign key with drop_foreign_key first',
+                    uk_rec.unique_key_name, uk_rec.table_schema, uk_rec.table_name, fk_rec.fk_helper_function, fk_rec.foreign_key_name;
+            END IF;
+            IF EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgrelid = uk_rec.uk_table_oid
+                  AND t.tgname IN (fk_rec.uk_update_trigger, fk_rec.uk_delete_trigger)
+                  AND (t.tgfoid NOT IN ('sql_saga.uk_update_check_c()'::regprocedure, 'sql_saga.uk_delete_check_c()'::regprocedure)
+                       OR t.tgargs IS DISTINCT FROM sql_saga.__internal_regular_fk_trigger_args(fk_rec.foreign_key_name))) THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of unique key "%" on table "%.%": a referenced-side trigger of regular foreign key "%" is not the canonical sql_saga trigger; repair with drop_foreign_key and add_regular_foreign_key first',
+                    uk_rec.unique_key_name, uk_rec.table_schema, uk_rec.table_name, fk_rec.foreign_key_name;
+            END IF;
+        END LOOP;
+        columns_before := columns_before || pg_catalog.jsonb_build_object(uk_rec.unique_key_name, uk_rec.column_names);
+    END LOOP;
+    RETURN columns_before;
+END;
+$__internal_regular_fk_key_rename_prepare$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_key_rename_prepare(oid[]) FROM PUBLIC;
+
+/*
+ * After the unique key columns followed a rename: regenerate, in place, the helper function and the
+ * referenced-side triggers of every regular foreign key on a key whose columns changed (same names,
+ * owner, privileges, settings and firing modes; the helper body and the trigger arguments name the
+ * current columns). columns_before comes from __internal_regular_fk_key_rename_prepare.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_key_rename_apply(columns_before jsonb)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_key_rename_apply$
+#variable_conflict use_variable
+DECLARE
+    fk_rec record;
+BEGIN
+    FOR fk_rec IN
+        SELECT fk.foreign_key_name
+        FROM sql_saga.foreign_keys AS fk
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        WHERE fk.type = 'regular_to_temporal'
+          AND columns_before ? uk.unique_key_name::text
+          AND (columns_before -> uk.unique_key_name::text) IS DISTINCT FROM pg_catalog.to_jsonb(uk.column_names)
+        ORDER BY fk.foreign_key_name COLLATE "C"
+    LOOP
+        PERFORM sql_saga.__internal_regenerate_regular_fk_helper(fk_rec.foreign_key_name);
+        PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);
+    END LOOP;
+END;
+$__internal_regular_fk_key_rename_apply$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_key_rename_apply(jsonb) FROM PUBLIC;
+
+
 DO $upgrade_rename_following$
 DECLARE
     definition text := pg_catalog.pg_get_functiondef('sql_saga.rename_following()'::regprocedure);
@@ -1727,6 +2067,73 @@ $new_fk_rename$);
     IF pg_catalog.strpos(changed, 'It appears that Postgres automatically renames triggers') > 0
        OR pg_catalog.strpos(changed, 'PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);') = 0 THEN
         RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following foreign key column rename';
+    END IF;
+    IF pg_catalog.strpos(changed, $old_rk0$    v_missing_excluded name;
+$old_rk0$) = 0 OR pg_catalog.strpos(changed, $mark_rk0$    v_unique_key_columns_before jsonb;
+$mark_rk0$) > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following referenced key column rename';
+    END IF;
+    changed := pg_catalog.replace(changed, $old_rk0$    v_missing_excluded name;
+$old_rk0$, $new_rk0$    v_missing_excluded name;
+    v_unique_key_columns_before jsonb;
+    v_altered_table_oids oid[];
+$new_rk0$);
+    IF pg_catalog.strpos(changed, $old_rk1$    ---
+    --- unique_keys
+    ---
+$old_rk1$) = 0 OR pg_catalog.strpos(changed, $mark_rk1$-- A renamed column of a unique key referenced by a regular foreign key: attribute the dependent
+$mark_rk1$) > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following referenced key column rename';
+    END IF;
+    changed := pg_catalog.replace(changed, $old_rk1$    ---
+    --- unique_keys
+    ---
+$old_rk1$, $new_rk1$    -- A renamed column of a unique key referenced by a regular foreign key: attribute the dependent
+    -- helper functions and referenced-side triggers before anything changes, and remember the key
+    -- columns, so that they can be regenerated below. Only relations touched by this ALTER TABLE
+    -- are considered; any other ALTER TABLE skips this work.
+    IF is_alter_table THEN
+        v_altered_table_oids := ARRAY(
+            SELECT DISTINCT c.objid
+            FROM pg_catalog.pg_event_trigger_ddl_commands() AS c
+            WHERE c.command_tag = 'ALTER TABLE' AND c.classid = 'pg_catalog.pg_class'::regclass);
+        IF EXISTS (
+            SELECT FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            JOIN sql_saga.unique_keys AS uk ON (uk.table_schema, uk.table_name) = (n.nspname, c.relname)
+            JOIN sql_saga.foreign_keys AS fk ON fk.unique_key_name = uk.unique_key_name AND fk.type = 'regular_to_temporal'
+            WHERE c.oid = ANY (v_altered_table_oids)) THEN
+            v_unique_key_columns_before := sql_saga.__internal_regular_fk_key_rename_prepare(v_altered_table_oids);
+        END IF;
+    END IF;
+
+    ---
+    --- unique_keys
+    ---
+$new_rk1$);
+    IF pg_catalog.strpos(changed, $old_rk2$    ---
+    --- foreign_keys
+    ---
+$old_rk2$) = 0 OR pg_catalog.strpos(changed, $mark_rk2$PERFORM sql_saga.__internal_regular_fk_key_rename_apply(v_unique_key_columns_before);$mark_rk2$) > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following referenced key column rename';
+    END IF;
+    changed := pg_catalog.replace(changed, $old_rk2$    ---
+    --- foreign_keys
+    ---
+$old_rk2$, $new_rk2$    -- A renamed referenced key column: regenerate the dependent regular foreign key objects.
+    IF v_unique_key_columns_before IS DISTINCT FROM '{}'::jsonb AND v_unique_key_columns_before IS NOT NULL THEN
+        PERFORM sql_saga.__internal_regular_fk_key_rename_apply(v_unique_key_columns_before);
+    END IF;
+
+    ---
+    --- foreign_keys
+    ---
+$new_rk2$);
+    IF pg_catalog.strpos(changed, 'v_unique_key_columns_before jsonb;') = 0
+       OR pg_catalog.strpos(changed, 'v_altered_table_oids oid[];') = 0
+       OR pg_catalog.strpos(changed, 'PERFORM sql_saga.__internal_regular_fk_key_rename_apply(v_unique_key_columns_before);') = 0
+       OR pg_catalog.strpos(changed, 'v_unique_key_columns_before := sql_saga.__internal_regular_fk_key_rename_prepare(v_altered_table_oids);') = 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following referenced key column rename';
     END IF;
     IF pg_catalog.strpos(changed, 'IF snapshot = current_columns THEN') > 0
        OR pg_catalog.strpos(changed, '-- Set comparison: a restore can recreate the table with another column order.') = 0 THEN
@@ -5852,7 +6259,8 @@ BEGIN
                OR NOT EXISTS (
                     SELECT 1 FROM pg_catalog.pg_constraint AS c
                     WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name))
-                      AND c.conname = r.fk_check_constraint AND c.contype = 'c') THEN
+                      AND c.conname = r.fk_check_constraint AND c.contype = 'c')
+               OR NOT sql_saga.__internal_regular_foreign_key_is_attributable(r.foreign_key_name) THEN
                 RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key',
                     r.table_schema, r.table_name;
             END IF;
