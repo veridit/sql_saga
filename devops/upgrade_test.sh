@@ -1868,6 +1868,77 @@ ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
 fi
 
 # ---------------------------------------------------------------------------------------------
+section "shared regular-FK helper (two regular FKs on one key)" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# add_regular_foreign_key shares one helper function between all regular FKs referencing the same
+# unique key. A healthy baseline database with two such FKs (single- and two-column keys) must update,
+# keep the helper and both FKs enforcing, and pass the final integrity gate.
+SHARED=${PREFIX}_shared_helper
+new_db "$SHARED" "$EXT_ROOT" "$OLD_LIB"
+out=$(sql "$SHARED" <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE TABLE par (id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('par', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('par', ARRAY['id']::name[], 'valid', key_type => 'natural');
+INSERT INTO par VALUES (1, '[2020-01-01,2030-01-01)'), (2, '[2020-01-01,2030-01-01)'), (3, '[2020-01-01,2030-01-01)');
+CREATE TABLE c1 (id int PRIMARY KEY, par_id int);
+CREATE TABLE c2 (id int PRIMARY KEY, owner_id int);
+SELECT sql_saga.add_foreign_key('c1', ARRAY['par_id']::name[], 'par', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('c2', ARRAY['owner_id']::name[], 'par', ARRAY['id']::name[]);
+CREATE TABLE par2 (a int, b text, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('par2', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('par2', ARRAY['a', 'b']::name[], 'valid', key_type => 'natural');
+INSERT INTO par2 VALUES (1, 'x', '[2020-01-01,2030-01-01)'), (2, 'y', '[2020-01-01,2030-01-01)'), (3, 'z', '[2020-01-01,2030-01-01)');
+CREATE TABLE d1 (id int PRIMARY KEY, a int, b text);
+CREATE TABLE d2 (id int PRIMARY KEY, a int, b text);
+SELECT sql_saga.add_foreign_key('d1', ARRAY['a', 'b']::name[], 'par2', ARRAY['a', 'b']::name[]);
+SELECT sql_saga.add_foreign_key('d2', ARRAY['a', 'b']::name[], 'par2', ARRAY['a', 'b']::name[]);
+-- Each child references its own parent key, so a surviving sibling FK cannot mask a broken one:
+-- par 1 <- c1, par 2 <- c2, par2 (1,x) <- d1, par2 (2,y) <- d2; par 3 and par2 (3,z) stay unreferenced.
+INSERT INTO c1 VALUES (1, 1);
+INSERT INTO c2 VALUES (1, 2);
+INSERT INTO d1 VALUES (1, 1, 'x');
+INSERT INTO d2 VALUES (1, 2, 'y');
+SQL
+)
+printf '%s\n' "$out" | grep -q '^ERROR' && die "shared helper fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+check "shared helper fixture: two helpers serve four regular FKs" "2|4" \
+    "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
+check "shared helper: healthy $BASELINE_VERSION database updates without refusal" "" \
+    "$(q "$SHARED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "shared helper: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$SHARED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "shared helper: check_integrity passes after the update" "" "$(q "$SHARED" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "shared helper: after the update two helpers still serve four regular FKs" "2|4" \
+    "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
+# Valid references are still accepted by every FK (rolled back).
+check "shared helper: valid inserts into c1, c2, d1, d2 succeed after the update" "" \
+    "$(q "$SHARED" "BEGIN; INSERT INTO c1 VALUES (2, 3); INSERT INTO c2 VALUES (2, 3); INSERT INTO d1 VALUES (2, 3, 'z'); INSERT INTO d2 VALUES (2, 3, 'z'); ROLLBACK" | grep '^ERROR')"
+# Referencing side: one invalid insert per FK, each in its own session.
+for probe in "c1|INSERT INTO c1 VALUES (9, 99)|c1_par_id_check" \
+             "c2|INSERT INTO c2 VALUES (9, 99)|c2_owner_id_check" \
+             "d1|INSERT INTO d1 VALUES (9, 9, 'q')|d1_a_b_check" \
+             "d2|INSERT INTO d2 VALUES (9, 9, 'q')|d2_a_b_check"; do
+    IFS='|' read -r child stmt con <<<"$probe"
+    check "shared helper: $child rejects a missing parent after the update" \
+        "ERROR:  new row for relation \"$child\" violates check constraint \"$con\"" \
+        "$(q "$SHARED" "BEGIN; $stmt; ROLLBACK")"
+done
+# Referenced side: delete the parent row referenced only by that FK, each in its own session.
+for probe in "c1|par|DELETE FROM par WHERE id = 1|c1_par_id_fkey" \
+             "c2|par|DELETE FROM par WHERE id = 2|c2_owner_id_fkey" \
+             "d1|par2|DELETE FROM par2 WHERE a = 1 AND b = 'x'|d1_a_b_fkey" \
+             "d2|par2|DELETE FROM par2 WHERE a = 2 AND b = 'y'|d2_a_b_fkey"; do
+    IFS='|' read -r child parent stmt con <<<"$probe"
+    check "shared helper: deleting the parent referenced only by $child is refused after the update" \
+        "ERROR:  update or delete on table \"public.$parent\" violates foreign key constraint \"$con\" on table \"public.$child\"" \
+        "$(q "$SHARED" "BEGIN; $stmt; ROLLBACK")"
+done
+check "shared helper: unreferenced parents can be deleted after the update" "" \
+    "$(q "$SHARED" "BEGIN; DELETE FROM par WHERE id = 3; DELETE FROM par2 WHERE a = 3; ROLLBACK" | grep '^ERROR')"
+
+# ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
