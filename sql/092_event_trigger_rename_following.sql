@@ -52,9 +52,17 @@ SELECT sql_saga.add_era('rename_test_ref', 'valid_range', 'q', valid_from_column
 TABLE sql_saga.era;
 SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
+SELECT sql_saga.check_integrity();
 SAVEPOINT pristine;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1;
+-- column_names and the snapshot follow the rename; stored object names stay unchanged, because
+-- PostgreSQL renames neither the native constraint nor the index (and a temporal FK has no uk triggers).
 TABLE sql_saga.foreign_keys; -- The column name should be updated here
+SELECT fk.foreign_key_name, c.conname AS native_constraint
+FROM sql_saga.foreign_keys AS fk
+LEFT JOIN pg_catalog.pg_constraint AS c ON c.conrelid = 'rename_test_ref'::regclass AND c.contype = 'f'
+WHERE fk.table_name = 'rename_test_ref';
+SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT pristine;
 
 /* Test protection of synchronize_temporal_columns_trigger */
