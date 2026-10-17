@@ -295,6 +295,44 @@ SELECT sql_saga.check_integrity();
 SELECT 'integrity checked with extra helper settings' AS done;
 ROLLBACK;
 
+\echo '--- A key column whose name contains $function$ can be renamed, twice'
+-- pg_get_functiondef then quotes the helper body with another dollar tag; regeneration must still
+-- recognise the canonical helper and keep it canonical.
+BEGIN;
+CREATE TABLE fkk.dpar ("id$function$" int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkk.dpar', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('fkk.dpar', ARRAY['id$function$']::name[], 'valid', key_type => 'natural') AS dkey \gset
+INSERT INTO fkk.dpar VALUES (1, '[2020-01-01,2030-01-01)'), (2, '[2020-01-01,2030-01-01)');
+CREATE TABLE fkk.dchild (id int PRIMARY KEY, dpar_id int);
+SELECT sql_saga.add_regular_foreign_key('fkk.dchild', ARRAY['dpar_id']::name[], :'dkey');
+INSERT INTO fkk.dchild VALUES (1, 1);
+CREATE VIEW fkk.dhelper AS
+SELECT p.oid::regprocedure AS helper, p.prosecdef, p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body
+FROM pg_catalog.pg_proc AS p
+JOIN sql_saga.foreign_keys AS fk ON p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function)
+WHERE fk.table_schema = 'fkk' AND fk.table_name = 'dchild';
+TABLE fkk.dhelper;
+ALTER TABLE fkk.dpar RENAME COLUMN "id$function$" TO "pid$function$";
+TABLE fkk.dhelper;
+SELECT sql_saga.check_integrity();
+SAVEPOINT dollar_missing_parent_1;
+INSERT INTO fkk.dchild VALUES (2, 99);
+ROLLBACK TO SAVEPOINT dollar_missing_parent_1;
+SAVEPOINT dollar_referenced_parent_1;
+DELETE FROM fkk.dpar WHERE "pid$function$" = 1;
+ROLLBACK TO SAVEPOINT dollar_referenced_parent_1;
+ALTER TABLE fkk.dpar RENAME COLUMN "pid$function$" TO plain_id;
+TABLE fkk.dhelper;
+SELECT sql_saga.check_integrity();
+INSERT INTO fkk.dchild VALUES (3, 2);
+SAVEPOINT dollar_missing_parent_2;
+INSERT INTO fkk.dchild VALUES (4, 99);
+ROLLBACK TO SAVEPOINT dollar_missing_parent_2;
+SAVEPOINT dollar_referenced_parent_2;
+DELETE FROM fkk.dpar WHERE plain_id = 1;
+ROLLBACK TO SAVEPOINT dollar_referenced_parent_2;
+ROLLBACK;
+
 \echo '--- Final check_integrity'
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked' AS done;

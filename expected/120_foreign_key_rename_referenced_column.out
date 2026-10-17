@@ -552,6 +552,85 @@ SELECT 'integrity checked with extra helper settings' AS done;
 (1 row)
 
 ROLLBACK;
+\echo '--- A key column whose name contains $function$ can be renamed, twice'
+--- A key column whose name contains $function$ can be renamed, twice
+-- pg_get_functiondef then quotes the helper body with another dollar tag; regeneration must still
+-- recognise the canonical helper and keep it canonical.
+BEGIN;
+CREATE TABLE fkk.dpar ("id$function$" int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkk.dpar', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('fkk.dpar', ARRAY['id$function$']::name[], 'valid', key_type => 'natural') AS dkey \gset
+INSERT INTO fkk.dpar VALUES (1, '[2020-01-01,2030-01-01)'), (2, '[2020-01-01,2030-01-01)');
+CREATE TABLE fkk.dchild (id int PRIMARY KEY, dpar_id int);
+SELECT sql_saga.add_regular_foreign_key('fkk.dchild', ARRAY['dpar_id']::name[], :'dkey');
+ add_regular_foreign_key 
+-------------------------
+ dchild_dpar_id_fkey
+(1 row)
+
+INSERT INTO fkk.dchild VALUES (1, 1);
+CREATE VIEW fkk.dhelper AS
+SELECT p.oid::regprocedure AS helper, p.prosecdef, p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body
+FROM pg_catalog.pg_proc AS p
+JOIN sql_saga.foreign_keys AS fk ON p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function)
+WHERE fk.table_schema = 'fkk' AND fk.table_name = 'dchild';
+TABLE fkk.dhelper;
+               helper                | prosecdef |        proconfig         |                                              body                                               
+-------------------------------------+-----------+--------------------------+-------------------------------------------------------------------------------------------------
+ "dpar_id$function$_exists"(integer) | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.dpar AS uk WHERE uk."id$function$" OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+ALTER TABLE fkk.dpar RENAME COLUMN "id$function$" TO "pid$function$";
+TABLE fkk.dhelper;
+               helper                | prosecdef |        proconfig         |                                               body                                               
+-------------------------------------+-----------+--------------------------+--------------------------------------------------------------------------------------------------
+ "dpar_id$function$_exists"(integer) | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.dpar AS uk WHERE uk."pid$function$" OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+SAVEPOINT dollar_missing_parent_1;
+INSERT INTO fkk.dchild VALUES (2, 99);
+ERROR:  new row for relation "dchild" violates check constraint "dchild_dpar_id_check"
+DETAIL:  Failing row contains (2, 99).
+ROLLBACK TO SAVEPOINT dollar_missing_parent_1;
+SAVEPOINT dollar_referenced_parent_1;
+DELETE FROM fkk.dpar WHERE "pid$function$" = 1;
+ERROR:  update or delete on table "fkk.dpar" violates foreign key constraint "dchild_dpar_id_fkey" on table "fkk.dchild"
+ROLLBACK TO SAVEPOINT dollar_referenced_parent_1;
+ALTER TABLE fkk.dpar RENAME COLUMN "pid$function$" TO plain_id;
+TABLE fkk.dhelper;
+               helper                | prosecdef |        proconfig         |                                           body                                            
+-------------------------------------+-----------+--------------------------+-------------------------------------------------------------------------------------------
+ "dpar_id$function$_exists"(integer) | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.dpar AS uk WHERE uk.plain_id OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+INSERT INTO fkk.dchild VALUES (3, 2);
+SAVEPOINT dollar_missing_parent_2;
+INSERT INTO fkk.dchild VALUES (4, 99);
+ERROR:  new row for relation "dchild" violates check constraint "dchild_dpar_id_check"
+DETAIL:  Failing row contains (4, 99).
+ROLLBACK TO SAVEPOINT dollar_missing_parent_2;
+SAVEPOINT dollar_referenced_parent_2;
+DELETE FROM fkk.dpar WHERE plain_id = 1;
+ERROR:  update or delete on table "fkk.dpar" violates foreign key constraint "dchild_dpar_id_fkey" on table "fkk.dchild"
+ROLLBACK TO SAVEPOINT dollar_referenced_parent_2;
+ROLLBACK;
 \echo '--- Final check_integrity'
 --- Final check_integrity
 SELECT sql_saga.check_integrity();
