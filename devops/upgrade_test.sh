@@ -1399,10 +1399,22 @@ if [ -f "$DIRECT_UPD" ] && [ -f "$EXT/sql_saga--1.0--1.1.sql" ] && [ -f "$UPD" ]
     guard_diff_lines=$(grep -c '^[-+]DO \$native_guard\$' "$WORK/direct.guard.diff" || true)
     other_diff_lines=$(grep '^[-+]' "$WORK/direct.guard.diff" | grep -vE '^(---|\+\+\+|[-+]DO \$native_guard\$)' | wc -l | tr -d ' ')
     check "retargeting changes exactly the old and new native-guard lines" "2|0" "$guard_diff_lines|$other_diff_lines"
-    cp "$WORK/direct.retargeted" "$WORK/direct.expected"
+    # The frozen validate_fk_helpers aggregates key columns once per FK; the direct script reads one row
+    # per helper and key instead (exactly one line, right after its unique stable_columns line).
+    FK_ANCHOR='               pg_catalog.array_agg(c.name ORDER BY c.ordinality) AS stable_columns'
+    FK_OLD='        FROM sql_saga.foreign_keys AS fk'
+    FK_NEW='        FROM (SELECT DISTINCT f.fk_helper_function, f.unique_key_name, f.type FROM sql_saga.foreign_keys AS f) AS fk'
+    check "frozen 1.0--1.1 script has exactly one shared-helper validator anchor" "1" \
+        "$(grep -Fxc "$FK_ANCHOR" "$EXT/sql_saga--1.0--1.1.sql" || true)"
+    awk -v anchor="$FK_ANCHOR" -v old="$FK_OLD" -v new="$FK_NEW" '{ if (prev == anchor && $0 == old) print new; else print; prev = $0 }' \
+        "$WORK/direct.retargeted" >"$WORK/direct.fkfixed"
+    diff -u "$WORK/direct.retargeted" "$WORK/direct.fkfixed" >"$WORK/direct.fk.diff" || true
+    check "the shared-helper validator fix changes exactly one frozen line" "-$FK_OLD|+$FK_NEW|2" \
+        "$(grep -E '^[-+] ' "$WORK/direct.fk.diff" | paste -sd'|' -)|$(grep -cE '^[-+][^-+]' "$WORK/direct.fk.diff" || true)"
+    cp "$WORK/direct.fkfixed" "$WORK/direct.expected"
     sed '1d' "$UPD" >>"$WORK/direct.expected"
     if cmp -s "$WORK/direct.expected" "$DIRECT_UPD"; then
-        ok "direct 1.0--1.2 script is the frozen hop with only its native guard retargeted, followed by the headerless 1.1--1.2 body"
+        ok "direct 1.0--1.2 script is the frozen hop with only its native guard retargeted and its shared-helper validator line fixed, followed by the headerless 1.1--1.2 body"
     else
         fail "direct 1.0--1.2 script differs from the exact approved composition"
     fi
@@ -1906,6 +1918,8 @@ SQL
 printf '%s\n' "$out" | grep -q '^ERROR' && die "shared helper fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
 check "shared helper fixture: two helpers serve four regular FKs" "2|4" \
     "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
+# The "restart": the update and every later session load the candidate binaries.
+psql -X -q -d postgres -c "ALTER DATABASE $SHARED RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $SHARED"
 check "shared helper: healthy $BASELINE_VERSION database updates without refusal" "" \
     "$(q "$SHARED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "shared helper: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$SHARED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
