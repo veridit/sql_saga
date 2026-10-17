@@ -123,8 +123,9 @@ $__internal_history_family$;
  * True while sql_saga.__internal_rebuild_system_versioning_views replaces the views and as-of
  * functions of this base table (transaction-local setting). drop_protection and health_checks let
  * exactly those objects of exactly this family be dropped and recreated; nothing else is exempt.
- * Like sql_saga.managing_history_policies, a caller could set it by hand: it only lets the owner
- * of these objects, who could change them anyway, skip a guard against mistakes.
+ * Unlike the private guard row of __internal_history_policy_sync_active, a caller could set it by
+ * hand: it only lets the owner of these objects, who could change them anyway, skip a guard against
+ * mistakes. It must never authorize anything a table owner may not do directly.
  */
 CREATE FUNCTION sql_saga.__internal_rebuilding_system_versioning_views(table_oid oid)
 RETURNS boolean
@@ -331,7 +332,6 @@ DECLARE
     p record;
     missing_column name;
     stmt text;
-    previous_guard text;
     force_mode text;
     reader_qual text;
     base_select_qual text;
@@ -384,13 +384,10 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- While on, the event triggers neither refuse nor re-synchronize the policy DDL issued below
-    -- (otherwise every CREATE POLICY here would start a nested synchronization). The previous value
-    -- is restored at the end, so a nested call cannot switch the guard off for its caller; on error
-    -- the transaction-local setting is discarded with the (sub)transaction.
-    previous_guard := current_setting('sql_saga.managing_history_policies', true);
-    /* The GUC is diagnostic compatibility only. Authorization comes from the private guard row. */
-    PERFORM set_config('sql_saga.managing_history_policies', fam.base_oid::text, true);
+    -- The policy DDL below is the synchronizer's own: the event triggers recognize it by the guard
+    -- row inserted above (sql_saga.__internal_history_policy_sync_active), neither refusing it nor
+    -- starting a nested synchronization. The row is removed at the end, or with the (sub)transaction
+    -- on error; nested calls only change its depth, so they cannot end it for their caller.
 
     -- RLS enabled, FORCE mirrored from the base.
     IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid) THEN
@@ -491,8 +488,6 @@ BEGIN
         RAISE NOTICE 'sql_saga: Created policy % on % as the history copy of policy % on %',
             d.copy_name, fam.history_oid::regclass, d.base_policy, fam.base_oid::regclass;
     END LOOP;
-
-    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
 
     UPDATE sql_saga.history_policy_sync_guard AS g
     SET nesting_depth = g.nesting_depth - 1

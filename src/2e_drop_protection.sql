@@ -538,14 +538,14 @@ BEGIN
      * the base would fail otherwise when the base is dropped before its history). Not on pg_restore's
      * own DROP POLICY statements: those come first, and a later DROP POLICY (without IF EXISTS) of a
      * dumped name already gone would fail. Restore plumbing the caller asked for: reported at DEBUG.
+     * The nested DROP POLICY statements below drop only policies, which the family lookup ignores, so
+     * they never re-enter this cleanup.
      */
-    IF v_teardown AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+    IF v_teardown THEN
         DECLARE
             family_row record;
             policy_row record;
-            previous_guard text := current_setting('sql_saga.managing_history_policies', true);
         BEGIN
-            PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
             FOR family_row IN
                 SELECT DISTINCT to_regclass(format('%I.%I', sv.history_schema_name /* %I */, sv.history_table_name /* %I */)) AS history_oid
                 FROM unnest(v_dropped_objects) AS u(data)
@@ -568,7 +568,6 @@ BEGIN
                         policy_row.polname, family_row.history_oid::regclass;
                 END LOOP;
             END LOOP;
-            PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
         END;
     END IF;
 

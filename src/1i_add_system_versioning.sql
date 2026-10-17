@@ -289,7 +289,6 @@ DECLARE
     history_table_oid oid;
     table_owner name;
     acl record;
-    previous_guard text;
     needs_rebuild boolean;
     expected_columns integer;
     actual_columns integer;
@@ -328,8 +327,6 @@ BEGIN
           WHERE b.attrelid = table_oid AND b.attnum > 0 AND NOT b.attisdropped
             AND b.attname OPERATOR(pg_catalog.=) a.attname)
       AND a.attname <> ALL (coalesce(without_columns, '{}'::name[]));
-    previous_guard := current_setting('sql_saga.managing_history_policies', true);
-    PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
     BEGIN
       EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
       table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
@@ -384,11 +381,7 @@ BEGIN
           PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
       END IF;
       PERFORM sql_saga.__internal_sync_history_policies(table_oid);
-    EXCEPTION WHEN OTHERS THEN
-      PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
-      RAISE;
     END;
-    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
 END;
 $__internal_reconcile_system_versioning_family$;
 

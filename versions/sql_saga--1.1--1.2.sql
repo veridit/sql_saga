@@ -798,14 +798,14 @@ BEGIN
      * the base would fail otherwise when the base is dropped before its history). Not on pg_restore's
      * own DROP POLICY statements: those come first, and a later DROP POLICY (without IF EXISTS) of a
      * dumped name already gone would fail. Restore plumbing the caller asked for: reported at DEBUG.
+     * The nested DROP POLICY statements below drop only policies, which the family lookup ignores, so
+     * they never re-enter this cleanup.
      */
-    IF v_teardown AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+    IF v_teardown THEN
         DECLARE
             family_row record;
             policy_row record;
-            previous_guard text := current_setting('sql_saga.managing_history_policies', true);
         BEGIN
-            PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
             FOR family_row IN
                 SELECT DISTINCT to_regclass(format('%I.%I', sv.history_schema_name /* %I */, sv.history_table_name /* %I */)) AS history_oid
                 FROM unnest(v_dropped_objects) AS u(data)
@@ -828,7 +828,6 @@ BEGIN
                         policy_row.polname, family_row.history_oid::regclass;
                 END LOOP;
             END LOOP;
-            PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
         END;
     END IF;
 
@@ -967,7 +966,6 @@ DECLARE
     p record;
     missing_column name;
     stmt text;
-    previous_guard text;
     force_mode text;
     reader_qual text;
     base_select_qual text;
@@ -1020,13 +1018,10 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- While on, the event triggers neither refuse nor re-synchronize the policy DDL issued below
-    -- (otherwise every CREATE POLICY here would start a nested synchronization). The previous value
-    -- is restored at the end, so a nested call cannot switch the guard off for its caller; on error
-    -- the transaction-local setting is discarded with the (sub)transaction.
-    previous_guard := current_setting('sql_saga.managing_history_policies', true);
-    /* The GUC is diagnostic compatibility only. Authorization comes from the private guard row. */
-    PERFORM set_config('sql_saga.managing_history_policies', fam.base_oid::text, true);
+    -- The policy DDL below is the synchronizer's own: the event triggers recognize it by the guard
+    -- row inserted above (sql_saga.__internal_history_policy_sync_active), neither refusing it nor
+    -- starting a nested synchronization. The row is removed at the end, or with the (sub)transaction
+    -- on error; nested calls only change its depth, so they cannot end it for their caller.
 
     -- RLS enabled, FORCE mirrored from the base.
     IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid) THEN
@@ -1127,8 +1122,6 @@ BEGIN
         RAISE NOTICE 'sql_saga: Created policy % on % as the history copy of policy % on %',
             d.copy_name, fam.history_oid::regclass, d.base_policy, fam.base_oid::regclass;
     END LOOP;
-
-    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
 
     UPDATE sql_saga.history_policy_sync_guard AS g
     SET nesting_depth = g.nesting_depth - 1
@@ -2754,7 +2747,9 @@ BEGIN
      * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
      * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
      * either, re-synchronizes that family's history policies. Direct changes to the policies
-     * sql_saga manages, and to the history's RLS settings, are refused.
+     * sql_saga manages, and to the history's RLS settings, are refused. Only the synchronizer's own
+     * nested DDL is exempt, recognized by its private guard row
+     * (sql_saga.__internal_history_policy_sync_active), never by a setting a caller could forge.
      */
     FOR r IN
         SELECT DISTINCT f.base_oid, f.history_oid, ev.command_tag, ev.objid, ev.classid
@@ -2765,7 +2760,7 @@ BEGIN
             CASE WHEN ev.classid = 'pg_catalog.pg_policy'::regclass THEN pol.polrelid ELSE ev.objid END) AS f
         WHERE ev.command_tag IN ('CREATE POLICY', 'ALTER POLICY', 'ALTER TABLE')
     LOOP
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid) THEN
             -- Refuse direct DDL on managed history policies.
             -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
             -- below then keeps it (current installation) or drops it (another installation's token).
@@ -2797,7 +2792,7 @@ BEGIN
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
         -- would recreate the history policies drop_protection has just dropped for the teardown).
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid)
            AND NOT sql_saga.__internal_is_clean_teardown()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
@@ -3749,7 +3744,6 @@ DECLARE
     history_table_oid oid;
     table_owner name;
     acl record;
-    previous_guard text;
     needs_rebuild boolean;
     expected_columns integer;
     actual_columns integer;
@@ -3788,8 +3782,6 @@ BEGIN
           WHERE b.attrelid = table_oid AND b.attnum > 0 AND NOT b.attisdropped
             AND b.attname OPERATOR(pg_catalog.=) a.attname)
       AND a.attname <> ALL (coalesce(without_columns, '{}'::name[]));
-    previous_guard := current_setting('sql_saga.managing_history_policies', true);
-    PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
     BEGIN
       EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
       table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
@@ -3844,11 +3836,7 @@ BEGIN
           PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
       END IF;
       PERFORM sql_saga.__internal_sync_history_policies(table_oid);
-    EXCEPTION WHEN OTHERS THEN
-      PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
-      RAISE;
     END;
-    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
 END;
 $__internal_reconcile_system_versioning_family$;
 
@@ -4982,7 +4970,9 @@ BEGIN
      * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
      * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
      * either, re-synchronizes that family's history policies. Direct changes to the policies
-     * sql_saga manages, and to the history's RLS settings, are refused.
+     * sql_saga manages, and to the history's RLS settings, are refused. Only the synchronizer's own
+     * nested DDL is exempt, recognized by its private guard row
+     * (sql_saga.__internal_history_policy_sync_active), never by a setting a caller could forge.
      */
     FOR r IN
         SELECT DISTINCT f.base_oid, f.history_oid, ev.command_tag, ev.objid, ev.classid
@@ -4993,7 +4983,7 @@ BEGIN
             CASE WHEN ev.classid = 'pg_catalog.pg_policy'::regclass THEN pol.polrelid ELSE ev.objid END) AS f
         WHERE ev.command_tag IN ('CREATE POLICY', 'ALTER POLICY', 'ALTER TABLE')
     LOOP
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid) THEN
             -- Refuse direct DDL on managed history policies.
             -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
             -- below then keeps it (current installation) or drops it (another installation's token).
@@ -5025,7 +5015,7 @@ BEGIN
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
         -- would recreate the history policies drop_protection has just dropped for the teardown).
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid)
            AND NOT sql_saga.__internal_is_clean_teardown()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);

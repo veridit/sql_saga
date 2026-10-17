@@ -138,7 +138,9 @@ BEGIN
      * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
      * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
      * either, re-synchronizes that family's history policies. Direct changes to the policies
-     * sql_saga manages, and to the history's RLS settings, are refused.
+     * sql_saga manages, and to the history's RLS settings, are refused. Only the synchronizer's own
+     * nested DDL is exempt, recognized by its private guard row
+     * (sql_saga.__internal_history_policy_sync_active), never by a setting a caller could forge.
      */
     FOR r IN
         SELECT DISTINCT f.base_oid, f.history_oid, ev.command_tag, ev.objid, ev.classid
@@ -149,7 +151,7 @@ BEGIN
             CASE WHEN ev.classid = 'pg_catalog.pg_policy'::regclass THEN pol.polrelid ELSE ev.objid END) AS f
         WHERE ev.command_tag IN ('CREATE POLICY', 'ALTER POLICY', 'ALTER TABLE')
     LOOP
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid) THEN
             -- Refuse direct DDL on managed history policies.
             -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
             -- below then keeps it (current installation) or drops it (another installation's token).
@@ -181,7 +183,7 @@ BEGIN
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
         -- would recreate the history policies drop_protection has just dropped for the teardown).
-        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+        IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid)
            AND NOT sql_saga.__internal_is_clean_teardown()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
