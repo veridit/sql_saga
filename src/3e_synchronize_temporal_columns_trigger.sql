@@ -87,10 +87,18 @@ COMMENT ON PROCEDURE sql_saga.drop_synchronize_temporal_columns_trigger(regclass
     IS 'Drops the table-specific sync trigger and its specialized trigger function.';
 
 
-CREATE OR REPLACE PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
-LANGUAGE plpgsql SECURITY DEFINER
+/*
+ * The SQL add_synchronize_temporal_columns_trigger executes for an era, generated from the catalog
+ * (pure: reads only): the CREATE OR REPLACE FUNCTION statement of the table-specific synchronization
+ * function, the CREATE TRIGGER statement of its trigger, and their names. Also used to attribute an
+ * existing synchronization function and trigger, and to regenerate the function in place.
+ */
+CREATE FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(
+    table_oid regclass, era_name name,
+    OUT function_name name, OUT trigger_name name, OUT function_sql text, OUT trigger_sql text)
+LANGUAGE plpgsql STABLE
 SET search_path = sql_saga, pg_catalog, public
-AS $add_synchronize_temporal_columns_trigger$
+AS $__internal_synchronize_temporal_columns_sql$
 DECLARE
     v_table_schema name;
     v_table_name name;
@@ -142,7 +150,7 @@ BEGIN
     INTO v_table_schema, v_table_name
     FROM pg_catalog.pg_class AS c
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE c.oid = add_synchronize_temporal_columns_trigger.table_oid;
+    WHERE c.oid = __internal_synchronize_temporal_columns_sql.table_oid;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Table % does not exist', table_oid;
@@ -165,7 +173,7 @@ BEGIN
         v_range_subtype,
         v_apply_defaults
     FROM sql_saga.era AS e
-    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, add_synchronize_temporal_columns_trigger.era_name);
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __internal_synchronize_temporal_columns_sql.era_name);
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Era "%" not found on table %', era_name, table_oid;
@@ -438,19 +446,44 @@ $template$;
         v_func_name /* %4$I */
     );
 
-    RAISE DEBUG 'specialized_trigger_template: %', specialized_trigger_template;
-    RAISE DEBUG 'specialized_trigger_sql: %', specialized_trigger_sql;
-    RAISE DEBUG 'specialized_trigger_create_trigger_sql: %', specialized_trigger_create_trigger_sql;
+    function_name := v_func_name;
+    trigger_name := v_trg_name;
+    function_sql := specialized_trigger_sql;
+    trigger_sql := specialized_trigger_create_trigger_sql;
+END;
+$__internal_synchronize_temporal_columns_sql$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(regclass, name) FROM PUBLIC;
+
+CREATE OR REPLACE PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $add_synchronize_temporal_columns_trigger$
+DECLARE
+    v_table_schema name;
+    v_table_name name;
+    generated record;
+BEGIN
+    SELECT n.nspname, c.relname
+    INTO v_table_schema, v_table_name
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = add_synchronize_temporal_columns_trigger.table_oid;
+
+    generated := sql_saga.__internal_synchronize_temporal_columns_sql(table_oid, era_name);
+
+    RAISE DEBUG 'specialized_trigger_sql: %', generated.function_sql;
+    RAISE DEBUG 'specialized_trigger_create_trigger_sql: %', generated.trigger_sql;
 
     CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
 
-    EXECUTE specialized_trigger_sql;
-    EXECUTE specialized_trigger_create_trigger_sql;
+    EXECUTE generated.function_sql;
+    EXECUTE generated.trigger_sql;
 
     -- Update sql_saga.era with the trigger and function names
     UPDATE sql_saga.era AS e
-    SET sync_temporal_trg_name = v_trg_name,
-        sync_temporal_trg_function_name = v_func_name
+    SET sync_temporal_trg_name = generated.trigger_name,
+        sync_temporal_trg_function_name = generated.function_name
     WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, add_synchronize_temporal_columns_trigger.era_name);
 END;
 $add_synchronize_temporal_columns_trigger$;

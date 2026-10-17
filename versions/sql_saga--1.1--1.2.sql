@@ -2242,6 +2242,1083 @@ $new_rk2$);
 END;
 $upgrade_rename_following$;
 
+/* ITEM 5 (era column renames): BEGIN. Follow era range/boundary/valid_to column renames: the era catalog
+ * follows, the synchronization function is replaced in place (CREATE OR REPLACE, same OID, owner, privileges;
+ * its trigger keeps OID and firing mode), the referenced-side triggers of regular foreign keys are re-created
+ * (same names and firing modes), and the boundary CHECK is recognized as add_era creates it. Before anything
+ * changes, the synchronization function and trigger and the referenced-side triggers must be exactly what
+ * sql_saga generated, and the function must have no other dependent; otherwise the rename is refused.
+ * Byte-identical to src/3e_synchronize_temporal_columns_trigger.sql (generator, procedure) and
+ * src/2f_rename_following.sql. Exact replacements in rename_following; each fails closed when the released
+ * fragment is absent or the new one is already present.
+ */
+/*
+ * The SQL add_synchronize_temporal_columns_trigger executes for an era, generated from the catalog
+ * (pure: reads only): the CREATE OR REPLACE FUNCTION statement of the table-specific synchronization
+ * function, the CREATE TRIGGER statement of its trigger, and their names. Also used to attribute an
+ * existing synchronization function and trigger, and to regenerate the function in place.
+ */
+CREATE FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(
+    table_oid regclass, era_name name,
+    OUT function_name name, OUT trigger_name name, OUT function_sql text, OUT trigger_sql text)
+LANGUAGE plpgsql STABLE
+SET search_path = sql_saga, pg_catalog, public
+AS $__internal_synchronize_temporal_columns_sql$
+DECLARE
+    v_table_schema name;
+    v_table_name name;
+
+    v_range_col name;
+    v_from_col name;
+    v_until_col name;
+    v_to_col name;
+
+    v_range_type regtype;
+    v_range_subtype regtype;
+    v_apply_defaults boolean;
+
+    v_func_name name;
+    v_trg_name name;
+
+    v_update_of_cols name[];
+    v_update_of_cols_sql text;
+
+    v_range_col_ident text;
+    v_from_col_ident text;
+    v_until_col_ident text;
+    v_to_col_ident text;
+
+    v_range_col_lit text;
+    v_from_col_lit text;
+    v_until_col_lit text;
+    v_to_col_lit text;
+
+    v_range_type_sql text;
+    v_range_subtype_sql text;
+
+    v_to_decl text := '';
+    v_to_changed_decl text := '';
+    v_to_changed_detect text := '';
+    v_to_extract text := '';
+    v_to_collect_end text := '';
+    v_to_error_end_src text := '';
+    v_to_populate text := '';
+
+    v_defaults_logic text := '';
+    v_validation_error text;
+
+    specialized_trigger_template text;
+    specialized_trigger_sql text;
+    specialized_trigger_create_trigger_sql text;
+BEGIN
+    SELECT n.nspname, c.relname
+    INTO v_table_schema, v_table_name
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = __internal_synchronize_temporal_columns_sql.table_oid;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Table % does not exist', table_oid;
+    END IF;
+
+    SELECT
+        e.range_column_name,
+        e.valid_from_column_name,
+        e.valid_until_column_name,
+        e.valid_to_column_name,
+        e.range_type,
+        e.range_subtype,
+        e.trigger_applies_defaults
+    INTO
+        v_range_col,
+        v_from_col,
+        v_until_col,
+        v_to_col,
+        v_range_type,
+        v_range_subtype,
+        v_apply_defaults
+    FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __internal_synchronize_temporal_columns_sql.era_name);
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Era "%" not found on table %', era_name, table_oid;
+    END IF;
+
+    IF v_from_col IS NULL OR v_until_col IS NULL THEN
+        RAISE EXCEPTION 'Template sync trigger requires valid_from_column_name and valid_until_column_name (era "%" on %)', era_name, table_oid;
+    END IF;
+
+    IF v_to_col IS NOT NULL AND v_from_col IS NULL THEN
+        RAISE EXCEPTION 'valid_to_column_name requires valid_from_column_name and valid_until_column_name (era "%" on %)', era_name, table_oid;
+    END IF;
+
+    v_func_name := sql_saga.__internal_make_name(ARRAY[v_table_schema, v_table_name, era_name], 'template_sync');
+    v_trg_name := sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'sync_temporal_trg');
+
+    v_range_col_ident := quote_ident(v_range_col);
+    v_from_col_ident := quote_ident(v_from_col);
+    v_until_col_ident := quote_ident(v_until_col);
+
+    v_range_col_lit := quote_literal(v_range_col);
+    v_from_col_lit := quote_literal(v_from_col);
+    v_until_col_lit := quote_literal(v_until_col);
+
+    v_range_type_sql := v_range_type::text;
+    v_range_subtype_sql := v_range_subtype::text;
+
+    v_update_of_cols := ARRAY[v_range_col];
+
+    IF v_to_col IS NOT NULL THEN
+        v_to_col_ident := quote_ident(v_to_col);
+        v_to_col_lit := quote_literal(v_to_col);
+        v_update_of_cols := v_update_of_cols || v_to_col;
+
+        v_to_decl := $to_decl$
+    until_via_to text;
+$to_decl$;
+
+        v_to_changed_decl := $to_changed_decl$
+    is_to_changed boolean;
+$to_changed_decl$;
+
+        v_to_changed_detect := $to_changed_detect$
+    is_to_changed := (TG_OP = 'INSERT' AND NEW.__TO_COL_IDENT__ IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.__TO_COL_IDENT__ IS DISTINCT FROM OLD.__TO_COL_IDENT__);
+$to_changed_detect$;
+
+        v_to_extract := $to_extract$
+    IF is_to_changed THEN
+        until_via_to := (NEW.__TO_COL_IDENT__::__SUBTYPE_TYPE__ + 1)::text;
+    END IF;
+$to_extract$;
+
+        v_to_collect_end := $to_collect_end$
+    IF is_to_changed THEN
+        IF final_from IS NULL THEN
+            RAISE EXCEPTION 'When setting "%", the start of the period must also be provided via "%" or "%".', __TO_COL_LITERAL__, __FROM_COL_LITERAL__, __RANGE_COL_LITERAL__;
+        END IF;
+        until_sources := until_sources || until_via_to;
+    END IF;
+$to_collect_end$;
+
+        v_to_error_end_src := $to_error_end_src$
+                UNION ALL SELECT __TO_COL_LITERAL__ AS key, until_via_to AS val WHERE is_to_changed
+$to_error_end_src$;
+
+        v_to_populate := $to_populate$
+    IF final_until = 'infinity' THEN
+        NEW.__TO_COL_IDENT__ := 'infinity'::__SUBTYPE_TYPE__;
+    ELSE
+        NEW.__TO_COL_IDENT__ := (final_until::__SUBTYPE_TYPE__ - 1);
+    END IF;
+$to_populate$;
+
+        v_validation_error := $validation_error$
+        RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%", "%" (with "%"), or the pair "%"/"%" must be provided.', __RANGE_COL_LITERAL__, __TO_COL_LITERAL__, __FROM_COL_LITERAL__, __FROM_COL_LITERAL__, __UNTIL_COL_LITERAL__;
+$validation_error$;
+    ELSE
+        v_validation_error := $validation_error$
+        RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%" or the pair "%"/"%" must be provided.', __RANGE_COL_LITERAL__, __FROM_COL_LITERAL__, __UNTIL_COL_LITERAL__;
+$validation_error$;
+    END IF;
+
+    v_update_of_cols := v_update_of_cols || v_from_col || v_until_col;
+
+    IF v_apply_defaults THEN
+        v_defaults_logic := $defaults$
+    IF final_until IS NULL THEN
+        final_until := 'infinity';
+    END IF;
+$defaults$;
+    END IF;
+
+    SELECT string_agg(quote_ident(c), ', ')
+    INTO v_update_of_cols_sql
+    FROM unnest(v_update_of_cols) AS c;
+
+    specialized_trigger_template := $template$
+CREATE OR REPLACE FUNCTION sql_saga.__FUNC_NAME__()
+RETURNS trigger
+LANGUAGE plpgsql AS $template_sync_trigger$
+DECLARE
+    final_from text;
+    final_until text;
+
+    from_via_bounds text;
+    until_via_bounds text;
+    from_via_range text;
+    until_via_range text;
+
+__TO_DECL__
+
+    from_sources text[] := ARRAY[]::text[];
+    until_sources text[] := ARRAY[]::text[];
+    distinct_from text[];
+    distinct_until text[];
+
+    is_range_changed boolean;
+    is_from_changed boolean;
+    is_until_changed boolean;
+    is_to_changed boolean := false;
+
+    has_from_input boolean;
+    has_until_input boolean;
+BEGIN
+    IF NEW.__RANGE_COL_IDENT__ = 'empty'::__RANGE_TYPE__ THEN
+        RAISE EXCEPTION 'Cannot use an empty range for temporal column "%"', __RANGE_COL_LITERAL__;
+    END IF;
+
+    is_range_changed := (TG_OP = 'INSERT' AND NEW.__RANGE_COL_IDENT__ IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.__RANGE_COL_IDENT__ IS DISTINCT FROM OLD.__RANGE_COL_IDENT__);
+
+    is_from_changed := (TG_OP = 'INSERT' AND NEW.__FROM_COL_IDENT__ IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.__FROM_COL_IDENT__ IS DISTINCT FROM OLD.__FROM_COL_IDENT__);
+
+    is_until_changed := (TG_OP = 'INSERT' AND NEW.__UNTIL_COL_IDENT__ IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.__UNTIL_COL_IDENT__ IS DISTINCT FROM OLD.__UNTIL_COL_IDENT__);
+
+__TO_CHANGED_DETECT__
+
+    has_from_input := is_range_changed OR is_from_changed;
+    has_until_input := is_range_changed OR is_until_changed OR is_to_changed;
+
+    IF is_range_changed THEN
+        from_via_range := lower(NEW.__RANGE_COL_IDENT__)::text;
+        until_via_range := upper(NEW.__RANGE_COL_IDENT__)::text;
+    END IF;
+
+    IF is_from_changed THEN
+        from_via_bounds := NEW.__FROM_COL_IDENT__::text;
+    END IF;
+
+    IF is_until_changed THEN
+        until_via_bounds := NEW.__UNTIL_COL_IDENT__::text;
+    END IF;
+
+__TO_EXTRACT__
+
+    IF is_range_changed AND from_via_range IS NOT NULL THEN
+        from_sources := from_sources || from_via_range;
+    END IF;
+    IF is_from_changed AND from_via_bounds IS NOT NULL THEN
+        from_sources := from_sources || from_via_bounds;
+    END IF;
+
+    SELECT array_agg(DISTINCT v) INTO distinct_from FROM unnest(from_sources) AS v;
+
+    IF cardinality(distinct_from) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent start of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT __RANGE_COL_LITERAL__ AS key, from_via_range AS val WHERE is_range_changed AND from_via_range IS NOT NULL
+                UNION ALL SELECT __FROM_COL_LITERAL__ AS key, from_via_bounds AS val WHERE is_from_changed AND from_via_bounds IS NOT NULL
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_from) = 1 THEN
+        final_from := distinct_from[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_from_input THEN
+        final_from := OLD.__FROM_COL_IDENT__::text;
+    END IF;
+
+    IF is_range_changed AND until_via_range IS NOT NULL THEN
+        until_sources := until_sources || until_via_range;
+    END IF;
+    IF is_until_changed AND until_via_bounds IS NOT NULL THEN
+        until_sources := until_sources || until_via_bounds;
+    END IF;
+
+__TO_COLLECT_END__
+
+    SELECT array_agg(DISTINCT v) INTO distinct_until FROM unnest(until_sources) AS v;
+
+    IF cardinality(distinct_until) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent end of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT __RANGE_COL_LITERAL__ AS key, until_via_range AS val WHERE is_range_changed AND until_via_range IS NOT NULL
+                UNION ALL SELECT __UNTIL_COL_LITERAL__ AS key, until_via_bounds AS val WHERE is_until_changed AND until_via_bounds IS NOT NULL
+__TO_ERROR_END_SRC__
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_until) = 1 THEN
+        final_until := distinct_until[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_until_input THEN
+        final_until := OLD.__UNTIL_COL_IDENT__::text;
+    END IF;
+
+__DEFAULTS__
+
+    IF final_from IS NULL OR final_until IS NULL THEN
+__VALIDATION_ERROR__
+    END IF;
+
+    NEW.__FROM_COL_IDENT__ := final_from::__SUBTYPE_TYPE__;
+    NEW.__UNTIL_COL_IDENT__ := final_until::__SUBTYPE_TYPE__;
+
+__TO_POPULATE__
+
+    BEGIN
+        NEW.__RANGE_COL_IDENT__ := __RANGE_TYPE__(final_from::__SUBTYPE_TYPE__, final_until::__SUBTYPE_TYPE__, '[)');
+    EXCEPTION WHEN data_exception THEN
+        -- Let the table's CHECK constraint handle invalid bounds (e.g., from >= until).
+    END;
+
+    RETURN NEW;
+END;
+$template_sync_trigger$;
+$template$;
+
+    specialized_trigger_sql := specialized_trigger_template;
+
+    -- First insert all optional blocks, then do identifier/type replacement.
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_DECL__', v_to_decl);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_CHANGED_DETECT__', v_to_changed_detect);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_EXTRACT__', v_to_extract);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_COLLECT_END__', v_to_collect_end);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_ERROR_END_SRC__', v_to_error_end_src);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_POPULATE__', v_to_populate);
+
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__DEFAULTS__', v_defaults_logic);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__VALIDATION_ERROR__', v_validation_error);
+
+    IF v_to_col IS NOT NULL THEN
+        specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_COL_IDENT__', v_to_col_ident);
+        specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_COL_LITERAL__', v_to_col_lit);
+    ELSE
+        specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_COL_IDENT__', 'NULL');
+        specialized_trigger_sql := replace(specialized_trigger_sql, '__TO_COL_LITERAL__', 'NULL');
+    END IF;
+
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__FUNC_NAME__', quote_ident(v_func_name));
+
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__RANGE_COL_IDENT__', v_range_col_ident);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__FROM_COL_IDENT__', v_from_col_ident);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__UNTIL_COL_IDENT__', v_until_col_ident);
+
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__RANGE_COL_LITERAL__', v_range_col_lit);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__FROM_COL_LITERAL__', v_from_col_lit);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__UNTIL_COL_LITERAL__', v_until_col_lit);
+
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__RANGE_TYPE__', v_range_type_sql);
+    specialized_trigger_sql := replace(specialized_trigger_sql, '__SUBTYPE_TYPE__', v_range_subtype_sql);
+
+    specialized_trigger_create_trigger_sql := format($$CREATE TRIGGER %1$I BEFORE INSERT OR UPDATE OF %2$s ON %3$s FOR EACH ROW EXECUTE FUNCTION sql_saga.%4$I()$$,
+        v_trg_name /* %1$I */,
+        v_update_of_cols_sql /* %2$s */,
+        table_oid /* %3$s */,
+        v_func_name /* %4$I */
+    );
+
+    function_name := v_func_name;
+    trigger_name := v_trg_name;
+    function_sql := specialized_trigger_sql;
+    trigger_sql := specialized_trigger_create_trigger_sql;
+END;
+$__internal_synchronize_temporal_columns_sql$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(regclass, name) FROM PUBLIC;
+
+/*
+ * add_synchronize_temporal_columns_trigger: the released 1.1 (and 1.0) definition, which generates inline,
+ * is replaced by the one that uses __internal_synchronize_temporal_columns_sql (same generated objects).
+ * Fails closed unless the installed definition is the released one.
+ */
+DO $upgrade_add_synchronize_temporal_columns_trigger$
+BEGIN
+    IF pg_catalog.md5(pg_catalog.pg_get_functiondef('sql_saga.add_synchronize_temporal_columns_trigger(regclass,name)'::regprocedure))
+       <> '99c1db7fdeb02d24a00967dcdc9e9d70' THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade add_synchronize_temporal_columns_trigger';
+    END IF;
+END;
+$upgrade_add_synchronize_temporal_columns_trigger$;
+
+CREATE OR REPLACE PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $add_synchronize_temporal_columns_trigger$
+DECLARE
+    v_table_schema name;
+    v_table_name name;
+    generated record;
+BEGIN
+    SELECT n.nspname, c.relname
+    INTO v_table_schema, v_table_name
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = add_synchronize_temporal_columns_trigger.table_oid;
+
+    generated := sql_saga.__internal_synchronize_temporal_columns_sql(table_oid, era_name);
+
+    RAISE DEBUG 'specialized_trigger_sql: %', generated.function_sql;
+    RAISE DEBUG 'specialized_trigger_create_trigger_sql: %', generated.trigger_sql;
+
+    CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+
+    EXECUTE generated.function_sql;
+    EXECUTE generated.trigger_sql;
+
+    -- Update sql_saga.era with the trigger and function names
+    UPDATE sql_saga.era AS e
+    SET sync_temporal_trg_name = generated.trigger_name,
+        sync_temporal_trg_function_name = generated.function_name
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, add_synchronize_temporal_columns_trigger.era_name);
+END;
+$add_synchronize_temporal_columns_trigger$;
+
+/*
+ * Whether a CHECK constraint definition (pg_get_constraintdef) is the boundary check add_era creates
+ * for the given boundary columns: CHECK ((from < until)), or, for subtypes with infinity,
+ * CHECK (((from < until) AND (from > '-infinity'::subtype))) (rendered per subtype, e.g.
+ * '-infinity'::date, '-Infinity'::numeric, '-infinity'::timestamp with time zone).
+ */
+CREATE FUNCTION sql_saga.__internal_era_boundary_check_matches(definition text, valid_from_column_name name, valid_until_column_name name)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_era_boundary_check_matches$
+    SELECT $1 OPERATOR(pg_catalog.=) pg_catalog.format('CHECK ((%I < %I))', $2, $3)
+        OR (pg_catalog.starts_with($1, pg_catalog.format('CHECK (((%I < %I) AND (%I > ''-', $2, $3, $2))
+            AND pg_catalog.substr($1, pg_catalog.length(pg_catalog.format('CHECK (((%I < %I) AND (%I > ''-', $2, $3, $2)) OPERATOR(pg_catalog.+) 1)
+                OPERATOR(pg_catalog.~) '^[Ii]nfinity''::[a-z0-9 ]+\)\)\)$');
+$__internal_era_boundary_check_matches$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_era_boundary_check_matches(text, name, name) FROM PUBLIC;
+
+/*
+ * Whether a regular foreign key's referenced-side trigger is exactly what add_regular_foreign_key
+ * creates (see __internal_recreate_regular_fk_uk_triggers): a non-internal constraint trigger on the
+ * referenced table FROM the referencing table, DEFERRABLE INITIALLY IMMEDIATE, row level, AFTER
+ * UPDATE OF the key columns and bounds (update) or AFTER DELETE (delete), with the role's C
+ * function, no WHEN qualifier, no transition tables, and the canonical arguments for the current
+ * catalog. Only the firing mode (tgenabled) may differ. update_of_attnums: the expected UPDATE OF
+ * columns of the update trigger (by attnum, so the caller can name them after a column rename).
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_uk_trigger_is_canonical(foreign_key_name name, trigger_oid oid, is_update boolean, update_of_attnums smallint[])
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_uk_trigger_is_canonical$
+    SELECT coalesce((
+        SELECT NOT t.tgisinternal
+           AND t.tgfoid OPERATOR(pg_catalog.=) CASE WHEN $3 THEN 'sql_saga.uk_update_check_c()'::regprocedure
+                                                   ELSE 'sql_saga.uk_delete_check_c()'::regprocedure END
+           -- ROW (1) + AFTER + UPDATE (16) or DELETE (8)
+           AND t.tgtype OPERATOR(pg_catalog.=) CASE WHEN $3 THEN 17 ELSE 9 END
+           AND t.tgconstraint OPERATOR(pg_catalog.<>) 0
+           AND t.tgconstrrelid OPERATOR(pg_catalog.=) pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name))
+           AND t.tgconstrindid OPERATOR(pg_catalog.=) 0
+           AND t.tgdeferrable AND NOT t.tginitdeferred
+           AND t.tgqual IS NULL
+           AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL
+           AND t.tgparentid OPERATOR(pg_catalog.=) 0
+           AND t.tgargs OPERATOR(pg_catalog.=) sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name)
+           -- tgattr (int2vector) is zero-based: compare the elements, not the array bounds.
+           AND ARRAY(SELECT pg_catalog.unnest(t.tgattr::pg_catalog.int2[]))::pg_catalog.int2[] OPERATOR(pg_catalog.=)
+               CASE WHEN $3 THEN $4 ELSE '{}'::pg_catalog.int2[] END
+        FROM pg_catalog.pg_trigger AS t
+        WHERE t.oid = $2
+          AND t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+          AND t.tgname = CASE WHEN $3 THEN fk.uk_update_trigger ELSE fk.uk_delete_trigger END
+    ), false)
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    WHERE fk.foreign_key_name = $1 AND fk.type = 'regular_to_temporal';
+$__internal_regular_fk_uk_trigger_is_canonical$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_uk_trigger_is_canonical(name, oid, boolean, smallint[]) FROM PUBLIC;
+
+/*
+ * Follow renames of the temporal columns of application-time eras (range, valid_from, valid_until,
+ * valid_to) on the given relations (those touched by the ALTER TABLE). A catalogued column that no
+ * longer exists is identified by attnum through an object that follows renames by itself:
+ *   - the synchronization trigger: its UPDATE OF list is range, [valid_to,] valid_from, valid_until;
+ *   - without one, the bounds CHECK (NOT isempty(range)) names the range column and the boundary
+ *     CHECK (from < until ...) names the boundary columns.
+ * Before anything changes, everything that will be regenerated must be exactly what sql_saga
+ * generated for the columns before the rename, and must not be used by anything else; otherwise the
+ * rename is refused, so nothing a user created or changed is overwritten or deleted:
+ *   - the synchronization function: definition (body and properties) as generated, and no
+ *     dependent other than its own trigger;
+ *   - the synchronization trigger: definition as generated (only the firing mode may differ);
+ *   - the referenced-side triggers of every regular foreign key referencing a unique key of the era
+ *     (when a boundary column changes): see __internal_regular_fk_uk_trigger_is_canonical.
+ * Then, in place: the era row follows; the synchronization function is replaced (CREATE OR REPLACE:
+ * same OID, owner and privileges, its trigger keeps its OID and firing mode); the referenced-side
+ * triggers are re-created with the same names and firing modes.
+ * The system_time era is not followed here.
+ */
+CREATE FUNCTION sql_saga.__internal_era_column_rename_follow(table_oids oid[])
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_era_column_rename_follow$
+#variable_conflict use_variable
+DECLARE
+    era_rec record;
+    fk_rec record;
+    sync_trigger record;
+    sync_columns name[];
+    sync_function oid;
+    generated record;
+    canonical_definition text;
+    dependent record;
+    new_range name;
+    new_from name;
+    new_until name;
+    new_to name;
+    boundaries_changed boolean;
+    era_display text;
+    uk_update_attnums smallint[];
+BEGIN
+    FOR era_rec IN
+        SELECT e.*, c.oid AS table_oid
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        JOIN sql_saga.era AS e ON (e.table_schema, e.table_name) = (n.nspname, c.relname)
+        WHERE c.oid = ANY (table_oids)
+          AND e.era_name <> 'system_time'
+          AND EXISTS (
+              SELECT FROM pg_catalog.unnest(ARRAY[e.range_column_name, e.valid_from_column_name,
+                                                  e.valid_until_column_name, e.valid_to_column_name]) AS col(name)
+              WHERE col.name IS NOT NULL
+                AND NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                                WHERE a.attrelid = c.oid AND a.attname = col.name AND a.attnum > 0 AND NOT a.attisdropped))
+        ORDER BY e.table_schema COLLATE "C", e.table_name COLLATE "C", e.era_name COLLATE "C"
+    LOOP
+        new_range := NULL;
+        new_from := NULL;
+        new_until := NULL;
+        new_to := NULL;
+        sync_function := NULL;
+        era_display := sql_saga.__internal_display_name(era_rec.table_oid::regclass);
+
+        SELECT t.oid, t.tgfoid INTO sync_trigger
+        FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = era_rec.table_oid
+          AND t.tgname = era_rec.sync_temporal_trg_name;
+        IF FOUND THEN
+            sync_function := pg_catalog.to_regprocedure(pg_catalog.format('sql_saga.%I()', era_rec.sync_temporal_trg_function_name));
+            sync_columns := ARRAY(
+                SELECT a.attname
+                FROM pg_catalog.pg_trigger AS t
+                CROSS JOIN LATERAL pg_catalog.unnest(t.tgattr::pg_catalog.int2[]) WITH ORDINALITY AS u(attnum, n)
+                JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (era_rec.table_oid, u.attnum)
+                WHERE t.oid = sync_trigger.oid
+                ORDER BY u.n);
+            IF era_rec.valid_to_column_name IS NULL AND pg_catalog.cardinality(sync_columns) = 3 THEN
+                new_range := sync_columns[1];
+                new_from := sync_columns[2];
+                new_until := sync_columns[3];
+            ELSIF era_rec.valid_to_column_name IS NOT NULL AND pg_catalog.cardinality(sync_columns) = 4 THEN
+                new_range := sync_columns[1];
+                new_to := sync_columns[2];
+                new_from := sync_columns[3];
+                new_until := sync_columns[4];
+            ELSE
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization trigger "%" is not the canonical sql_saga trigger; restore it with sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name) first',
+                    era_rec.era_name, era_display, era_rec.sync_temporal_trg_name;
+            END IF;
+        ELSE
+            SELECT a.attname INTO new_range
+            FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (c.conrelid, c.conkey[1])
+            WHERE (c.conrelid, c.conname) = (era_rec.table_oid, era_rec.bounds_check_constraint)
+              AND c.contype = 'c' AND pg_catalog.cardinality(c.conkey) = 1
+              AND pg_catalog.pg_get_constraintdef(c.oid) = pg_catalog.format('CHECK ((NOT isempty(%I)))', a.attname);
+            SELECT sa.attname, ea.attname INTO new_from, new_until
+            FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = c.conrelid AND sa.attnum = ANY (c.conkey)
+            JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = c.conrelid AND ea.attnum = ANY (c.conkey)
+            WHERE (c.conrelid, c.conname) = (era_rec.table_oid, era_rec.boundary_check_constraint)
+              AND c.contype = 'c' AND sa.attnum <> ea.attnum
+              AND sql_saga.__internal_era_boundary_check_matches(pg_catalog.pg_get_constraintdef(c.oid), sa.attname, ea.attname);
+        END IF;
+
+        /* Only a catalogued column that is gone follows, and only to a column of the era's types. */
+        IF new_range IS NULL OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = era_rec.range_column_name AND a.attnum > 0 AND NOT a.attisdropped)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = new_range AND a.atttypid = era_rec.range_type) THEN
+            new_range := era_rec.range_column_name;
+        END IF;
+        IF new_from IS NULL OR era_rec.valid_from_column_name IS NULL
+           OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = era_rec.valid_from_column_name AND a.attnum > 0 AND NOT a.attisdropped)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = new_from AND a.atttypid = era_rec.range_subtype) THEN
+            new_from := era_rec.valid_from_column_name;
+        END IF;
+        IF new_until IS NULL OR era_rec.valid_until_column_name IS NULL
+           OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = era_rec.valid_until_column_name AND a.attnum > 0 AND NOT a.attisdropped)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = new_until AND a.atttypid = era_rec.range_subtype) THEN
+            new_until := era_rec.valid_until_column_name;
+        END IF;
+        IF new_to IS NULL OR era_rec.valid_to_column_name IS NULL
+           OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = era_rec.valid_to_column_name AND a.attnum > 0 AND NOT a.attisdropped)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = era_rec.table_oid AND a.attname = new_to AND a.atttypid = era_rec.range_subtype) THEN
+            new_to := era_rec.valid_to_column_name;
+        END IF;
+
+        IF (new_range, new_from, new_until, new_to) IS NOT DISTINCT FROM
+           (era_rec.range_column_name, era_rec.valid_from_column_name, era_rec.valid_until_column_name, era_rec.valid_to_column_name) THEN
+            CONTINUE;
+        END IF;
+        boundaries_changed := (new_from, new_until) IS DISTINCT FROM (era_rec.valid_from_column_name, era_rec.valid_until_column_name);
+
+        /*
+         * Attribute before anything changes. The synchronization objects are compared with what
+         * sql_saga generates from the catalog as it was before the rename (era row not yet updated);
+         * their column references are by name, so the generated text uses the old names.
+         */
+        IF sync_trigger.oid IS NOT NULL THEN
+            generated := sql_saga.__internal_synchronize_temporal_columns_sql(era_rec.table_oid::regclass, era_rec.era_name);
+
+            IF sync_function IS NULL OR sync_trigger.tgfoid IS DISTINCT FROM sync_function
+               OR generated.function_name IS DISTINCT FROM era_rec.sync_temporal_trg_function_name THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization trigger "%" is not the canonical sql_saga trigger; restore it with sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name) first',
+                    era_rec.era_name, era_display, era_rec.sync_temporal_trg_name;
+            END IF;
+
+            FOR dependent IN
+                SELECT t.tgname, t.tgrelid
+                FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgfoid = sync_function AND t.oid <> sync_trigger.oid
+                ORDER BY t.tgrelid, t.tgname COLLATE "C"
+            LOOP
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization function %() is also used by trigger "%" on table "%"; drop that trigger first',
+                    era_rec.era_name, era_display, pg_catalog.format('sql_saga.%I', era_rec.sync_temporal_trg_function_name), dependent.tgname,
+                    sql_saga.__internal_display_name(dependent.tgrelid::regclass);
+            END LOOP;
+            IF EXISTS (
+                SELECT FROM pg_catalog.pg_depend AS d
+                WHERE d.refclassid = 'pg_catalog.pg_proc'::regclass AND d.refobjid = sync_function
+                  AND d.deptype IN ('n', 'a')
+                  AND NOT (d.classid = 'pg_catalog.pg_trigger'::regclass AND d.objid = sync_trigger.oid)) THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization function %() has dependent objects other than its trigger; drop them first',
+                    era_rec.era_name, era_display, pg_catalog.format('sql_saga.%I', era_rec.sync_temporal_trg_function_name);
+            END IF;
+
+            /*
+             * The function: exactly the generated body (prosrc) and the properties CREATE FUNCTION
+             * gives it there (plpgsql, RETURNS trigger, no arguments, VOLATILE, not STRICT, not
+             * SECURITY DEFINER, not LEAKPROOF, PARALLEL UNSAFE, COST 100, no SET clauses).
+             */
+            canonical_definition := pg_catalog.substr(generated.function_sql,
+                pg_catalog.strpos(generated.function_sql, '$template_sync_trigger$') + pg_catalog.length('$template_sync_trigger$'));
+            canonical_definition := pg_catalog.substr(canonical_definition, 1,
+                pg_catalog.strpos(canonical_definition, '$template_sync_trigger$') - 1);
+            IF NOT EXISTS (
+                SELECT FROM pg_catalog.pg_proc AS p
+                WHERE p.oid = sync_function
+                  AND p.prosrc = canonical_definition
+                  AND p.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'plpgsql')
+                  AND p.prorettype = 'pg_catalog.trigger'::regtype AND p.pronargs = 0 AND p.prokind = 'f'
+                  AND p.provolatile = 'v' AND NOT p.proisstrict AND NOT p.prosecdef AND NOT p.proleakproof
+                  AND p.proparallel = 'u' AND p.procost = 100 AND p.proconfig IS NULL AND p.probin IS NULL
+                  AND p.prosqlbody IS NULL AND p.protrftypes IS NULL AND p.prosupport = 0) THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization function %() is not the canonical sql_saga function; restore it with sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name) first',
+                    era_rec.era_name, era_display, pg_catalog.format('sql_saga.%I', era_rec.sync_temporal_trg_function_name);
+            END IF;
+
+            /*
+             * The trigger: BEFORE INSERT OR UPDATE OF range, [valid_to,] valid_from, valid_until (by
+             * attnum: the columns as they are named now, after the rename), FOR EACH ROW, the
+             * function, no WHEN, no arguments, not a constraint trigger. Only the firing mode may differ.
+             */
+            IF generated.trigger_name IS DISTINCT FROM era_rec.sync_temporal_trg_name
+               OR NOT EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE t.oid = sync_trigger.oid
+                  -- ROW (1) + BEFORE (2) + INSERT (4) + UPDATE (16)
+                  AND t.tgtype = 23 AND NOT t.tgisinternal AND t.tgconstraint = 0 AND t.tgconstrrelid = 0
+                  AND t.tgqual IS NULL AND t.tgnargs = 0 AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL
+                  AND t.tgparentid = 0
+                  -- tgattr (int2vector) is zero-based: compare the elements, not the array bounds.
+                  AND ARRAY(SELECT pg_catalog.unnest(t.tgattr::pg_catalog.int2[]))::pg_catalog.int2[] = ARRAY(
+                      SELECT a.attnum
+                      FROM pg_catalog.unnest(ARRAY[new_range, new_to, new_from, new_until])
+                           WITH ORDINALITY AS u(column_name, n)
+                      JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (era_rec.table_oid, u.column_name)
+                      WHERE u.column_name IS NOT NULL
+                      ORDER BY u.n)::pg_catalog.int2[]) THEN
+                RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": synchronization trigger "%" is not the canonical sql_saga trigger; restore it with sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name) first',
+                    era_rec.era_name, era_display, era_rec.sync_temporal_trg_name;
+            END IF;
+        END IF;
+
+        IF boundaries_changed THEN
+            FOR fk_rec IN
+                SELECT fk.foreign_key_name, fk.uk_update_trigger, fk.uk_delete_trigger, uk.column_names AS uk_column_names
+                FROM sql_saga.foreign_keys AS fk
+                JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                WHERE fk.type = 'regular_to_temporal'
+                  AND (uk.table_schema, uk.table_name, uk.era_name) = (era_rec.table_schema, era_rec.table_name, era_rec.era_name)
+                ORDER BY fk.foreign_key_name COLLATE "C"
+            LOOP
+                /* UPDATE OF key columns and bounds, by attnum: the bounds are named as they are now. */
+                uk_update_attnums := ARRAY(
+                    SELECT a.attnum
+                    FROM pg_catalog.unnest(fk_rec.uk_column_names || new_from || new_until) WITH ORDINALITY AS u(column_name, n)
+                    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (era_rec.table_oid, u.column_name)
+                    ORDER BY u.n);
+                IF NOT coalesce(sql_saga.__internal_regular_fk_uk_trigger_is_canonical(fk_rec.foreign_key_name,
+                           (SELECT t.oid FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = era_rec.table_oid AND t.tgname = fk_rec.uk_update_trigger), true, uk_update_attnums), false)
+                   OR NOT coalesce(sql_saga.__internal_regular_fk_uk_trigger_is_canonical(fk_rec.foreign_key_name,
+                           (SELECT t.oid FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = era_rec.table_oid AND t.tgname = fk_rec.uk_delete_trigger), false, NULL), false) THEN
+                    RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": a referenced-side trigger of regular foreign key "%" is not the canonical sql_saga trigger; repair with drop_foreign_key and add_regular_foreign_key first',
+                        era_rec.era_name, era_display, fk_rec.foreign_key_name;
+                END IF;
+            END LOOP;
+        END IF;
+
+        UPDATE sql_saga.era AS e
+        SET range_column_name = new_range,
+            valid_from_column_name = new_from,
+            valid_until_column_name = new_until,
+            valid_to_column_name = new_to
+        WHERE (e.table_schema, e.table_name, e.era_name) = (era_rec.table_schema, era_rec.table_name, era_rec.era_name);
+
+        /*
+         * The synchronization function names the columns: replace it in place (same OID, owner and
+         * privileges). Its trigger references the columns by attnum and keeps its OID and firing mode.
+         */
+        IF sync_trigger.oid IS NOT NULL THEN
+            generated := sql_saga.__internal_synchronize_temporal_columns_sql(era_rec.table_oid::regclass, era_rec.era_name);
+            EXECUTE generated.function_sql;
+        END IF;
+
+        /* The referenced-side triggers of regular foreign keys carry the bounds in their arguments. */
+        IF boundaries_changed THEN
+            FOR fk_rec IN
+                SELECT fk.foreign_key_name
+                FROM sql_saga.foreign_keys AS fk
+                JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                WHERE fk.type = 'regular_to_temporal'
+                  AND (uk.table_schema, uk.table_name, uk.era_name) = (era_rec.table_schema, era_rec.table_name, era_rec.era_name)
+                ORDER BY fk.foreign_key_name COLLATE "C"
+            LOOP
+                PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);
+            END LOOP;
+        END IF;
+    END LOOP;
+END;
+$__internal_era_column_rename_follow$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_era_column_rename_follow(oid[]) FROM PUBLIC;
+
+DO $upgrade_rename_following_era_columns$
+DECLARE
+    definition text := pg_catalog.pg_get_functiondef('sql_saga.rename_following()'::regprocedure);
+    changed text;
+BEGIN
+    IF (pg_catalog.length(definition) - pg_catalog.length(pg_catalog.replace(definition, $old_era_columns$    /*
+     * Follow renames for the era's temporal columns. This logic is broken into
+     * three parts to handle each type of temporal column independently.
+     *
+     * 1. The primary `range_column_name` is identified by its data type via
+     *    the synchronization trigger's metadata.
+     * 2. The optional `valid_from_column_name` and `valid_until_column_name`
+     *    are identified by inspecting the bounds check constraint.
+     * 3. The optional `valid_to_column_name` is identified as the "other"
+     *    column in the synchronization trigger's metadata.
+     */
+
+    -- Follow rename of the primary range_column_name for synchronized eras.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET range_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            a.attname, e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_trigger t ON t.tgrelid = pc.oid
+        JOIN LATERAL (
+            -- Find the single column attached to the trigger that has the era's range type.
+            SELECT att.attname
+            FROM unnest(t.tgattr) AS tg(attnum)
+            JOIN pg_attribute att ON (att.attrelid, att.attnum) = (pc.oid, tg.attnum)
+            WHERE att.atttypid = e.range_type
+            LIMIT 1
+        ) AS a ON true
+        WHERE e.trigger_applies_defaults -- This flag indicates a synchronization trigger exists.
+          AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+          AND e.range_column_name <> a.attname
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for valid_from and valid_until columns using the boundary check constraint.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            sa.attname, ea.attname,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era AS e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.boundary_check_constraint)
+        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
+        WHERE e.boundary_check_constraint IS NOT NULL
+          AND (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+    LOOP
+        RAISE DEBUG 'rename_following: Executing boundary column rename: %', sql;
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for the optional valid_to_column_name for synchronized eras.
+    FOR sql IN
+        WITH new_valid_to AS (
+            SELECT
+                e.table_schema, e.table_name, e.era_name,
+                (
+                    -- The valid_to column is the one left in the sync trigger's metadata after
+                    -- excluding all other known temporal columns.
+                    SELECT a.attname
+                    FROM unnest(t.tgattr) AS att(num)
+                    JOIN pg_attribute a ON (a.attrelid, a.attnum) = (t.tgrelid, att.num)
+                    WHERE a.attname IS DISTINCT FROM e.range_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_from_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_until_column_name
+                    LIMIT 1 -- There should be at most one left.
+                ) AS candidate_name
+            FROM sql_saga.era e
+            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+            JOIN pg_trigger t ON t.tgrelid = pc.oid
+            WHERE e.trigger_applies_defaults -- Sync trigger exists.
+              AND e.valid_to_column_name IS NOT NULL -- Only for eras that have a valid_to column.
+              AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+        )
+        SELECT format('UPDATE sql_saga.era SET valid_to_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            n.candidate_name,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN new_valid_to n ON (e.table_schema, e.table_name, e.era_name) = (n.table_schema, n.table_name, n.era_name)
+        WHERE e.valid_to_column_name IS DISTINCT FROM n.candidate_name
+          AND n.candidate_name IS NOT NULL
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+$old_era_columns$, ''))) <> pg_catalog.length($old_era_columns_len$    /*
+     * Follow renames for the era's temporal columns. This logic is broken into
+     * three parts to handle each type of temporal column independently.
+     *
+     * 1. The primary `range_column_name` is identified by its data type via
+     *    the synchronization trigger's metadata.
+     * 2. The optional `valid_from_column_name` and `valid_until_column_name`
+     *    are identified by inspecting the bounds check constraint.
+     * 3. The optional `valid_to_column_name` is identified as the "other"
+     *    column in the synchronization trigger's metadata.
+     */
+
+    -- Follow rename of the primary range_column_name for synchronized eras.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET range_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            a.attname, e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_trigger t ON t.tgrelid = pc.oid
+        JOIN LATERAL (
+            -- Find the single column attached to the trigger that has the era's range type.
+            SELECT att.attname
+            FROM unnest(t.tgattr) AS tg(attnum)
+            JOIN pg_attribute att ON (att.attrelid, att.attnum) = (pc.oid, tg.attnum)
+            WHERE att.atttypid = e.range_type
+            LIMIT 1
+        ) AS a ON true
+        WHERE e.trigger_applies_defaults -- This flag indicates a synchronization trigger exists.
+          AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+          AND e.range_column_name <> a.attname
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for valid_from and valid_until columns using the boundary check constraint.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            sa.attname, ea.attname,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era AS e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.boundary_check_constraint)
+        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
+        WHERE e.boundary_check_constraint IS NOT NULL
+          AND (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+    LOOP
+        RAISE DEBUG 'rename_following: Executing boundary column rename: %', sql;
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for the optional valid_to_column_name for synchronized eras.
+    FOR sql IN
+        WITH new_valid_to AS (
+            SELECT
+                e.table_schema, e.table_name, e.era_name,
+                (
+                    -- The valid_to column is the one left in the sync trigger's metadata after
+                    -- excluding all other known temporal columns.
+                    SELECT a.attname
+                    FROM unnest(t.tgattr) AS att(num)
+                    JOIN pg_attribute a ON (a.attrelid, a.attnum) = (t.tgrelid, att.num)
+                    WHERE a.attname IS DISTINCT FROM e.range_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_from_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_until_column_name
+                    LIMIT 1 -- There should be at most one left.
+                ) AS candidate_name
+            FROM sql_saga.era e
+            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+            JOIN pg_trigger t ON t.tgrelid = pc.oid
+            WHERE e.trigger_applies_defaults -- Sync trigger exists.
+              AND e.valid_to_column_name IS NOT NULL -- Only for eras that have a valid_to column.
+              AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+        )
+        SELECT format('UPDATE sql_saga.era SET valid_to_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            n.candidate_name,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN new_valid_to n ON (e.table_schema, e.table_name, e.era_name) = (n.table_schema, n.table_name, n.era_name)
+        WHERE e.valid_to_column_name IS DISTINCT FROM n.candidate_name
+          AND n.candidate_name IS NOT NULL
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+$old_era_columns_len$)
+       OR pg_catalog.strpos(definition, 'sql_saga.__internal_era_column_rename_follow(') > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following era column rename';
+    END IF;
+    changed := pg_catalog.replace(definition, $old_era_columns$    /*
+     * Follow renames for the era's temporal columns. This logic is broken into
+     * three parts to handle each type of temporal column independently.
+     *
+     * 1. The primary `range_column_name` is identified by its data type via
+     *    the synchronization trigger's metadata.
+     * 2. The optional `valid_from_column_name` and `valid_until_column_name`
+     *    are identified by inspecting the bounds check constraint.
+     * 3. The optional `valid_to_column_name` is identified as the "other"
+     *    column in the synchronization trigger's metadata.
+     */
+
+    -- Follow rename of the primary range_column_name for synchronized eras.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET range_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            a.attname, e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_trigger t ON t.tgrelid = pc.oid
+        JOIN LATERAL (
+            -- Find the single column attached to the trigger that has the era's range type.
+            SELECT att.attname
+            FROM unnest(t.tgattr) AS tg(attnum)
+            JOIN pg_attribute att ON (att.attrelid, att.attnum) = (pc.oid, tg.attnum)
+            WHERE att.atttypid = e.range_type
+            LIMIT 1
+        ) AS a ON true
+        WHERE e.trigger_applies_defaults -- This flag indicates a synchronization trigger exists.
+          AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+          AND e.range_column_name <> a.attname
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for valid_from and valid_until columns using the boundary check constraint.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            sa.attname, ea.attname,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era AS e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.boundary_check_constraint)
+        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
+        WHERE e.boundary_check_constraint IS NOT NULL
+          AND (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+    LOOP
+        RAISE DEBUG 'rename_following: Executing boundary column rename: %', sql;
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for the optional valid_to_column_name for synchronized eras.
+    FOR sql IN
+        WITH new_valid_to AS (
+            SELECT
+                e.table_schema, e.table_name, e.era_name,
+                (
+                    -- The valid_to column is the one left in the sync trigger's metadata after
+                    -- excluding all other known temporal columns.
+                    SELECT a.attname
+                    FROM unnest(t.tgattr) AS att(num)
+                    JOIN pg_attribute a ON (a.attrelid, a.attnum) = (t.tgrelid, att.num)
+                    WHERE a.attname IS DISTINCT FROM e.range_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_from_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_until_column_name
+                    LIMIT 1 -- There should be at most one left.
+                ) AS candidate_name
+            FROM sql_saga.era e
+            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+            JOIN pg_trigger t ON t.tgrelid = pc.oid
+            WHERE e.trigger_applies_defaults -- Sync trigger exists.
+              AND e.valid_to_column_name IS NOT NULL -- Only for eras that have a valid_to column.
+              AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+        )
+        SELECT format('UPDATE sql_saga.era SET valid_to_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            n.candidate_name,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN new_valid_to n ON (e.table_schema, e.table_name, e.era_name) = (n.table_schema, n.table_name, n.era_name)
+        WHERE e.valid_to_column_name IS DISTINCT FROM n.candidate_name
+          AND n.candidate_name IS NOT NULL
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+$old_era_columns$, $new_era_columns$    /*
+     * Follow renames of the era's temporal columns (range, valid_from, valid_until, valid_to) on the
+     * relations touched by this ALTER TABLE, and regenerate what names them (the synchronization
+     * function, the referenced-side triggers of regular foreign keys). Runs before the unique keys
+     * are followed, which exclude the era's range column by name.
+     */
+    IF is_alter_table THEN
+        PERFORM sql_saga.__internal_era_column_rename_follow(ARRAY(
+            SELECT DISTINCT c.objid
+            FROM pg_catalog.pg_event_trigger_ddl_commands() AS c
+            WHERE c.command_tag = 'ALTER TABLE' AND c.classid = 'pg_catalog.pg_class'::regclass));
+    END IF;
+
+$new_era_columns$);
+    IF (pg_catalog.length(changed) - pg_catalog.length(pg_catalog.replace(changed, $old_boundary$          AND (pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', e.valid_from_column_name, e.valid_until_column_name)
+               OR pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I) AND (%I > ''-infinity''::integer))', e.valid_from_column_name, e.valid_until_column_name, e.valid_from_column_name))
+$old_boundary$, ''))) <> pg_catalog.length($old_boundary_len$          AND (pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', e.valid_from_column_name, e.valid_until_column_name)
+               OR pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I) AND (%I > ''-infinity''::integer))', e.valid_from_column_name, e.valid_until_column_name, e.valid_from_column_name))
+$old_boundary_len$)
+       OR pg_catalog.strpos(changed, 'sql_saga.__internal_era_boundary_check_matches(') > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following era boundary check';
+    END IF;
+    changed := pg_catalog.replace(changed, $old_boundary$          AND (pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', e.valid_from_column_name, e.valid_until_column_name)
+               OR pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I) AND (%I > ''-infinity''::integer))', e.valid_from_column_name, e.valid_until_column_name, e.valid_from_column_name))
+$old_boundary$, $new_boundary$          AND sql_saga.__internal_era_boundary_check_matches(pg_catalog.pg_get_constraintdef(c.oid), e.valid_from_column_name, e.valid_until_column_name)
+$new_boundary$);
+    IF pg_catalog.strpos(changed, 'PERFORM sql_saga.__internal_era_column_rename_follow(ARRAY(') = 0
+       OR pg_catalog.strpos(changed, 'AND sql_saga.__internal_era_boundary_check_matches(pg_catalog.pg_get_constraintdef(c.oid), e.valid_from_column_name, e.valid_until_column_name)') = 0
+       OR pg_catalog.strpos(changed, 'sql_saga.synchronize_temporal_columns''::regproc') > 0
+       OR pg_catalog.strpos(changed, '''-infinity''''::integer') > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following era column rename';
+    END IF;
+    EXECUTE changed;
+END;
+$upgrade_rename_following_era_columns$;
+/* ITEM 5 (era column renames): END. */
+
 /*
  * add_regular_foreign_key: find an existing (shared) helper by its parsed signature, so a helper whose
  * schema or name needs quoting is reused instead of re-created. Exact replacement of the single released
