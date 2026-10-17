@@ -1306,6 +1306,107 @@ END;
 $upgrade_snapshot_routines$;
 
 /*
+ * Names in the NOTICEs that announce what sql_saga created or dropped: quoted identifiers
+ * (quote_ident / %I.%I), so names containing dots, quotes or parentheses stay unambiguous, with the
+ * schema left out for public. Fixed rather than search_path dependent, because the announcing
+ * functions run with their own search_path. The function form is read from the catalog by OID (so it
+ * never parses identifier text) and must be computed while the function exists: schema.name and the
+ * argument types, as regprocedure prints them.
+ */
+CREATE FUNCTION sql_saga.__internal_notice_name(schema_name name, object_name text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_notice_name$
+    SELECT CASE WHEN schema_name = 'public' THEN quote_ident(object_name) ELSE format('%I.%I', schema_name, object_name) END;
+$__internal_notice_name$;
+
+CREATE FUNCTION sql_saga.__internal_notice_function_name(function_oid oid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_notice_function_name$
+    SELECT CASE WHEN n.nspname = 'public' THEN quote_ident(p.proname) ELSE format('%I.%I', n.nspname, p.proname) END
+        || '(' || coalesce((SELECT string_agg(format_type(a.type_oid, NULL), ',' ORDER BY a.ordinality)
+                            FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a (type_oid, ordinality)), '') || ')'
+    FROM pg_proc AS p
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE p.oid = function_oid;
+$__internal_notice_function_name$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_notice_name(name, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_notice_function_name(oid) FROM PUBLIC;
+
+-- The system time era announces the column, constraint and triggers it creates.
+DO $upgrade_add_system_time_era_notices$
+DECLARE
+    definition text;
+    anchor record;
+BEGIN
+    definition := pg_catalog.pg_get_functiondef(
+        'sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])'::regprocedure);
+    -- Fail closed: the body must be the released shape. No creation NOTICE yet (so a rerun or an
+    -- already patched body is refused), and every anchor exactly once (replace() would patch each copy).
+    IF pg_catalog.strpos(definition, 'sql_saga: Added column') > 0
+       OR pg_catalog.strpos(definition, 'sql_saga: Created constraint') > 0
+       OR pg_catalog.strpos(definition, 'sql_saga: Created trigger') > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_add_system_time_era creation notices: the body already announces creations';
+    END IF;
+    FOR anchor IN
+        SELECT a.label, a.old_text, a.new_text
+        FROM (VALUES
+            ('ALTER TABLE', $old_era_alter$
+        EXECUTE format('ALTER TABLE %I.%I %s', table_schema /* %I */, table_name /* %I */, array_to_string(alter_commands, ', ') /* %s */);
+    END IF;
+$old_era_alter$, $new_era_alter$
+        EXECUTE format('ALTER TABLE %I.%I %s', table_schema /* %I */, table_name /* %I */, array_to_string(alter_commands, ', ') /* %s */);
+    END IF;
+    IF range_attnum = 0 THEN
+        RAISE NOTICE 'sql_saga: Added column "%" to table "%" for system time era', quote_ident(range_column_name), sql_saga.__internal_notice_name(table_schema, table_name);
+    END IF;
+    RAISE NOTICE 'sql_saga: Created constraint "%" on table "%" for system time era', quote_ident(infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name);
+$new_era_alter$),
+            ('generated always trigger', $old_era_generated$
+    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end(%L)', generated_always_trigger, table_oid, range_column_name);
+$old_era_generated$, $new_era_generated$
+    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end(%L)', generated_always_trigger, table_oid, range_column_name);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
+$new_era_generated$),
+            ('write history trigger', $old_era_write$
+    EXECUTE format('CREATE TRIGGER %I AFTER UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history(%L)', write_history_trigger, table_oid, range_column_name);
+$old_era_write$, $new_era_write$
+    EXECUTE format('CREATE TRIGGER %I AFTER UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history(%L)', write_history_trigger, table_oid, range_column_name);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
+$new_era_write$),
+            ('truncate trigger', $old_era_truncate$
+    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
+$old_era_truncate$, $new_era_truncate$
+    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
+$new_era_truncate$)
+        ) AS a (label, old_text, new_text)
+    LOOP
+        IF (pg_catalog.length(definition) - pg_catalog.length(pg_catalog.replace(definition, anchor.old_text, ''))) / pg_catalog.length(anchor.old_text) <> 1 THEN
+            RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_add_system_time_era creation notices (%): the anchor is not present exactly once', anchor.label;
+        END IF;
+        definition := pg_catalog.replace(definition, anchor.old_text, anchor.new_text);
+        IF (pg_catalog.length(definition) - pg_catalog.length(pg_catalog.replace(definition, anchor.new_text, ''))) / pg_catalog.length(anchor.new_text) <> 1 THEN
+            RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_add_system_time_era creation notices (%): the new text is not present exactly once', anchor.label;
+        END IF;
+    END LOOP;
+    -- Postcheck: each creation NOTICE exactly as often as the patch adds it.
+    IF (SELECT count(*) FROM pg_catalog.regexp_matches(definition, 'RAISE NOTICE ''sql_saga: Added column', 'g')) <> 1
+       OR (SELECT count(*) FROM pg_catalog.regexp_matches(definition, 'RAISE NOTICE ''sql_saga: Created constraint', 'g')) <> 1
+       OR (SELECT count(*) FROM pg_catalog.regexp_matches(definition, 'RAISE NOTICE ''sql_saga: Created trigger', 'g')) <> 3 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_add_system_time_era creation notices: unexpected NOTICE count after patching';
+    END IF;
+    EXECUTE definition;
+END;
+$upgrade_add_system_time_era_notices$;
+
+/*
  * Re-create the referenced-side triggers of a regular foreign key, under their stored names, with
  * arguments taken from the current sql_saga.foreign_keys row (used after a referencing column rename).
  * drop_protection refuses dropping a trigger that sql_saga.foreign_keys names, so the names are
@@ -3903,6 +4004,8 @@ BEGIN
         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
         history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
         EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */);
+        RAISE NOTICE 'sql_saga: Created history table "%" for system-versioned table "%"',
+            sql_saga.__internal_notice_name(table_schema, history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
     END IF;
 
@@ -5971,6 +6074,10 @@ DECLARE
     history_projection text;
     fn record;
     previous_flag text;
+    had_view boolean;
+    had_gated boolean;
+    had_functions text[];
+    base_display text;
 BEGIN
     SELECT s.* INTO sv
     FROM sql_saga.system_versioning AS s
@@ -6000,6 +6107,11 @@ BEGIN
     FROM u;
 
     previous_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    base_display := sql_saga.__internal_notice_name(sv.table_schema, sv.table_name);
+    had_view := to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL;
+    had_gated := to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)) IS NOT NULL;
+    had_functions := ARRAY(SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
+                           WHERE to_regprocedure(u.f) IS NOT NULL);
     PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::text, true);
     BEGIN
         FOR fn IN
@@ -6020,6 +6132,10 @@ BEGIN
             sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection));
         EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner);
         EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name);
+        IF NOT had_gated THEN
+            RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
+                sql_saga.__internal_notice_name(sv.history_schema_name, gated_view_name), base_display;
+        END IF;
 
         EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
         SELECT %3$s FROM %4$s
@@ -6040,6 +6156,10 @@ BEGIN
         );
         EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner);
         EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name);
+        IF NOT had_view THEN
+            RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
+                sql_saga.__internal_notice_name(sv.view_schema_name, sv.view_table_name), base_display;
+        END IF;
 
         -- Each registered signature names a function; its body is fixed by its role.
         FOR fn IN
@@ -6052,6 +6172,10 @@ BEGIN
             EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
             -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
             EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
+            IF fn.f <> ALL (had_functions) THEN
+                RAISE NOTICE 'sql_saga: Created function "%" for system-versioned table "%"',
+                    sql_saga.__internal_notice_function_name(fn.f::regprocedure), base_display;
+            END IF;
         END LOOP;
 
         -- The fixed ACL is PUBLIC plus the owner. New objects can receive more through
@@ -6501,10 +6625,10 @@ BEGIN
         RETURNING * INTO system_time_era_row;
 
         IF FOUND AND NOT is_dropped THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); RAISE NOTICE 'sql_saga: Dropped constraint "%" on table "%" for system time era', quote_ident(system_time_era_row.infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
         END IF;
     END;
 
@@ -6586,6 +6710,7 @@ BEGIN
 
                 IF array_length(drop_clauses, 1) > 0 THEN
                      EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                     IF era_name = 'system_time' THEN RAISE NOTICE 'sql_saga: Dropped column "%" from table "%" for system time era', quote_ident(era_row.range_column_name), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
                 END IF;
             END;
         END IF;
@@ -6650,6 +6775,7 @@ BEGIN
 
             IF array_length(drop_clauses, 1) > 0 THEN
                  EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                 IF era_name = 'system_time' THEN RAISE NOTICE 'sql_saga: Dropped column "%" from table "%" for system time era', quote_ident(era_row.range_column_name), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
             END IF;
         END;
     END IF;
@@ -6680,6 +6806,7 @@ DECLARE
     public_view_attributable boolean;
     gated_view_attributable boolean;
     function_depends_on_public_view boolean;
+    function_display text;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -6743,16 +6870,18 @@ BEGIN
             RAISE NOTICE 'sql_saga: Left view "%" in place because it is not the sql_saga-generated view for table "%"',
                 public_view_oid::regclass, sql_saga.__internal_display_name(table_oid);
         END IF;
-        IF as_of_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); END IF;
-        IF between_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); END IF;
-        IF between_symmetric_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); END IF;
-        IF from_to_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); END IF;
+        IF as_of_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_as_of)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF between_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF between_symmetric_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between_symmetric)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF from_to_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_from_to)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
         IF public_view_attributable THEN
             EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+            RAISE NOTICE 'sql_saga: Dropped view "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.view_schema_name, system_versioning_row.view_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
         IF gated_view_attributable THEN
             EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
                 sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior);
+            RAISE NOTICE 'sql_saga: Dropped view "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.history_schema_name, sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name)), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
     END IF;
 
@@ -6760,6 +6889,7 @@ BEGIN
         PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
         IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
             EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+            RAISE NOTICE 'sql_saga: Dropped history table "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.history_schema_name, system_versioning_row.history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
     END IF;
 

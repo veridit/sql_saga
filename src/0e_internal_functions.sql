@@ -200,3 +200,37 @@ BEGIN
     END LOOP;
 END;
 $function$;
+
+/*
+ * Names in the NOTICEs that announce what sql_saga created or dropped: quoted identifiers
+ * (quote_ident / %I.%I), so names containing dots, quotes or parentheses stay unambiguous, with the
+ * schema left out for public. Fixed rather than search_path dependent, because the announcing
+ * functions run with their own search_path. The function form is read from the catalog by OID (so it
+ * never parses identifier text) and must be computed while the function exists: schema.name and the
+ * argument types, as regprocedure prints them.
+ */
+CREATE FUNCTION sql_saga.__internal_notice_name(schema_name name, object_name text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_notice_name$
+    SELECT CASE WHEN schema_name = 'public' THEN quote_ident(object_name) ELSE format('%I.%I', schema_name, object_name) END;
+$__internal_notice_name$;
+
+CREATE FUNCTION sql_saga.__internal_notice_function_name(function_oid oid)
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_notice_function_name$
+    SELECT CASE WHEN n.nspname = 'public' THEN quote_ident(p.proname) ELSE format('%I.%I', n.nspname, p.proname) END
+        || '(' || coalesce((SELECT string_agg(format_type(a.type_oid, NULL), ',' ORDER BY a.ordinality)
+                            FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a (type_oid, ordinality)), '') || ')'
+    FROM pg_proc AS p
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE p.oid = function_oid;
+$__internal_notice_function_name$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_notice_name(name, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_notice_function_name(oid) FROM PUBLIC;

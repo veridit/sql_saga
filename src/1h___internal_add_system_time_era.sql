@@ -93,15 +93,22 @@ BEGIN
     IF alter_commands <> '{}' THEN
         EXECUTE format('ALTER TABLE %I.%I %s', table_schema /* %I */, table_name /* %I */, array_to_string(alter_commands, ', ') /* %s */);
     END IF;
+    IF range_attnum = 0 THEN
+        RAISE NOTICE 'sql_saga: Added column "%" to table "%" for system time era', quote_ident(range_column_name), sql_saga.__internal_notice_name(table_schema, table_name);
+    END IF;
+    RAISE NOTICE 'sql_saga: Created constraint "%" on table "%" for system time era', quote_ident(infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name);
 
     generated_always_trigger := coalesce(generated_always_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_generated_always'));
     EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end(%L)', generated_always_trigger, table_oid, range_column_name);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
 
     write_history_trigger := coalesce(write_history_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_write_history'));
     EXECUTE format('CREATE TRIGGER %I AFTER UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history(%L)', write_history_trigger, table_oid, range_column_name);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
 
     truncate_trigger := coalesce(truncate_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'truncate'));
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
+    RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
 
     INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint)
     VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'tstzmultirange', 'timestamptz', 'D', NULL);

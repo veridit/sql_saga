@@ -141,6 +141,10 @@ DECLARE
     history_projection text;
     fn record;
     previous_flag text;
+    had_view boolean;
+    had_gated boolean;
+    had_functions text[];
+    base_display text;
 BEGIN
     SELECT s.* INTO sv
     FROM sql_saga.system_versioning AS s
@@ -170,6 +174,11 @@ BEGIN
     FROM u;
 
     previous_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    base_display := sql_saga.__internal_notice_name(sv.table_schema, sv.table_name);
+    had_view := to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL;
+    had_gated := to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)) IS NOT NULL;
+    had_functions := ARRAY(SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
+                           WHERE to_regprocedure(u.f) IS NOT NULL);
     PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::text, true);
     BEGIN
         FOR fn IN
@@ -190,6 +199,10 @@ BEGIN
             sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection));
         EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner);
         EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name);
+        IF NOT had_gated THEN
+            RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
+                sql_saga.__internal_notice_name(sv.history_schema_name, gated_view_name), base_display;
+        END IF;
 
         EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
         SELECT %3$s FROM %4$s
@@ -210,6 +223,10 @@ BEGIN
         );
         EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner);
         EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name);
+        IF NOT had_view THEN
+            RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
+                sql_saga.__internal_notice_name(sv.view_schema_name, sv.view_table_name), base_display;
+        END IF;
 
         -- Each registered signature names a function; its body is fixed by its role.
         FOR fn IN
@@ -222,6 +239,10 @@ BEGIN
             EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
             -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
             EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
+            IF fn.f <> ALL (had_functions) THEN
+                RAISE NOTICE 'sql_saga: Created function "%" for system-versioned table "%"',
+                    sql_saga.__internal_notice_function_name(fn.f::regprocedure), base_display;
+            END IF;
         END LOOP;
 
         -- The fixed ACL is PUBLIC plus the owner. New objects can receive more through
@@ -518,6 +539,8 @@ BEGIN
         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
         history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
         EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */);
+        RAISE NOTICE 'sql_saga: Created history table "%" for system-versioned table "%"',
+            sql_saga.__internal_notice_name(table_schema, history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
     END IF;
 
