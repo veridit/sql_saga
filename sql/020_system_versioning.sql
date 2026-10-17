@@ -166,4 +166,30 @@ $$;
 SELECT sql_saga.drop_system_versioning('sv_drop_era_test');
 DROP TABLE sv_drop_era_test;
 
+\echo '--- NOTICEs: every object sql_saga creates or drops is announced, only when it really happens ---'
+CREATE SCHEMA sv_notice;
+
+\echo '--- Fresh table with an existing system_valid_range: no "Added column" NOTICE ---'
+CREATE TABLE sv_notice.has_range (id int, system_valid_range tstzrange NOT NULL DEFAULT tstzrange('-infinity', 'infinity'));
+SELECT sql_saga.add_system_versioning('sv_notice.has_range');
+
+\echo '--- Rebuild of an unchanged family: only the summary NOTICE, nothing newly created ---'
+SELECT sql_saga.rebuild_system_versioning_views('sv_notice.has_range');
+
+\echo '--- cleanup => false: the views and functions are dropped, era objects and history table are kept ---'
+SELECT sql_saga.drop_system_versioning('sv_notice.has_range', cleanup => false);
+SELECT to_regclass('sv_notice.has_range_history') IS NOT NULL AS history_kept,
+       (SELECT count(*) FROM pg_trigger AS t WHERE t.tgrelid = 'sv_notice.has_range'::regclass AND NOT t.tgisinternal) AS triggers_kept;
+DROP TABLE sv_notice.has_range, sv_notice.has_range_history;
+
+\echo '--- Adopted history table: "Adopted", never "Created history table"; custom view and function names ---'
+CREATE TABLE sv_notice.adopt (id int);
+CREATE TABLE sv_notice.adopt_history (id int, system_valid_range tstzrange);
+SELECT sql_saga.add_system_versioning('sv_notice.adopt', view_name => 'adopt_all', function_as_of_name => 'adopt_at');
+
+\echo '--- Drop with cleanup: functions, views, era objects, added column, history table ---'
+SELECT sql_saga.drop_system_versioning('sv_notice.adopt');
+DROP TABLE sv_notice.adopt;
+DROP SCHEMA sv_notice;
+
 \i sql/include/test_teardown.sql

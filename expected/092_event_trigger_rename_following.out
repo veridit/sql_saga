@@ -242,6 +242,18 @@ CREATE TABLE sv_rename_test (
     data text
 );
 SELECT sql_saga.add_system_versioning('sv_rename_test');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Created constraint "sv_rename_test_system_valid_range_infinity_check" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_rename_test_system_time_generated_always" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_rename_test_system_time_write_history" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_rename_test_truncate" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Created history table "sv_rename_test_history" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created view "sv_rename_test_history_gated" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created view "sv_rename_test_with_history" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created function "sv_rename_test__as_of(timestamp with time zone)" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created function "sv_rename_test__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created function "sv_rename_test__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Created function "sv_rename_test__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_rename_test"
  add_system_versioning 
 -----------------------
  
@@ -319,6 +331,18 @@ WHERE table_name = 'sv_rename_test';
 
 -- Cleanup
 SELECT sql_saga.drop_system_versioning('sv_rename_test');
+NOTICE:  sql_saga: Dropped function "sv_rename_test__as_of(timestamp with time zone)" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped function "sv_rename_test__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped function "sv_rename_test__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped function "sv_rename_test__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped view "sv_rename_test_with_history" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped view "sv_rename_test_history_gated" of system-versioned table "sv_rename_test"
+NOTICE:  sql_saga: Dropped constraint "sv_rename_test_inf_check_renamed" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_rename_test_gen_always_renamed" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_rename_test_write_hist_renamed" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_rename_test_trunc_renamed" on table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "sv_rename_test" for system time era
+NOTICE:  sql_saga: Dropped history table "sv_rename_test_history" of system-versioned table "sv_rename_test"
  drop_system_versioning 
 ------------------------
  t

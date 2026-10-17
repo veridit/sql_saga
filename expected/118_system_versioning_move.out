@@ -180,12 +180,22 @@ ERROR:  history table "mv_old.t_history" is managed by sql_saga for table "mv_ol
 \echo '=== 2: round trip: drop management keeping the data, move both tables, adopt the history'
 === 2: round trip: drop management keeping the data, move both tables, adopt the history
 SELECT sql_saga.drop_system_versioning('mv_old.t', cleanup => false);
+NOTICE:  sql_saga: Dropped function "mv_old.t__as_of(timestamp with time zone)" of system-versioned table "mv_old.t"
+NOTICE:  sql_saga: Dropped function "mv_old.t__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "mv_old.t"
+NOTICE:  sql_saga: Dropped function "mv_old.t__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "mv_old.t"
+NOTICE:  sql_saga: Dropped function "mv_old.t__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "mv_old.t"
+NOTICE:  sql_saga: Dropped view "mv_old.t_with_history" of system-versioned table "mv_old.t"
+NOTICE:  sql_saga: Dropped view "mv_old.t_history_gated" of system-versioned table "mv_old.t"
  drop_system_versioning 
 ------------------------
  t
 (1 row)
 
 SELECT sql_saga.drop_system_time_era('mv_old.t', cleanup => false);
+NOTICE:  sql_saga: Dropped constraint "t_system_valid_range_infinity_check" on table "mv_old.t" for system time era
+NOTICE:  sql_saga: Dropped trigger "t_system_time_generated_always" on table "mv_old.t" for system time era
+NOTICE:  sql_saga: Dropped trigger "t_system_time_write_history" on table "mv_old.t" for system time era
+NOTICE:  sql_saga: Dropped trigger "t_truncate" on table "mv_old.t" for system time era
  drop_system_time_era 
 ----------------------
  t
@@ -194,7 +204,17 @@ SELECT sql_saga.drop_system_time_era('mv_old.t', cleanup => false);
 ALTER TABLE mv_old.t SET SCHEMA mv_new;
 ALTER TABLE mv_old.t_history SET SCHEMA mv_new;
 SELECT sql_saga.add_system_versioning('mv_new.t', history_table_name => 't_history', history_table_must_exist => true);
+NOTICE:  sql_saga: Created constraint "t_system_valid_range_infinity_check" on table "mv_new.t" for system time era
+NOTICE:  sql_saga: Created trigger "t_system_time_generated_always" on table "mv_new.t" for system time era
+NOTICE:  sql_saga: Created trigger "t_system_time_write_history" on table "mv_new.t" for system time era
+NOTICE:  sql_saga: Created trigger "t_truncate" on table "mv_new.t" for system time era
 NOTICE:  sql_saga: Adopted existing table "mv_new.t_history" (2 rows) as the history table of system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created view "mv_new.t_history_gated" for system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created view "mv_new.t_with_history" for system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created function "mv_new.t__as_of(timestamp with time zone)" for system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created function "mv_new.t__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created function "mv_new.t__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.t"
+NOTICE:  sql_saga: Created function "mv_new.t__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.t"
  add_system_versioning 
 -----------------------
  
@@ -777,7 +797,17 @@ CREATE TABLE mv_new.f (id int PRIMARY KEY, v text,
 CREATE TABLE mv_new.f_history (id int, v text, system_valid_range tstzrange NOT NULL);
 INSERT INTO mv_new.f_history VALUES (1, 'older', tstzrange('2019-01-01', '2020-01-01')), (1, 'old', tstzrange('2020-01-01', '2021-01-01'));
 SELECT sql_saga.add_system_versioning('mv_new.f');
+NOTICE:  sql_saga: Created constraint "f_system_valid_range_infinity_check" on table "mv_new.f" for system time era
+NOTICE:  sql_saga: Created trigger "f_system_time_generated_always" on table "mv_new.f" for system time era
+NOTICE:  sql_saga: Created trigger "f_system_time_write_history" on table "mv_new.f" for system time era
+NOTICE:  sql_saga: Created trigger "f_truncate" on table "mv_new.f" for system time era
 NOTICE:  sql_saga: Adopted existing table "mv_new.f_history" (2 rows) as the history table of system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created view "mv_new.f_history_gated" for system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created view "mv_new.f_with_history" for system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created function "mv_new.f__as_of(timestamp with time zone)" for system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created function "mv_new.f__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created function "mv_new.f__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.f"
+NOTICE:  sql_saga: Created function "mv_new.f__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.f"
  add_system_versioning 
 -----------------------
  
@@ -792,6 +822,18 @@ FROM sql_saga.system_versioning WHERE table_name = 'f';
 
 CREATE TABLE mv_new.g (id int PRIMARY KEY, v text);
 SELECT sql_saga.add_system_versioning('mv_new.g');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "mv_new.g" for system time era
+NOTICE:  sql_saga: Created constraint "g_system_valid_range_infinity_check" on table "mv_new.g" for system time era
+NOTICE:  sql_saga: Created trigger "g_system_time_generated_always" on table "mv_new.g" for system time era
+NOTICE:  sql_saga: Created trigger "g_system_time_write_history" on table "mv_new.g" for system time era
+NOTICE:  sql_saga: Created trigger "g_truncate" on table "mv_new.g" for system time era
+NOTICE:  sql_saga: Created history table "mv_new.g_history" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created view "mv_new.g_history_gated" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created view "mv_new.g_with_history" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created function "mv_new.g__as_of(timestamp with time zone)" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created function "mv_new.g__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created function "mv_new.g__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.g"
+NOTICE:  sql_saga: Created function "mv_new.g__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "mv_new.g"
  add_system_versioning 
 -----------------------
  

@@ -35,6 +35,18 @@ CREATE TABLE sv_query_test (
     value int
 );
 SELECT sql_saga.add_system_versioning('sv_query_test');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "sv_query_test" for system time era
+NOTICE:  sql_saga: Created constraint "sv_query_test_system_valid_range_infinity_check" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_query_test_system_time_generated_always" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_query_test_system_time_write_history" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Created trigger "sv_query_test_truncate" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Created history table "sv_query_test_history" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created view "sv_query_test_history_gated" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created view "sv_query_test_with_history" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created function "sv_query_test__as_of(timestamp with time zone)" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created function "sv_query_test__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created function "sv_query_test__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Created function "sv_query_test__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "sv_query_test"
  add_system_versioning 
 -----------------------
  
@@ -302,6 +314,18 @@ SELECT id, name, value FROM sv_query_test_with_history ORDER BY value;
 
 -- Cleanup
 SELECT sql_saga.drop_system_versioning('sv_query_test');
+NOTICE:  sql_saga: Dropped function "sv_query_test__as_of(timestamp with time zone)" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped function "sv_query_test__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped function "sv_query_test__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped function "sv_query_test__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped view "sv_query_test_with_history" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped view "sv_query_test_history_gated" of system-versioned table "sv_query_test"
+NOTICE:  sql_saga: Dropped constraint "sv_query_test_system_valid_range_infinity_check" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_query_test_system_time_generated_always" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_query_test_system_time_write_history" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_query_test_truncate" on table "sv_query_test" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "sv_query_test" for system time era
+NOTICE:  sql_saga: Dropped history table "sv_query_test_history" of system-versioned table "sv_query_test"
  drop_system_versioning 
 ------------------------
  t

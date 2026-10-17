@@ -680,6 +680,18 @@ CREATE DOMAIN public.visible_domain AS text;
 SET search_path = public;
 CREATE TABLE ms_domain (id int PRIMARY KEY, payload visible_domain);
 SELECT sql_saga.add_system_versioning('ms_domain');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "ms_domain" for system time era
+NOTICE:  sql_saga: Created constraint "ms_domain_system_valid_range_infinity_check" on table "ms_domain" for system time era
+NOTICE:  sql_saga: Created trigger "ms_domain_system_time_generated_always" on table "ms_domain" for system time era
+NOTICE:  sql_saga: Created trigger "ms_domain_system_time_write_history" on table "ms_domain" for system time era
+NOTICE:  sql_saga: Created trigger "ms_domain_truncate" on table "ms_domain" for system time era
+NOTICE:  sql_saga: Created history table "ms_domain_history" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created view "ms_domain_history_gated" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created view "ms_domain_with_history" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created function "ms_domain__as_of(timestamp with time zone)" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created function "ms_domain__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created function "ms_domain__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "ms_domain"
+NOTICE:  sql_saga: Created function "ms_domain__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "ms_domain"
  add_system_versioning 
 -----------------------
  

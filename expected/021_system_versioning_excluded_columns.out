@@ -31,6 +31,18 @@ CREATE TABLE excl (
     flap text NOT NULL
 );
 SELECT sql_saga.add_system_versioning('excl');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "excl" for system time era
+NOTICE:  sql_saga: Created constraint "excl_system_valid_range_infinity_check" on table "excl" for system time era
+NOTICE:  sql_saga: Created trigger "excl_system_time_generated_always" on table "excl" for system time era
+NOTICE:  sql_saga: Created trigger "excl_system_time_write_history" on table "excl" for system time era
+NOTICE:  sql_saga: Created trigger "excl_truncate" on table "excl" for system time era
+NOTICE:  sql_saga: Created history table "excl_history" for system-versioned table "excl"
+NOTICE:  sql_saga: Created view "excl_history_gated" for system-versioned table "excl"
+NOTICE:  sql_saga: Created view "excl_with_history" for system-versioned table "excl"
+NOTICE:  sql_saga: Created function "excl__as_of(timestamp with time zone)" for system-versioned table "excl"
+NOTICE:  sql_saga: Created function "excl__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "excl"
+NOTICE:  sql_saga: Created function "excl__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "excl"
+NOTICE:  sql_saga: Created function "excl__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "excl"
  add_system_versioning 
 -----------------------
  

@@ -102,6 +102,18 @@ CREATE TABLE s (id int PRIMARY KEY, x text);
 RESET client_min_messages;
 GRANT SELECT, INSERT ON s TO acl_life_r;
 SELECT sql_saga.add_system_versioning('s');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "s" for system time era
+NOTICE:  sql_saga: Created constraint "s_system_valid_range_infinity_check" on table "s" for system time era
+NOTICE:  sql_saga: Created trigger "s_system_time_generated_always" on table "s" for system time era
+NOTICE:  sql_saga: Created trigger "s_system_time_write_history" on table "s" for system time era
+NOTICE:  sql_saga: Created trigger "s_truncate" on table "s" for system time era
+NOTICE:  sql_saga: Created history table "s_history" for system-versioned table "s"
+NOTICE:  sql_saga: Created view "s_history_gated" for system-versioned table "s"
+NOTICE:  sql_saga: Created view "s_with_history" for system-versioned table "s"
+NOTICE:  sql_saga: Created function "s__as_of(timestamp with time zone)" for system-versioned table "s"
+NOTICE:  sql_saga: Created function "s__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "s"
+NOTICE:  sql_saga: Created function "s__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "s"
+NOTICE:  sql_saga: Created function "s__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "s"
  add_system_versioning 
 -----------------------
  

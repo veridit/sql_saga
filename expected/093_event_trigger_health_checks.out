@@ -68,6 +68,18 @@ CREATE TABLE hc_sysver (
     data text
 );
 SELECT sql_saga.add_system_versioning('hc_sysver');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "hc_sysver" for system time era
+NOTICE:  sql_saga: Created constraint "hc_sysver_system_valid_range_infinity_check" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "hc_sysver_system_time_generated_always" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "hc_sysver_system_time_write_history" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "hc_sysver_truncate" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Created history table "hc_sysver_history" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created view "hc_sysver_history_gated" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created view "hc_sysver_with_history" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created function "hc_sysver__as_of(timestamp with time zone)" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created function "hc_sysver__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created function "hc_sysver__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Created function "hc_sysver__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "hc_sysver"
  add_system_versioning 
 -----------------------
  
@@ -249,6 +261,18 @@ ORDER BY p.proname;
 -- Cleanup - change owner back before dropping
 ALTER TABLE hc_sysver OWNER TO CURRENT_USER;
 SELECT sql_saga.drop_system_versioning('hc_sysver');
+NOTICE:  sql_saga: Dropped function "hc_sysver__as_of(timestamp with time zone)" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped function "hc_sysver__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped function "hc_sysver__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped function "hc_sysver__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped view "hc_sysver_with_history" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped view "hc_sysver_history_gated" of system-versioned table "hc_sysver"
+NOTICE:  sql_saga: Dropped constraint "hc_sysver_system_valid_range_infinity_check" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "hc_sysver_system_time_generated_always" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "hc_sysver_system_time_write_history" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "hc_sysver_truncate" on table "hc_sysver" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "hc_sysver" for system time era
+NOTICE:  sql_saga: Dropped history table "hc_sysver_history" of system-versioned table "hc_sysver"
  drop_system_versioning 
 ------------------------
  t

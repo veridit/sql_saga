@@ -98,12 +98,36 @@ NOTICE:  sql_saga: No compatible index found for foreign key on table child_era_
 
 -- Add system versioning (creates system_time era and history triggers)
 SELECT sql_saga.add_system_versioning('parent_era_history_range'::regclass);
+NOTICE:  sql_saga: Added column "system_valid_range" to table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Created constraint "parent_era_history_range_system_valid_range_infinity_check" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "parent_era_history_range_system_time_generated_always" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "parent_era_history_range_system_time_write_history" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "parent_era_history_range_truncate" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Created history table "parent_era_history_range_history" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created view "parent_era_history_range_history_gated" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created view "parent_era_history_range_with_history" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created function "parent_era_history_range__as_of(timestamp with time zone)" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created function "parent_era_history_range__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created function "parent_era_history_range__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Created function "parent_era_history_range__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "parent_era_history_range"
  add_system_versioning 
 -----------------------
  
 (1 row)
 
 SELECT sql_saga.add_system_versioning('child_era_history_range'::regclass);
+NOTICE:  sql_saga: Added column "system_valid_range" to table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Created constraint "child_era_history_range_system_valid_range_infinity_check" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "child_era_history_range_system_time_generated_always" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "child_era_history_range_system_time_write_history" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Created trigger "child_era_history_range_truncate" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Created history table "child_era_history_range_history" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created view "child_era_history_range_history_gated" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created view "child_era_history_range_with_history" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created function "child_era_history_range__as_of(timestamp with time zone)" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created function "child_era_history_range__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created function "child_era_history_range__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Created function "child_era_history_range__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "child_era_history_range"
  add_system_versioning 
 -----------------------
  
@@ -191,12 +215,36 @@ SELECT sql_saga.drop_unique_key('parent_era_history_range'::regclass, ARRAY['id'
 (1 row)
 
 SELECT sql_saga.drop_system_versioning('child_era_history_range'::regclass, cleanup => true);
+NOTICE:  sql_saga: Dropped function "child_era_history_range__as_of(timestamp with time zone)" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped function "child_era_history_range__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped function "child_era_history_range__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped function "child_era_history_range__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped view "child_era_history_range_with_history" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped view "child_era_history_range_history_gated" of system-versioned table "child_era_history_range"
+NOTICE:  sql_saga: Dropped constraint "child_era_history_range_system_valid_range_infinity_check" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "child_era_history_range_system_time_generated_always" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "child_era_history_range_system_time_write_history" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "child_era_history_range_truncate" on table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "child_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped history table "child_era_history_range_history" of system-versioned table "child_era_history_range"
  drop_system_versioning 
 ------------------------
  t
 (1 row)
 
 SELECT sql_saga.drop_system_versioning('parent_era_history_range'::regclass, cleanup => true);
+NOTICE:  sql_saga: Dropped function "parent_era_history_range__as_of(timestamp with time zone)" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped function "parent_era_history_range__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped function "parent_era_history_range__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped function "parent_era_history_range__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped view "parent_era_history_range_with_history" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped view "parent_era_history_range_history_gated" of system-versioned table "parent_era_history_range"
+NOTICE:  sql_saga: Dropped constraint "parent_era_history_range_system_valid_range_infinity_check" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "parent_era_history_range_system_time_generated_always" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "parent_era_history_range_system_time_write_history" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped trigger "parent_era_history_range_truncate" on table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "parent_era_history_range" for system time era
+NOTICE:  sql_saga: Dropped history table "parent_era_history_range_history" of system-versioned table "parent_era_history_range"
  drop_system_versioning 
 ------------------------
  t

@@ -15,6 +15,29 @@ missing_trigger | unrelated DDL ok
 missing SYSTEM_TIME trigger | P0001: sql_saga: integrity violation for table "integrity_test.sv_trigger": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning
 t
 t
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__as_of(timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped view "integrity_test.sv_trigger_with_history" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped view "integrity_test.sv_trigger_history_gated" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped constraint "sv_trigger_system_valid_range_infinity_check" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_trigger_system_time_write_history" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_trigger_truncate" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped history table "integrity_test.sv_trigger_history" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Added column "system_valid_range" to table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created constraint "sv_trigger_system_valid_range_infinity_check" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_system_time_generated_always" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_system_time_write_history" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_truncate" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created history table "integrity_test.sv_trigger_history" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created view "integrity_test.sv_trigger_history_gated" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created view "integrity_test.sv_trigger_with_history" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__as_of(timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
 SYSTEM_TIME trigger tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
 missing trigger rollback restores integrity | ok
 excluded column valid before damage | ok
@@ -24,6 +47,25 @@ missing excluded column | P0001: sql_saga: integrity violation for table "integr
 t
 t
 t
+NOTICE:  sql_saga: Dropped view "integrity_test.sv_excluded_history_gated" of system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Dropped constraint "sv_excluded_system_valid_range_infinity_check" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_excluded_system_time_generated_always" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_excluded_system_time_write_history" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_excluded_truncate" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Dropped history table "integrity_test.sv_excluded_history" of system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Added column "system_valid_range" to table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Created constraint "sv_excluded_system_valid_range_infinity_check" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Created trigger "sv_excluded_system_time_generated_always" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Created trigger "sv_excluded_system_time_write_history" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Created trigger "sv_excluded_truncate" on table "integrity_test.sv_excluded" for system time era
+NOTICE:  sql_saga: Created history table "integrity_test.sv_excluded_history" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created view "integrity_test.sv_excluded_history_gated" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created view "integrity_test.sv_excluded_with_history" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created function "integrity_test.sv_excluded__as_of(timestamp with time zone)" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created function "integrity_test.sv_excluded__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created function "integrity_test.sv_excluded__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_excluded"
+NOTICE:  sql_saga: Created function "integrity_test.sv_excluded__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_excluded"
 excluded column tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
 SYSTEM_TIME snapshot valid before damage | ok
 stale_snapshot | unrelated DDL ok
@@ -190,6 +232,29 @@ cross_class_two_families | unrelated DDL ok
 cross-class two-family first SYSTEM_TIME | P0001: sql_saga: integrity violation for table "integrity_test.sv_trigger": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning
 t
 t
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__as_of(timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped function "integrity_test.sv_trigger__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped view "integrity_test.sv_trigger_with_history" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped view "integrity_test.sv_trigger_history_gated" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Dropped constraint "sv_trigger_system_valid_range_infinity_check" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_trigger_system_time_write_history" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped trigger "sv_trigger_truncate" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Dropped history table "integrity_test.sv_trigger_history" of system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Added column "system_valid_range" to table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created constraint "sv_trigger_system_valid_range_infinity_check" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_system_time_generated_always" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_system_time_write_history" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created trigger "sv_trigger_truncate" on table "integrity_test.sv_trigger" for system time era
+NOTICE:  sql_saga: Created history table "integrity_test.sv_trigger_history" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created view "integrity_test.sv_trigger_history_gated" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created view "integrity_test.sv_trigger_with_history" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__as_of(timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
+NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
 cross-class two-family repair first SYSTEM_TIME | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
 cross-class two-family next generated function | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
 

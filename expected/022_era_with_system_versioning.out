@@ -50,6 +50,18 @@ NOTICE:  sql_saga: Added constraints to table temporal_and_versioned: ADD CONSTR
 
 -- 3. Add system versioning
 SELECT sql_saga.add_system_versioning('temporal_and_versioned');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Created constraint "temporal_and_versioned_system_valid_range_infinity_check" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Created trigger "temporal_and_versioned_system_time_generated_always" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Created trigger "temporal_and_versioned_system_time_write_history" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Created trigger "temporal_and_versioned_truncate" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Created history table "temporal_and_versioned_history" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created view "temporal_and_versioned_history_gated" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created view "temporal_and_versioned_with_history" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created function "temporal_and_versioned__as_of(timestamp with time zone)" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created function "temporal_and_versioned__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created function "temporal_and_versioned__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Created function "temporal_and_versioned__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "temporal_and_versioned"
  add_system_versioning 
 -----------------------
  
@@ -103,6 +115,18 @@ SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORD
 
 -- 5. Drop system versioning and check that the era is still intact
 SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true);
+NOTICE:  sql_saga: Dropped function "temporal_and_versioned__as_of(timestamp with time zone)" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped function "temporal_and_versioned__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped function "temporal_and_versioned__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped function "temporal_and_versioned__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped view "temporal_and_versioned_with_history" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped view "temporal_and_versioned_history_gated" of system-versioned table "temporal_and_versioned"
+NOTICE:  sql_saga: Dropped constraint "temporal_and_versioned_system_valid_range_infinity_check" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Dropped trigger "temporal_and_versioned_system_time_generated_always" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Dropped trigger "temporal_and_versioned_system_time_write_history" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Dropped trigger "temporal_and_versioned_truncate" on table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "temporal_and_versioned" for system time era
+NOTICE:  sql_saga: Dropped history table "temporal_and_versioned_history" of system-versioned table "temporal_and_versioned"
  drop_system_versioning 
 ------------------------
  t

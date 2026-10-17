@@ -40,12 +40,36 @@ CREATE TABLE establishment_sv (
 );
 -- Enable system versioning
 SELECT sql_saga.add_system_versioning(table_oid => 'legal_unit_sv');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Created constraint "legal_unit_sv_system_valid_range_infinity_check" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_sv_system_time_generated_always" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_sv_system_time_write_history" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_sv_truncate" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Created history table "legal_unit_sv_history" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created view "legal_unit_sv_history_gated" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created view "legal_unit_sv_with_history" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created function "legal_unit_sv__as_of(timestamp with time zone)" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created function "legal_unit_sv__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created function "legal_unit_sv__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Created function "legal_unit_sv__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_sv"
  add_system_versioning 
 -----------------------
  
 (1 row)
 
 SELECT sql_saga.add_system_versioning(table_oid => 'establishment_sv');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "establishment_sv" for system time era
+NOTICE:  sql_saga: Created constraint "establishment_sv_system_valid_range_infinity_check" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_sv_system_time_generated_always" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_sv_system_time_write_history" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_sv_truncate" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Created history table "establishment_sv_history" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created view "establishment_sv_history_gated" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created view "establishment_sv_with_history" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created function "establishment_sv__as_of(timestamp with time zone)" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created function "establishment_sv__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created function "establishment_sv__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Created function "establishment_sv__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_sv"
  add_system_versioning 
 -----------------------
  
@@ -137,12 +161,36 @@ NOTICE:  sql_saga: No compatible index found for foreign key on table establishm
 (1 row)
 
 SELECT sql_saga.add_system_versioning(table_oid => 'legal_unit_era_history');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Created constraint "legal_unit_era_history_system_valid_range_infinity_check" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_era_history_system_time_generated_always" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_era_history_system_time_write_history" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "legal_unit_era_history_truncate" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Created history table "legal_unit_era_history_history" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created view "legal_unit_era_history_history_gated" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created view "legal_unit_era_history_with_history" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created function "legal_unit_era_history__as_of(timestamp with time zone)" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created function "legal_unit_era_history__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created function "legal_unit_era_history__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Created function "legal_unit_era_history__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "legal_unit_era_history"
  add_system_versioning 
 -----------------------
  
 (1 row)
 
 SELECT sql_saga.add_system_versioning(table_oid => 'establishment_era_history');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Created constraint "establishment_era_history_system_valid_range_infinity_check" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_era_history_system_time_generated_always" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_era_history_system_time_write_history" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Created trigger "establishment_era_history_truncate" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Created history table "establishment_era_history_history" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created view "establishment_era_history_history_gated" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created view "establishment_era_history_with_history" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created function "establishment_era_history__as_of(timestamp with time zone)" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created function "establishment_era_history__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created function "establishment_era_history__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Created function "establishment_era_history__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "establishment_era_history"
  add_system_versioning 
 -----------------------
  
@@ -193,12 +241,36 @@ SELECT 'establishment_era_history' AS type, COUNT(*) AS count FROM establishment
 
 -- Teardown for SV tables
 SELECT sql_saga.drop_system_versioning('establishment_sv', cleanup => true);
+NOTICE:  sql_saga: Dropped function "establishment_sv__as_of(timestamp with time zone)" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped function "establishment_sv__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped function "establishment_sv__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped function "establishment_sv__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped view "establishment_sv_with_history" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped view "establishment_sv_history_gated" of system-versioned table "establishment_sv"
+NOTICE:  sql_saga: Dropped constraint "establishment_sv_system_valid_range_infinity_check" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_sv_system_time_generated_always" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_sv_system_time_write_history" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_sv_truncate" on table "establishment_sv" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "establishment_sv" for system time era
+NOTICE:  sql_saga: Dropped history table "establishment_sv_history" of system-versioned table "establishment_sv"
  drop_system_versioning 
 ------------------------
  t
 (1 row)
 
 SELECT sql_saga.drop_system_versioning('legal_unit_sv', cleanup => true);
+NOTICE:  sql_saga: Dropped function "legal_unit_sv__as_of(timestamp with time zone)" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped function "legal_unit_sv__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped function "legal_unit_sv__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped function "legal_unit_sv__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped view "legal_unit_sv_with_history" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped view "legal_unit_sv_history_gated" of system-versioned table "legal_unit_sv"
+NOTICE:  sql_saga: Dropped constraint "legal_unit_sv_system_valid_range_infinity_check" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_sv_system_time_generated_always" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_sv_system_time_write_history" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_sv_truncate" on table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "legal_unit_sv" for system time era
+NOTICE:  sql_saga: Dropped history table "legal_unit_sv_history" of system-versioned table "legal_unit_sv"
  drop_system_versioning 
 ------------------------
  t
@@ -219,6 +291,18 @@ SELECT sql_saga.drop_unique_key('establishment_era_history', ARRAY['id'], 'valid
 (1 row)
 
 SELECT sql_saga.drop_system_versioning('establishment_era_history', cleanup => true);
+NOTICE:  sql_saga: Dropped function "establishment_era_history__as_of(timestamp with time zone)" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped function "establishment_era_history__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped function "establishment_era_history__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped function "establishment_era_history__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped view "establishment_era_history_with_history" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped view "establishment_era_history_history_gated" of system-versioned table "establishment_era_history"
+NOTICE:  sql_saga: Dropped constraint "establishment_era_history_system_valid_range_infinity_check" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_era_history_system_time_generated_always" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_era_history_system_time_write_history" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "establishment_era_history_truncate" on table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "establishment_era_history" for system time era
+NOTICE:  sql_saga: Dropped history table "establishment_era_history_history" of system-versioned table "establishment_era_history"
  drop_system_versioning 
 ------------------------
  t
@@ -237,6 +321,18 @@ SELECT sql_saga.drop_unique_key('legal_unit_era_history', ARRAY['id'], 'valid');
 (1 row)
 
 SELECT sql_saga.drop_system_versioning('legal_unit_era_history', cleanup => true);
+NOTICE:  sql_saga: Dropped function "legal_unit_era_history__as_of(timestamp with time zone)" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped function "legal_unit_era_history__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped function "legal_unit_era_history__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped function "legal_unit_era_history__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped view "legal_unit_era_history_with_history" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped view "legal_unit_era_history_history_gated" of system-versioned table "legal_unit_era_history"
+NOTICE:  sql_saga: Dropped constraint "legal_unit_era_history_system_valid_range_infinity_check" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_era_history_system_time_generated_always" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_era_history_system_time_write_history" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Dropped trigger "legal_unit_era_history_truncate" on table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "legal_unit_era_history" for system time era
+NOTICE:  sql_saga: Dropped history table "legal_unit_era_history_history" of system-versioned table "legal_unit_era_history"
  drop_system_versioning 
 ------------------------
  t

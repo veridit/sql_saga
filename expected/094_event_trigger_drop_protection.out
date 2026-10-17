@@ -256,6 +256,18 @@ SAVEPOINT system_versioning_tests;
 /* system_versioning - test drop protection for system-versioned tables */
 CREATE TABLE dp_sysver (id int PRIMARY KEY, name text);
 SELECT sql_saga.add_system_versioning('dp_sysver');
+NOTICE:  sql_saga: Added column "system_valid_range" to table "dp_sysver" for system time era
+NOTICE:  sql_saga: Created constraint "dp_sysver_system_valid_range_infinity_check" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "dp_sysver_system_time_generated_always" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "dp_sysver_system_time_write_history" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Created trigger "dp_sysver_truncate" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Created history table "dp_sysver_history" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created view "dp_sysver_history_gated" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created view "dp_sysver_with_history" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created function "dp_sysver__as_of(timestamp with time zone)" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created function "dp_sysver__between(timestamp with time zone,timestamp with time zone)" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created function "dp_sysver__between_symmetric(timestamp with time zone,timestamp with time zone)" for system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Created function "dp_sysver__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "dp_sysver"
  add_system_versioning 
 -----------------------
  
@@ -305,6 +317,18 @@ ERROR:  cannot drop constraint "dp_sysver_system_valid_range_infinity_check" on 
 ROLLBACK TO SAVEPOINT sv_infinity_check;
 -- Test proper cleanup works
 SELECT sql_saga.drop_system_versioning('dp_sysver');
+NOTICE:  sql_saga: Dropped function "dp_sysver__as_of(timestamp with time zone)" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped function "dp_sysver__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped function "dp_sysver__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped function "dp_sysver__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped view "dp_sysver_with_history" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped view "dp_sysver_history_gated" of system-versioned table "dp_sysver"
+NOTICE:  sql_saga: Dropped constraint "dp_sysver_system_valid_range_infinity_check" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "dp_sysver_system_time_generated_always" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "dp_sysver_system_time_write_history" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Dropped trigger "dp_sysver_truncate" on table "dp_sysver" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table "dp_sysver" for system time era
+NOTICE:  sql_saga: Dropped history table "dp_sysver_history" of system-versioned table "dp_sysver"
  drop_system_versioning 
 ------------------------
  t
