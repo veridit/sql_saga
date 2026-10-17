@@ -518,6 +518,60 @@ NOTICE:  sql_saga: Dropped history table "sv_notice.adopt_history" of system-ver
 
 DROP TABLE sv_notice.adopt;
 DROP SCHEMA sv_notice;
+\echo '--- NOTICE names are quoted identifiers: a schema with "(", a table with a double quote and a dot, a function with "(" ---'
+--- NOTICE names are quoted identifiers: a schema with "(", a table with a double quote and a dot, a function with "(" ---
+CREATE SCHEMA "s(odd";
+CREATE TABLE "s(odd"."t""q.x" (id int);
+SELECT sql_saga.add_system_versioning('"s(odd"."t""q.x"', function_between_name => 'b(t)');
+NOTICE:  sql_saga: Added column "system_valid_range" to table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Created constraint ""t""q.x_system_valid_range_infinity_check"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Created trigger ""t""q.x_system_time_generated_always"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Created trigger ""t""q.x_system_time_write_history"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Created trigger ""t""q.x_truncate"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Created history table ""s(odd"."t""q.x_history"" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created view ""s(odd"."t""q.x_history_gated"" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created view ""s(odd"."t""q.x_with_history"" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created function ""s(odd"."t""q.x__as_of"(timestamp with time zone)" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created function ""s(odd"."b(t)"(timestamp with time zone,timestamp with time zone)" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created function ""s(odd"."t""q.x__between_symmetric"(timestamp with time zone,timestamp with time zone)" for system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Created function ""s(odd"."t""q.x__from_to"(timestamp with time zone,timestamp with time zone)" for system-versioned table ""s(odd"."t""q.x""
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+SELECT count(*) AS registered FROM sql_saga.system_versioning AS sv WHERE sv.table_schema = 's(odd' AND sv.table_name = 't"q.x';
+ registered 
+------------
+          1
+(1 row)
+
+SELECT sql_saga.drop_system_versioning('"s(odd"."t""q.x"');
+NOTICE:  sql_saga: Dropped function ""s(odd"."t""q.x__as_of"(timestamp with time zone)" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped function ""s(odd"."b(t)"(timestamp with time zone,timestamp with time zone)" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped function ""s(odd"."t""q.x__between_symmetric"(timestamp with time zone,timestamp with time zone)" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped function ""s(odd"."t""q.x__from_to"(timestamp with time zone,timestamp with time zone)" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped view ""s(odd"."t""q.x_with_history"" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped view ""s(odd"."t""q.x_history_gated"" of system-versioned table ""s(odd"."t""q.x""
+NOTICE:  sql_saga: Dropped constraint ""t""q.x_system_valid_range_infinity_check"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Dropped trigger ""t""q.x_system_time_generated_always"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Dropped trigger ""t""q.x_system_time_write_history"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Dropped trigger ""t""q.x_truncate"" on table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Dropped column "system_valid_range" from table ""s(odd"."t""q.x"" for system time era
+NOTICE:  sql_saga: Dropped history table ""s(odd"."t""q.x_history"" of system-versioned table ""s(odd"."t""q.x""
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+SELECT count(*) AS registered FROM sql_saga.system_versioning AS sv WHERE sv.table_schema = 's(odd' AND sv.table_name = 't"q.x';
+ registered 
+------------
+          0
+(1 row)
+
+DROP TABLE "s(odd"."t""q.x";
+DROP SCHEMA "s(odd";
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql

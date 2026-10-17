@@ -192,4 +192,14 @@ SELECT sql_saga.drop_system_versioning('sv_notice.adopt');
 DROP TABLE sv_notice.adopt;
 DROP SCHEMA sv_notice;
 
+\echo '--- NOTICE names are quoted identifiers: a schema with "(", a table with a double quote and a dot, a function with "(" ---'
+CREATE SCHEMA "s(odd";
+CREATE TABLE "s(odd"."t""q.x" (id int);
+SELECT sql_saga.add_system_versioning('"s(odd"."t""q.x"', function_between_name => 'b(t)');
+SELECT count(*) AS registered FROM sql_saga.system_versioning AS sv WHERE sv.table_schema = 's(odd' AND sv.table_name = 't"q.x';
+SELECT sql_saga.drop_system_versioning('"s(odd"."t""q.x"');
+SELECT count(*) AS registered FROM sql_saga.system_versioning AS sv WHERE sv.table_schema = 's(odd' AND sv.table_name = 't"q.x';
+DROP TABLE "s(odd"."t""q.x";
+DROP SCHEMA "s(odd";
+
 \i sql/include/test_teardown.sql

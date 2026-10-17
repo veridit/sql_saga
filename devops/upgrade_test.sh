@@ -1880,6 +1880,74 @@ ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
 fi
 
 # ---------------------------------------------------------------------------------------------
+section "system time era NOTICE patch is fail-closed" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# The 1.1--1.2 script patches the released __internal_add_system_time_era body textually
+# (DO $upgrade_add_system_time_era_notices$). It must apply only to the exact released shape: every old
+# anchor exactly once and no new NOTICE text yet, and afterwards each new NOTICE exactly once. Each case
+# runs inside a transaction on the released 1.1 state ($QUERY_ANCHOR, before any update) and rolls back.
+ERA_NOTICE_BLOCK="$WORK/era_notice_block.sql"
+awk '/^DO \$upgrade_add_system_time_era_notices\$/ { on = 1 } on { print } on && /^\$upgrade_add_system_time_era_notices\$;/ { exit }' \
+    "$EXT/sql_saga--1.1--1.2.sql" >"$ERA_NOTICE_BLOCK"
+check "1.1--1.2 script has one system time era NOTICE patch block" "1" \
+    "$(grep -c '^DO \$upgrade_add_system_time_era_notices\$' "$EXT/sql_saga--1.1--1.2.sql")"
+ERA_FN="'sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])'::regprocedure"
+ERA_NOTICE_COUNTS="SELECT (SELECT count(*) FROM regexp_matches(prosrc, 'RAISE NOTICE ''sql_saga: Added column', 'g'))
+    || '|' || (SELECT count(*) FROM regexp_matches(prosrc, 'RAISE NOTICE ''sql_saga: Created constraint', 'g'))
+    || '|' || (SELECT count(*) FROM regexp_matches(prosrc, 'RAISE NOTICE ''sql_saga: Created trigger', 'g'))
+    FROM pg_catalog.pg_proc WHERE oid = $ERA_FN;"
+# era_notice_case <label> <mutation sql run before the block, or empty>: prints the block outcome
+era_notice_case() {
+    { echo "BEGIN;"; printf '%s\n' "$2"; cat "$ERA_NOTICE_BLOCK"; echo "$ERA_NOTICE_COUNTS"; echo "ROLLBACK;"; } \
+        | sql "$QUERY_ANCHOR" >"$WORK/era_notice.$1.log"
+    if grep -q '^ERROR' "$WORK/era_notice.$1.log"; then grep -m1 '^ERROR' "$WORK/era_notice.$1.log"; else tail -n 1 "$WORK/era_notice.$1.log"; fi
+}
+# era_mutation <old> <new>: replace text in the live body exactly once (fails if <old> is not there once)
+era_mutation() {
+    printf '%s\n' "DO \$m\$ DECLARE d text := pg_catalog.pg_get_functiondef($ERA_FN); BEGIN
+    IF (length(d) - length(replace(d, \$o\$$1\$o\$, ''))) / length(\$o\$$1\$o\$) <> 1 THEN RAISE EXCEPTION 'mutation anchor not found once'; END IF;
+    EXECUTE replace(d, \$o\$$1\$o\$, \$n\$$2\$n\$); END \$m\$;"
+}
+era_before="$(q "$QUERY_ANCHOR" "SELECT md5(pg_catalog.pg_get_functiondef($ERA_FN))")"
+ERA_TRUNC_LINE="    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);"
+ERA_GEN_LINE="    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end(%L)', generated_always_trigger, table_oid, range_column_name);"
+check "pristine released body: the patch adds each new NOTICE exactly once" "1|1|3" "$(era_notice_case pristine "")"
+out=$(era_notice_case rerun "$(cat "$ERA_NOTICE_BLOCK")")
+case "$out" in
+    ERROR*__internal_add_system_time_era*) ok "already patched body: the patch refuses to apply twice" ;;
+    ERROR*) fail "already patched body: refused, but not by the NOTICE patch guard: $out" ;;
+    *) fail "already patched body: the patch applied again (NOTICE counts added|constraint|trigger: $out)" ;;
+esac
+for c in "truncate:$ERA_TRUNC_LINE" "generated:$ERA_GEN_LINE"; do
+    label=${c%%:*}; line=${c#*:}
+    # A comment line between the copies keeps each copy a complete anchor (anchors include their newlines).
+    out=$(era_notice_case "dup_$label" "$(era_mutation "$line" "$line
+    -- duplicated anchor
+$line")")
+    case "$out" in
+        ERROR*mutation*) fail "duplicate $label anchor: harness could not build the mutation: $out" ;;
+        ERROR*__internal_add_system_time_era*) ok "duplicate $label trigger anchor: the patch refuses" ;;
+        ERROR*) fail "duplicate $label trigger anchor: refused, but not by the NOTICE patch guard: $out" ;;
+        *) fail "duplicate $label trigger anchor: the patch applied (NOTICE counts added|constraint|trigger: $out)" ;;
+    esac
+done
+out=$(era_notice_case missing_truncate "$(era_mutation "$ERA_TRUNC_LINE" "    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger, table_oid);")")
+case "$out" in
+    ERROR*mutation*) fail "missing truncate anchor: harness could not build the mutation: $out" ;;
+    ERROR*__internal_add_system_time_era*) ok "missing truncate trigger anchor: the patch refuses" ;;
+    *) fail "missing truncate trigger anchor: the patch did not refuse: $out" ;;
+esac
+out=$(era_notice_case new_text_present "$(era_mutation "$ERA_GEN_LINE" "$ERA_GEN_LINE
+    RAISE NOTICE 'sql_saga: Created trigger \"%\" on table', generated_always_trigger;")")
+case "$out" in
+    ERROR*mutation*) fail "body already carrying a creation NOTICE: harness could not build the mutation: $out" ;;
+    ERROR*__internal_add_system_time_era*) ok "body already carrying a creation NOTICE: the patch refuses" ;;
+    *) fail "body already carrying a creation NOTICE: the patch applied (NOTICE counts added|constraint|trigger: $out)" ;;
+esac
+check "NOTICE patch probes roll back: released body untouched" "$era_before" \
+    "$(q "$QUERY_ANCHOR" "SELECT md5(pg_catalog.pg_get_functiondef($ERA_FN))")"
+
+# ---------------------------------------------------------------------------------------------
 section "shared regular-FK helper (two regular FKs on one key)" "expected RED"
 # ---------------------------------------------------------------------------------------------
 # add_regular_foreign_key shares one helper function between all regular FKs referencing the same
