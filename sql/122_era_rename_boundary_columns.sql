@@ -249,6 +249,66 @@ BEGIN;
 UPDATE e5.par SET starts_on = '2021-06-01' WHERE id = 2;
 ROLLBACK;
 
+\echo '--- A rename is refused, and nothing changes, when it would overwrite or delete what sql_saga does not own'
+CREATE VIEW e5.par_columns AS
+SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS columns
+FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'e5.par'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+-- A refused ALTER rolls back alone, so the queries after it show the state the ALTER left behind.
+\set ON_ERROR_ROLLBACK on
+
+-- (1) The synchronization function is also used by a user trigger on another table: regenerating it
+-- would delete that trigger or change what it does, so the rename is refused.
+BEGIN;
+CREATE TABLE e5.other (LIKE e5.par);
+CREATE TRIGGER other_user_trigger BEFORE INSERT ON e5.other FOR EACH ROW EXECUTE FUNCTION sql_saga.e5_par_valid_template_sync();
+ALTER TABLE e5.par RENAME COLUMN period TO p2;
+TABLE e5.par_columns;
+SELECT e.range_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('e5', 'par');
+SELECT t.tgname, t.tgfoid::regproc AS function FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'e5.other'::regclass;
+ROLLBACK;
+
+-- (2) The synchronization function body was replaced by the user: refused, the body is untouched.
+BEGIN;
+CREATE OR REPLACE FUNCTION sql_saga.e5_par_valid_template_sync() RETURNS trigger LANGUAGE plpgsql
+AS $user_body$BEGIN RAISE EXCEPTION 'user body'; END$user_body$;
+ALTER TABLE e5.par RENAME COLUMN "Ends Before" TO ends;
+TABLE e5.par_columns;
+SELECT e.valid_until_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('e5', 'par');
+SELECT p.prosrc FROM pg_catalog.pg_proc AS p WHERE p.oid = 'sql_saga.e5_par_valid_template_sync()'::regprocedure;
+ROLLBACK;
+
+-- (3) The synchronization trigger was given a WHEN condition by the user: refused, the trigger is untouched.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER par_valid_sync_temporal_trg ON e5.par;
+CREATE TRIGGER par_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF period, starts_on, "Ends Before" ON e5.par
+FOR EACH ROW WHEN (NEW.id IS NOT NULL) EXECUTE FUNCTION sql_saga.e5_par_valid_template_sync();
+RESET session_replication_role;
+ALTER TABLE e5.par RENAME COLUMN starts_on TO starts;
+TABLE e5.par_columns;
+SELECT e.valid_from_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('e5', 'par');
+SELECT pg_catalog.pg_get_triggerdef(t.oid) LIKE '%WHEN ((new.id IS NOT NULL))%' AS user_when_kept
+FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'e5.par'::regclass AND t.tgname = 'par_valid_sync_temporal_trg';
+ROLLBACK;
+
+-- (4) A referenced-side trigger of a regular FK was given a WHEN condition by the user (same name,
+-- function and arguments): refused, the trigger is untouched.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER rchild_par_id_fkey_uk_delete ON e5.par;
+CREATE CONSTRAINT TRIGGER rchild_par_id_fkey_uk_delete AFTER DELETE ON e5.par FROM e5.rchild DEFERRABLE FOR EACH ROW
+WHEN (OLD.id > 0)
+EXECUTE PROCEDURE sql_saga.uk_delete_check_c('rchild_par_id_fkey', 'e5', 'rchild', '{par_id}', '', '', '', 'e5', 'par', '{id}', 'valid', 'starts_on', 'Ends Before', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal');
+RESET session_replication_role;
+ALTER TABLE e5.par RENAME COLUMN starts_on TO starts;
+TABLE e5.par_columns;
+SELECT e.valid_from_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('e5', 'par');
+SELECT pg_catalog.pg_get_triggerdef(t.oid) LIKE '%WHEN ((old.id > 0))%' AS user_when_kept
+FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'e5.par'::regclass AND t.tgname = 'rchild_par_id_fkey_uk_delete';
+ROLLBACK;
+\set ON_ERROR_ROLLBACK off
+
 \echo '--- Final check_integrity'
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked' AS done;
