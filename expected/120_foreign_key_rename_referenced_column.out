@@ -1,0 +1,449 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+/*
+ * Renaming a column of the REFERENCED unique key (ALTER TABLE parent RENAME COLUMN <key column>).
+ *
+ * The unique key's column_names follow the rename (as before). Every regular foreign key that
+ * references the key keeps working because its generated objects are regenerated in place:
+ *   - the helper function keeps its name, signature, owner, SECURITY DEFINER and search_path, and its
+ *     body compares the renamed column (it is shared by all regular FKs referencing the key);
+ *   - the referenced-side triggers keep their names and firing modes, and their arguments name the
+ *     renamed column;
+ *   - no stored object name in sql_saga.foreign_keys changes, and the CHECK constraint is unchanged.
+ * A temporal foreign key (native PERIOD constraint) follows by attnum and keeps its name.
+ * check_integrity() passes after the rename, and detects a regular FK whose helper function body or
+ * referenced-side trigger arguments do not match the current columns (made here with event triggers
+ * silenced by session_replication_role = replica).
+ */
+\set SHOW_CONTEXT never
+\set VERBOSITY default
+SET client_min_messages = warning;
+CREATE SCHEMA fkk;
+SET search_path = fkk, public;
+-- decoy_id: a same-typed column that a wrong helper body could compare instead of the key.
+CREATE TABLE fkk.par (id int, label text, decoy_id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkk.par', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('fkk.par', ARRAY['id']::name[], 'valid', key_type => 'natural');
+ add_unique_key 
+----------------
+ par_id_valid
+(1 row)
+
+INSERT INTO fkk.par (id, label, valid_range) VALUES (1, 'a', '[2020-01-01,2030-01-01)'), (2, 'b', '[2020-01-01,2030-01-01)'),
+                           (3, 'c', '[2020-01-01,2030-01-01)'), (4, 'd', '[2020-01-01,2030-01-01)');
+-- Two regular FKs share the helper function fkk.par_id_exists(integer).
+CREATE TABLE fkk.rchild (id int PRIMARY KEY, par_id int);
+SELECT sql_saga.add_regular_foreign_key('fkk.rchild', ARRAY['par_id']::name[], 'par_id_valid');
+ add_regular_foreign_key 
+-------------------------
+ rchild_par_id_fkey
+(1 row)
+
+CREATE TABLE fkk.rchild2 (id int PRIMARY KEY, owner_id int);
+SELECT sql_saga.add_regular_foreign_key('fkk.rchild2', ARRAY['owner_id']::name[], 'par_id_valid');
+ add_regular_foreign_key 
+-------------------------
+ rchild2_owner_id_fkey
+(1 row)
+
+CREATE TABLE fkk.tchild (id int, par_id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkk.tchild', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_temporal_foreign_key('fkk.tchild', ARRAY['par_id']::name[], 'valid', 'par_id_valid');
+ add_temporal_foreign_key 
+--------------------------
+ tchild_par_id_valid
+(1 row)
+
+INSERT INTO fkk.rchild VALUES (1, 1);
+INSERT INTO fkk.rchild2 VALUES (1, 4);
+INSERT INTO fkk.tchild VALUES (1, 2, '[2021-01-01,2022-01-01)');
+-- Non-default firing modes on rchild's referenced-side triggers must survive.
+ALTER TABLE fkk.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
+ALTER TABLE fkk.par ENABLE REPLICA TRIGGER rchild_par_id_fkey_uk_update;
+CREATE VIEW fkk.fk_state AS
+SELECT fk.foreign_key_name, fk.type, fk.column_names, fk.fk_check_constraint, fk.fk_helper_function,
+       fk.fk_index_name, fk.uk_update_trigger, fk.uk_delete_trigger
+FROM sql_saga.foreign_keys AS fk
+WHERE fk.table_schema = 'fkk'
+ORDER BY fk.foreign_key_name;
+CREATE VIEW fkk.uk_state AS
+SELECT uk.unique_key_name, uk.column_names, uk.unique_constraint
+FROM sql_saga.unique_keys AS uk
+WHERE uk.table_schema = 'fkk'
+ORDER BY uk.unique_key_name;
+-- Referenced-side triggers: mode, and the fk/uk column lists from their arguments.
+CREATE VIEW fkk.par_triggers AS
+SELECT t.tgname, t.tgenabled, t.tgfoid::regprocedure AS function,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[3] AS arg_fk_table,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[4] AS arg_fk_columns,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[10] AS arg_uk_columns
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid = 'fkk.par'::regclass AND NOT t.tgisinternal
+  AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::regprocedure, 'sql_saga.uk_delete_check_c()'::regprocedure)
+ORDER BY t.tgname;
+-- The helper owner is compared with its pre-rename owner and with the referenced table owner (role names
+-- differ between machines).
+CREATE TABLE fkk.helper_owner_before AS
+SELECT p.proowner FROM pg_catalog.pg_proc AS p
+WHERE p.pronamespace = 'fkk'::regnamespace AND p.proname = 'par_id_exists';
+CREATE VIEW fkk.helper AS
+SELECT p.oid::regprocedure AS helper,
+       p.proowner = (SELECT o.proowner FROM fkk.helper_owner_before AS o) AS owner_unchanged,
+       p.proowner = (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = 'fkk.par'::regclass) AS owned_by_table_owner,
+       p.prosecdef,
+       p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body
+FROM pg_catalog.pg_proc AS p
+WHERE p.pronamespace = 'fkk'::regnamespace AND p.proname = 'par_id_exists';
+CREATE VIEW fkk.child_constraints AS
+SELECT c.conrelid::regclass AS table_name, c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS def
+FROM pg_catalog.pg_constraint AS c
+WHERE c.conrelid IN ('fkk.rchild'::regclass, 'fkk.rchild2'::regclass, 'fkk.tchild'::regclass) AND c.contype IN ('c', 'f')
+  AND c.conname NOT LIKE '%valid_check'
+ORDER BY 1, 2;
+\echo '--- Before the rename'
+--- Before the rename
+TABLE fkk.uk_state;
+ unique_key_name | column_names | unique_constraint 
+-----------------+--------------+-------------------
+ par_id_valid    | {id}         | par_id_valid_uniq
+(1 row)
+
+TABLE fkk.fk_state;
+   foreign_key_name    |         type         | column_names |  fk_check_constraint   |     fk_helper_function     |        fk_index_name         |        uk_update_trigger        |        uk_delete_trigger        
+-----------------------+----------------------+--------------+------------------------+----------------------------+------------------------------+---------------------------------+---------------------------------
+ rchild2_owner_id_fkey | regular_to_temporal  | {owner_id}   | rchild2_owner_id_check | fkk.par_id_exists(integer) | rchild2_owner_id_idx         | rchild2_owner_id_fkey_uk_update | rchild2_owner_id_fkey_uk_delete
+ rchild_par_id_fkey    | regular_to_temporal  | {par_id}     | rchild_par_id_check    | fkk.par_id_exists(integer) | rchild_par_id_idx            | rchild_par_id_fkey_uk_update    | rchild_par_id_fkey_uk_delete
+ tchild_par_id_valid   | temporal_to_temporal | {par_id}     |                        |                            | tchild_par_id_valid_gist_idx |                                 | 
+(3 rows)
+
+TABLE fkk.par_triggers;
+             tgname              | tgenabled |           function           | arg_fk_table | arg_fk_columns | arg_uk_columns 
+---------------------------------+-----------+------------------------------+--------------+----------------+----------------
+ rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c() | rchild2      | {owner_id}     | {id}
+ rchild2_owner_id_fkey_uk_update | O         | sql_saga.uk_update_check_c() | rchild2      | {owner_id}     | {id}
+ rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c() | rchild       | {par_id}       | {id}
+ rchild_par_id_fkey_uk_update    | R         | sql_saga.uk_update_check_c() | rchild       | {par_id}       | {id}
+(4 rows)
+
+TABLE fkk.helper;
+         helper         | owner_unchanged | owned_by_table_owner | prosecdef |        proconfig         |                                        body                                        
+------------------------+-----------------+----------------------+-----------+--------------------------+------------------------------------------------------------------------------------
+ par_id_exists(integer) | t               | t                    | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.id OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+TABLE fkk.child_constraints;
+ table_name |        conname         |                                            def                                             
+------------+------------------------+--------------------------------------------------------------------------------------------
+ rchild     | rchild_par_id_check    | CHECK (par_id_exists(par_id))
+ rchild2    | rchild2_owner_id_check | CHECK (par_id_exists(owner_id))
+ tchild     | tchild_par_id_valid    | FOREIGN KEY (par_id, PERIOD valid_range) REFERENCES par(id, PERIOD valid_range) DEFERRABLE
+(3 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+\echo '--- Rename the referenced key column'
+--- Rename the referenced key column
+ALTER TABLE fkk.par RENAME COLUMN id TO pid;
+\echo '--- After the rename: key columns follow, helper and triggers regenerated, names unchanged'
+--- After the rename: key columns follow, helper and triggers regenerated, names unchanged
+TABLE fkk.uk_state;
+ unique_key_name | column_names | unique_constraint 
+-----------------+--------------+-------------------
+ par_id_valid    | {pid}        | par_id_valid_uniq
+(1 row)
+
+TABLE fkk.fk_state;
+   foreign_key_name    |         type         | column_names |  fk_check_constraint   |     fk_helper_function     |        fk_index_name         |        uk_update_trigger        |        uk_delete_trigger        
+-----------------------+----------------------+--------------+------------------------+----------------------------+------------------------------+---------------------------------+---------------------------------
+ rchild2_owner_id_fkey | regular_to_temporal  | {owner_id}   | rchild2_owner_id_check | fkk.par_id_exists(integer) | rchild2_owner_id_idx         | rchild2_owner_id_fkey_uk_update | rchild2_owner_id_fkey_uk_delete
+ rchild_par_id_fkey    | regular_to_temporal  | {par_id}     | rchild_par_id_check    | fkk.par_id_exists(integer) | rchild_par_id_idx            | rchild_par_id_fkey_uk_update    | rchild_par_id_fkey_uk_delete
+ tchild_par_id_valid   | temporal_to_temporal | {par_id}     |                        |                            | tchild_par_id_valid_gist_idx |                                 | 
+(3 rows)
+
+TABLE fkk.par_triggers;
+             tgname              | tgenabled |           function           | arg_fk_table | arg_fk_columns | arg_uk_columns 
+---------------------------------+-----------+------------------------------+--------------+----------------+----------------
+ rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c() | rchild2      | {owner_id}     | {pid}
+ rchild2_owner_id_fkey_uk_update | O         | sql_saga.uk_update_check_c() | rchild2      | {owner_id}     | {pid}
+ rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c() | rchild       | {par_id}       | {pid}
+ rchild_par_id_fkey_uk_update    | R         | sql_saga.uk_update_check_c() | rchild       | {par_id}       | {pid}
+(4 rows)
+
+TABLE fkk.helper;
+         helper         | owner_unchanged | owned_by_table_owner | prosecdef |        proconfig         |                                        body                                         
+------------------------+-----------------+----------------------+-----------+--------------------------+-------------------------------------------------------------------------------------
+ par_id_exists(integer) | t               | t                    | t         | {search_path=pg_catalog} | SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pid OPERATOR(pg_catalog.=) $1);
+(1 row)
+
+TABLE fkk.child_constraints;
+ table_name |        conname         |                                             def                                             
+------------+------------------------+---------------------------------------------------------------------------------------------
+ rchild     | rchild_par_id_check    | CHECK (par_id_exists(par_id))
+ rchild2    | rchild2_owner_id_check | CHECK (par_id_exists(owner_id))
+ tchild     | tchild_par_id_valid    | FOREIGN KEY (par_id, PERIOD valid_range) REFERENCES par(pid, PERIOD valid_range) DEFERRABLE
+(3 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+SELECT 'integrity checked after rename' AS done;
+              done              
+--------------------------------
+ integrity checked after rename
+(1 row)
+
+\echo '--- Regular FKs: referencing side'
+--- Regular FKs: referencing side
+BEGIN;
+INSERT INTO fkk.rchild VALUES (2, 3);
+INSERT INTO fkk.rchild2 VALUES (2, 3);
+ROLLBACK;
+BEGIN;
+INSERT INTO fkk.rchild VALUES (3, 99);
+ERROR:  new row for relation "rchild" violates check constraint "rchild_par_id_check"
+DETAIL:  Failing row contains (3, 99).
+ROLLBACK;
+BEGIN;
+INSERT INTO fkk.rchild2 VALUES (3, 99);
+ERROR:  new row for relation "rchild2" violates check constraint "rchild2_owner_id_check"
+DETAIL:  Failing row contains (3, 99).
+ROLLBACK;
+\echo '--- Regular FKs: referenced side'
+--- Regular FKs: referenced side
+BEGIN;
+DELETE FROM fkk.par WHERE pid = 1;
+ERROR:  update or delete on table "fkk.par" violates foreign key constraint "rchild_par_id_fkey" on table "fkk.rchild"
+ROLLBACK;
+BEGIN;
+DELETE FROM fkk.par WHERE pid = 4;
+ERROR:  update or delete on table "fkk.par" violates foreign key constraint "rchild2_owner_id_fkey" on table "fkk.rchild2"
+ROLLBACK;
+BEGIN;
+UPDATE fkk.par SET pid = 5 WHERE pid = 4;
+ERROR:  update or delete on table "fkk.par" violates foreign key constraint "rchild2_owner_id_fkey" on table "fkk.rchild2"
+ROLLBACK;
+BEGIN;
+UPDATE fkk.par SET valid_range = '[2020-01-01,2020-06-01)' WHERE pid = 1;
+UPDATE fkk.par SET label = 'changed' WHERE pid = 1;
+ROLLBACK;
+BEGIN;
+DELETE FROM fkk.par WHERE pid = 3;
+SELECT pid FROM fkk.par ORDER BY pid;
+ pid 
+-----
+   1
+   2
+   4
+(3 rows)
+
+ROLLBACK;
+\echo '--- Firing modes still effective under replica role'
+--- Firing modes still effective under replica role
+BEGIN;
+SET LOCAL session_replication_role = replica;
+SAVEPOINT replica_delete;
+DELETE FROM fkk.par WHERE pid = 1;
+ERROR:  update or delete on table "fkk.par" violates foreign key constraint "rchild_par_id_fkey" on table "fkk.rchild"
+ROLLBACK TO SAVEPOINT replica_delete;
+SAVEPOINT replica_update;
+UPDATE fkk.par SET pid = 6 WHERE pid = 1;
+ERROR:  update or delete on table "fkk.par" violates foreign key constraint "rchild_par_id_fkey" on table "fkk.rchild"
+ROLLBACK TO SAVEPOINT replica_update;
+ROLLBACK;
+\echo '--- Temporal FK: both sides'
+--- Temporal FK: both sides
+BEGIN;
+INSERT INTO fkk.tchild VALUES (2, 99, '[2021-01-01,2022-01-01)');
+ERROR:  insert or update on table "tchild" violates foreign key constraint "tchild_par_id_valid"
+DETAIL:  Key (par_id, valid_range)=(99, [2021-01-01,2022-01-01)) is not present in table "par".
+ROLLBACK;
+BEGIN;
+DELETE FROM fkk.par WHERE pid = 2;
+ERROR:  update or delete on table "par" violates foreign key constraint "tchild_par_id_valid" on table "tchild"
+DETAIL:  Key (pid, valid_range)=(2, [2020-01-01,2030-01-01)) is still referenced from table "tchild".
+ROLLBACK;
+\echo '--- drop_foreign_key after the rename removes the real objects; the shared helper survives the first drop'
+--- drop_foreign_key after the rename removes the real objects; the shared helper survives the first drop
+BEGIN;
+SELECT sql_saga.drop_foreign_key('fkk.rchild', ARRAY['par_id']::name[]);
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+TABLE fkk.par_triggers;
+             tgname              | tgenabled |           function           | arg_fk_table | arg_fk_columns | arg_uk_columns 
+---------------------------------+-----------+------------------------------+--------------+----------------+----------------
+ rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c() | rchild2      | {owner_id}     | {pid}
+ rchild2_owner_id_fkey_uk_update | O         | sql_saga.uk_update_check_c() | rchild2      | {owner_id}     | {pid}
+(2 rows)
+
+SELECT helper FROM fkk.helper;
+         helper         
+------------------------
+ par_id_exists(integer)
+(1 row)
+
+SELECT sql_saga.drop_foreign_key('fkk.rchild2', ARRAY['owner_id']::name[]);
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+TABLE fkk.par_triggers;
+ tgname | tgenabled | function | arg_fk_table | arg_fk_columns | arg_uk_columns 
+--------+-----------+----------+--------------+----------------+----------------
+(0 rows)
+
+SELECT count(*) AS helpers_left FROM fkk.helper;
+ helpers_left 
+--------------
+            0
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+ROLLBACK;
+\echo '--- check_integrity detects helper and trigger argument drift'
+--- check_integrity detects helper and trigger argument drift
+-- Helper body comparing a column that no longer exists.
+BEGIN;
+SET LOCAL check_function_bodies = off;
+SET LOCAL session_replication_role = replica;
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY DEFINER SET search_path = pg_catalog
+AS $$ SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.id OPERATOR(pg_catalog.=) $1); $$;
+RESET session_replication_role;
+SAVEPOINT check_helper_missing_column;
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+ROLLBACK TO SAVEPOINT check_helper_missing_column;
+ROLLBACK;
+-- Helper body comparing an existing but wrong column (same type as the key).
+BEGIN;
+SET LOCAL session_replication_role = replica;
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY DEFINER SET search_path = pg_catalog
+AS $$ SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.decoy_id OPERATOR(pg_catalog.=) $1); $$;
+RESET session_replication_role;
+SAVEPOINT check_helper_wrong_column;
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+ROLLBACK TO SAVEPOINT check_helper_wrong_column;
+ROLLBACK;
+-- Helper body that is semantically wrong (the right column, but a condition that is always true).
+BEGIN;
+SET LOCAL session_replication_role = replica;
+CREATE OR REPLACE FUNCTION fkk.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT
+SECURITY DEFINER SET search_path = pg_catalog
+AS $$ SELECT EXISTS (SELECT 1 FROM fkk.par AS uk WHERE uk.pid OPERATOR(pg_catalog.=) $1 OR true); $$;
+RESET session_replication_role;
+SAVEPOINT check_helper_wrong_body;
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+ROLLBACK TO SAVEPOINT check_helper_wrong_body;
+ROLLBACK;
+-- Referenced-side trigger whose arguments name the old referenced column.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER rchild_par_id_fkey_uk_delete ON fkk.par;
+CREATE CONSTRAINT TRIGGER rchild_par_id_fkey_uk_delete AFTER DELETE ON fkk.par FROM fkk.rchild DEFERRABLE FOR EACH ROW
+EXECUTE PROCEDURE sql_saga.uk_delete_check_c('rchild_par_id_fkey', 'fkk', 'rchild', '{par_id}', '', '', '', 'fkk', 'par', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal');
+RESET session_replication_role;
+SAVEPOINT check_trigger_old_uk_column;
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+ROLLBACK TO SAVEPOINT check_trigger_old_uk_column;
+ROLLBACK;
+-- Referenced-side trigger whose arguments name a nonexistent referencing column.
+BEGIN;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER rchild_par_id_fkey_uk_update ON fkk.par;
+CREATE CONSTRAINT TRIGGER rchild_par_id_fkey_uk_update AFTER UPDATE OF pid ON fkk.par FROM fkk.rchild DEFERRABLE FOR EACH ROW
+EXECUTE PROCEDURE sql_saga.uk_update_check_c('rchild_par_id_fkey', 'fkk', 'rchild', '{gone_id}', '', '', '', 'fkk', 'par', '{pid}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal');
+RESET session_replication_role;
+SAVEPOINT check_trigger_bad_fk_column;
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for foreign key on table "fkk.rchild": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+ROLLBACK TO SAVEPOINT check_trigger_bad_fk_column;
+ROLLBACK;
+\echo '--- Final check_integrity'
+--- Final check_integrity
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+SELECT 'integrity checked' AS done;
+       done        
+-------------------
+ integrity checked
+(1 row)
+
+SET client_min_messages = warning;
+RESET search_path;
+DROP SCHEMA fkk CASCADE;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
+RESET client_min_messages;
