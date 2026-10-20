@@ -40,7 +40,7 @@ pub struct ExecutorCachedState {
     pub partition_join_clauses: Vec<String>,
     pub partition_plan_filters: Vec<String>,
     pub partition_select_lists: Vec<String>,
-    // Cache validation
+    // Cache validation: source and target schema fingerprint (fingerprint.rs)
     pub source_cols_hash: u64,
 }
 
@@ -51,17 +51,20 @@ pub struct ExecutorCachedState {
 // Contains NO row data, transaction state, or snapshot information — purely structural
 // metadata that changes only when DDL alters the table schema.
 //
-// Invalidation: Every call computes source_cols_hash by querying pg_attribute for
-// column names and types, then compares against the cached hash. Schema changes
-// (ALTER TABLE ADD/DROP COLUMN) produce a different hash → cache miss → full
-// re-introspection. Target table DDL is NOT independently hashed, but would cause
-// the executor's prepared statements to fail at execution time (column count/type
-// mismatch), surfacing as a clear PostgreSQL ERROR rather than silent corruption.
+// Invalidation: Every call computes a fingerprint of the source and target catalog
+// definitions (fingerprint.rs: column names, order, types and typmods, and the target's
+// NOT NULL, defaults, identity, generated kind and primary key) and compares it with the
+// cached one. Because the fingerprint is part of the key, an entry is only ever used for the
+// exact schema it was built from. A schema with no entry yet (including one produced by DDL
+// committed by another session) is a miss and a full re-introspection. When a schema returns to
+// a shape already cached, e.g. after ROLLBACK, the earlier entry for that exact shape is reused,
+// which is correct because it was built from identical catalog definitions.
 //
-// Growth: One entry per distinct (target_table_oid, mode, identity_columns,
-// source_cols_hash) combination. Bounded by the number of target tables in the
-// application. Explicit reset available via temporal_merge_native_cache_reset().
-// No LRU eviction — acceptable for the batch ETL use case (small number of tables).
+// Growth: One entry per distinct key, which hashes the target OID, the call's column
+// arguments and the schema fingerprint. A schema change therefore adds a new entry, and the
+// entry for the old schema stays in memory (reused only if that exact shape returns) until
+// the backend exits or temporal_merge_native_cache_reset() is called. There is no eviction (no LRU). Growth is
+// bounded by the number of distinct target/source shapes a backend sees.
 thread_local! {
     /// Multi-entry cache keyed by config hash.
     pub static EXECUTOR_CACHE: RefCell<HashMap<u64, ExecutorCachedState>> = RefCell::new(HashMap::new());
@@ -92,26 +95,9 @@ fn compute_executor_cache_key(
     hasher.finish()
 }
 
-/// Hash source column names for cache validation.
-fn hash_source_cols(client: &pgrx::spi::SpiClient, source_oid: u32) -> u64 {
-    let cols_query = format!(
-        "SELECT array_agg(attname::text ORDER BY attnum)::text \
-         FROM pg_attribute \
-         WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped",
-        source_oid
-    );
-    let cols_str: String = client
-        .select(&cols_query, None, &[])
-        .ok()
-        .and_then(|t| t.first().get_one::<String>().ok().flatten())
-        .unwrap_or_default();
-    let mut h = DefaultHasher::new();
-    cols_str.hash(&mut h);
-    h.finish()
-}
-
 /// Perform all executor introspection in a single SPI connection and return
-/// the cached state. On cache hit, returns immediately with zero SPI calls.
+/// the cached state. Every call runs one SPI query for the schema fingerprint. On cache
+/// hit, no further introspection queries run.
 #[pg_extern]
 fn temporal_merge_executor_introspect(
     target_table: pg_sys::Oid,
@@ -130,10 +116,8 @@ fn temporal_merge_executor_introspect(
     let target_oid = u32::from(target_table);
     let source_oid = u32::from(source_table);
 
-    // Compute source_cols_hash for cache validation (quick SPI call)
-    let source_cols_hash = Spi::connect(|client| {
-        hash_source_cols(&client, source_oid)
-    });
+    // Source and target schema fingerprint for cache validation (one quick SPI call)
+    let source_cols_hash = crate::fingerprint::schema_fingerprint(source_oid, target_oid);
 
     let cache_key = compute_executor_cache_key(
         target_table,

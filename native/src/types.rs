@@ -573,7 +573,7 @@ pub struct CachedState {
     /// Each FilterParam describes one = ANY($N::text::type[]) condition.
     /// If None, target_sql_template uses __SOURCE_IDENT__ subquery (dynamic SQL).
     pub target_filter_params: Option<Vec<FilterParam>>,
-    /// Hash of source column names + types — used to detect when source structure changes
-    /// (e.g., different source tables with different column types).
+    /// Fingerprint of the source and target schema (fingerprint.rs), used to detect when
+    /// either structure changes, including DDL rolled back or committed by another session.
     pub source_cols_hash: u64,
 }

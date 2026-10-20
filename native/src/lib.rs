@@ -23,6 +23,7 @@ fn sql_saga_native_version() -> &'static str {
 }
 
 mod executor_cache;
+mod fingerprint;
 mod introspect;
 mod reader;
 mod sweep;
@@ -49,7 +50,8 @@ use types::{CachedState, DeleteMode, MergeMode, PlanRow};
 // Cross-transaction safety: Caches store only schema-derived metadata (column names,
 // SQL templates, type information). No row data, transaction IDs, snapshot info, or
 // visibility information is cached. Schema metadata is stable across transactions
-// unless DDL occurs, which is detected by source_cols_hash comparison on every call.
+// unless DDL occurs, which is detected by comparing the source and target schema
+// fingerprint (fingerprint.rs) on every call.
 //
 // SPI data extraction: Every Spi::connect() closure extracts data as Rust-owned
 // String/Vec/i64 values. pgrx's row.get::<String>() internally calls text_to_cstring
@@ -121,29 +123,12 @@ fn temporal_merge_plan_native(
     let source_ident = reader::resolve_table_name(source_table)
         .unwrap_or_else(|e| pgrx::error!("Failed to resolve source table: {}", e));
 
-    // Quick introspection of source column names + types to detect structure changes.
-    // Including types ensures (id int) vs (id bigint) are distinguished.
-    let source_cols_hash = {
-        let source_oid = u32::from(source_table);
-        let cols_query = format!(
-            "SELECT array_agg(attname || '::' || format_type(atttypid, atttypmod) ORDER BY attnum)::text \
-             FROM pg_attribute \
-             WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped",
-            source_oid
-        );
-        let cols_str: String = Spi::connect(|client| {
-            client
-                .select(&cols_query, None, &[])
-                .ok()
-                .and_then(|t| t.first().get_one::<String>().ok().flatten())
-                .unwrap_or_default()
-        });
-        let mut h = DefaultHasher::new();
-        cols_str.hash(&mut h);
-        h.finish()
-    };
+    // Fingerprint of the source and target catalog definitions the cached templates depend
+    // on (see fingerprint.rs). Read on every call, so target DDL, its ROLLBACK, and DDL
+    // committed by another session invalidate the entry like a cold cache.
+    let source_cols_hash = fingerprint::schema_fingerprint(u32::from(source_table), u32::from(target_table));
 
-    // Check cache: config cache_key + source columns hash must match.
+    // Check cache: config cache_key + schema fingerprint must match.
     // Source OID is intentionally excluded — different temp tables with identical
     // column structure should be cache hits (StatBus pattern).
     let cache_hit = PLANNER_CACHE.with(|c| {
