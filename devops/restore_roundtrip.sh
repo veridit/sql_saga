@@ -43,6 +43,17 @@
 # `parallel_known_failure` case still runs `-j 4` restores and reports their outcome, but does not
 # fail the run; if they all succeed (PostgreSQL fixed), the summary says so.
 #
+# Old-dump cases (old_dump_10, old_dump_11; tmp/v13_olddump_design.md): a database made by the RELEASED
+# v1.0 / v1.1 build (tag built in a scratch dir, with its own C and native libraries, selected per
+# database through extension_control_path / dynamic_library_path) is dumped and restored into the
+# candidate package with the procedure documented in doc/upgrade.md between "<!-- BEGIN old-dump-restore -->"
+# and "<!-- END old-dump-restore -->": the ```bash block there is extracted at run time and executed in
+# a fresh `bash -eu` with backup.dump, mydb and the dump's version (variable OLD_VERSION) bound. Afterwards
+# the destination must be at the candidate's default version, check_integrity() must pass, every user
+# row and history row must equal the source, and the restored database must equal an in-place
+# `ALTER EXTENSION sql_saga UPDATE` of the source (schema dump, history policy tokens normalized).
+# OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, <dir>/v1.1) instead of building.
+#
 # Usage:   devops/restore_roundtrip.sh [case ...]      (default: all cases)
 #          make test-restore
 # Uses the standard libpq environment (PGHOST, PGPORT, PGUSER). Needs a superuser.
@@ -62,7 +73,7 @@ KNOWN=()
 SKIPPED=()
 SPLIT_RESULTS=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure old_dump_10 old_dump_11)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -557,6 +568,198 @@ SQL
     } | psql_q -d "$1"
 }
 
+# ---------------------------------------------------------------------------------------------
+# Old dumps: databases made by the released v1.0 / v1.1 builds, restored into the candidate package
+# with the documented procedure, then updated (tmp/v13_olddump_design.md).
+# ---------------------------------------------------------------------------------------------
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OLD_DUMP_DOC_PATH=${OLD_DUMP_DOC_PATH:-$REPO_ROOT/doc/upgrade.md}
+OLD_DUMP_TAGS="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66"
+
+# The doc's old-dump procedure: the ```bash block between the old-dump-restore markers, fences excluded.
+old_dump_block() {
+    awk '/<!-- END old-dump-restore -->/ { inside = 0 }
+         inside && /^```/ { fence = !fence; next }
+         inside && fence { print }
+         /<!-- BEGIN old-dump-restore -->/ { inside = 1 }' "$OLD_DUMP_DOC_PATH"
+}
+
+# old_dump_build <tag> <version> <commit>: build the released tag (C, SQL and native library) and assemble
+# <WORK>/old_<version>/{share/extension,lib} holding only that release. Prints the root.
+old_dump_build() {
+    local tag=$1 version=$2 commit=$3 root="$WORK/old_$2" tree tag_commit dlsuffix native
+    tag_commit=$(git -C "$REPO_ROOT" rev-parse --verify -q "$tag^{commit}") || { echo "tag $tag not found" >&2; return 1; }
+    case "$tag_commit" in "$commit"*) ;; *) echo "$tag is $tag_commit, not released commit $commit" >&2; return 1 ;; esac
+    if [ -n "${OLD_DUMP_BUILD_DIR:-}" ] && [ -d "$OLD_DUMP_BUILD_DIR/$tag" ]; then
+        tree="$OLD_DUMP_BUILD_DIR/$tag"
+    else
+        tree="$WORK/build_$tag"
+        mkdir -p "$tree" && git -C "$REPO_ROOT" archive "$tag" | tar -x -C "$tree" || return 1
+        make -C "$tree" PG_CONFIG="${PG_CONFIG:-pg_config}" >"$WORK/build_$tag.log" 2>&1 || { echo "building $tag failed (see $WORK/build_$tag.log)" >&2; return 1; }
+    fi
+    case "$(uname)" in Darwin) dlsuffix=.dylib ;; *) dlsuffix=.so ;; esac
+    native="$tree/native/target/release/libsql_saga_native$dlsuffix"
+    if [ ! -f "$native" ]; then
+        # v1.0's Makefile left the native library to cargo-pgrx; build it with plain cargo like later releases.
+        if [ "$(uname)" = Darwin ]; then
+            export LIBCLANG_PATH=${LIBCLANG_PATH:-$(dirname "$(xcrun --find clang)")/../lib}
+            export BINDGEN_EXTRA_CLANG_ARGS=${BINDGEN_EXTRA_CLANG_ARGS:--isysroot $(xcrun --show-sdk-path)}
+        fi
+        ( cd "$tree/native" && PGRX_PG_CONFIG_PATH="$(command -v "${PG_CONFIG:-pg_config}")" cargo build --release --lib --locked ) \
+            >>"$WORK/build_$tag.log" 2>&1 || { echo "building the $tag native library failed (see $WORK/build_$tag.log)" >&2; return 1; }
+    fi
+    mkdir -p "$root/share/extension" "$root/lib" || return 1
+    cp "$tree/sql_saga.control" "$tree/sql_saga--$version.sql" "$root/share/extension/" || return 1
+    grep -q "^default_version = '$version'" "$root/share/extension/sql_saga.control" || { echo "$tag control is not $version" >&2; return 1; }
+    cp "$tree/sql_saga$dlsuffix" "$root/lib/" && cp "$native" "$root/lib/sql_saga_native$dlsuffix" || return 1
+    chmod -R a+rX "$WORK"
+    echo "$root"
+}
+
+# The source database, valid on 1.0 and 1.1: eras with synchronized columns, primary and natural keys,
+# a native temporal FK, single and composite regular FKs (child names sort after their parents, so the
+# inline CHECK of class B does not interfere), a for_portion_of view, system versioning with history,
+# and grants. No XOR key (defect A1 is tested elsewhere).
+build_old_dump_source() {
+    psql_q -d "$1" <<SQL
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga;
+CREATE SCHEMA app;
+CREATE TABLE app.legal_unit (id int GENERATED BY DEFAULT AS IDENTITY,
+    valid_range daterange NOT NULL, valid_from date NOT NULL, valid_to date, valid_until date,
+    name text, edit_comment text, edit_by_user_id int, edit_at timestamptz DEFAULT now());
+SELECT sql_saga.add_era('app.legal_unit', 'valid_range', 'valid', ephemeral_columns => ARRAY['edit_comment','edit_by_user_id','edit_at']);
+SELECT sql_saga.add_unique_key(table_oid => 'app.legal_unit', key_type => 'primary', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_for_portion_of_view('app.legal_unit');
+CREATE TABLE app.region (code text NOT NULL, part int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('app.region', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'app.region', key_type => 'natural', column_names => ARRAY['code','part'], unique_key_name => 'region_code_part_valid');
+CREATE TABLE app.establishment (id int GENERATED BY DEFAULT AS IDENTITY,
+    valid_range daterange NOT NULL, valid_from date NOT NULL, valid_to date, valid_until date, name text, legal_unit_id int);
+SELECT sql_saga.add_era('app.establishment', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'app.establishment', key_type => 'primary', column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_foreign_key(fk_table_oid => 'app.establishment', fk_column_names => ARRAY['legal_unit_id'], pk_table_oid => 'app.legal_unit', pk_column_names => ARRAY['id']);
+CREATE TABLE app.lu_tag (id int PRIMARY KEY, legal_unit_id int, note text);
+SELECT sql_saga.add_foreign_key(fk_table_oid => 'app.lu_tag', fk_column_names => ARRAY['legal_unit_id'], pk_table_oid => 'app.legal_unit', pk_column_names => ARRAY['id']);
+CREATE TABLE app.region_ref (id int PRIMARY KEY, code text, part int);
+SELECT sql_saga.add_foreign_key(fk_table_oid => 'app.region_ref', fk_column_names => ARRAY['code','part'], pk_table_oid => 'app.region', pk_column_names => ARRAY['code','part']);
+CREATE TABLE app.setting (key text PRIMARY KEY, value text);
+SELECT sql_saga.add_system_versioning('app.setting');
+INSERT INTO app.legal_unit (id, valid_from, valid_until, name) SELECT g, '2020-01-01', 'infinity', 'LU ' || g FROM generate_series(1, 20) AS g;
+UPDATE app.legal_unit__for_portion_of_valid SET name = 'LU 3 mid', valid_from = '2021-01-01', valid_until = '2022-01-01' WHERE id = 3;
+INSERT INTO app.region VALUES ('A', 1, '[2020-01-01,infinity)'), ('B', 2, '[2020-01-01,infinity)');
+INSERT INTO app.establishment (id, valid_from, valid_until, name, legal_unit_id) SELECT g, '2021-01-01', 'infinity', 'EST ' || g, 1 + g % 20 FROM generate_series(1, 30) AS g;
+INSERT INTO app.lu_tag SELECT g, 1 + g % 20, 't' FROM generate_series(1, 40) AS g;
+INSERT INTO app.region_ref VALUES (1, 'A', 1), (2, 'B', 2);
+INSERT INTO app.setting VALUES ('a', '1');
+UPDATE app.setting SET value = '2';
+UPDATE app.setting SET value = '3';
+GRANT USAGE ON SCHEMA app TO ${PREFIX}_r1;
+GRANT SELECT ON app.legal_unit, app.lu_tag TO ${PREFIX}_r1;
+SQL
+}
+
+# User rows, history rows and catalog row counts: equal on the source and on every correct restore.
+old_dump_fingerprint() {
+    psql -X -At -v ON_ERROR_STOP=1 -d "$1" <<'SQL'
+SELECT md5(concat_ws(E'\n',
+    (SELECT string_agg(format('%s|%s|%s|%s|%s', id, valid_range, valid_from, valid_until, name), ',' ORDER BY id, valid_range) FROM app.legal_unit),
+    (SELECT string_agg(format('%s|%s|%s', id, valid_range, legal_unit_id), ',' ORDER BY id, valid_range) FROM app.establishment),
+    (SELECT string_agg(format('%s|%s', id, legal_unit_id), ',' ORDER BY id) FROM app.lu_tag),
+    (SELECT string_agg(format('%s|%s|%s', id, code, part), ',' ORDER BY id) FROM app.region_ref),
+    (SELECT string_agg(format('%s|%s|%s', key, value, system_valid_range), ',' ORDER BY key) FROM app.setting),
+    (SELECT string_agg(format('%s|%s|%s', key, value, system_valid_range), ',' ORDER BY system_valid_range) FROM app.setting_history),
+    (SELECT format('era=%s uk=%s fk=%s sv=%s views=%s', (SELECT count(*) FROM sql_saga.era), (SELECT count(*) FROM sql_saga.unique_keys),
+            (SELECT count(*) FROM sql_saga.foreign_keys), (SELECT count(*) FROM sql_saga.system_versioning), (SELECT count(*) FROM sql_saga.updatable_view)))));
+SQL
+}
+
+# Full dump with the per-installation history policy names normalized (they differ by design).
+old_dump_normalized_dump() {
+    pg_dump -d "$1" | grep -v -e '^\\' -e '^--' \
+        | sed -E 's/sql_saga_[0-9a-f]{16}/sql_saga_<hash>/g; s/sql_saga_history_(reader|base_select)_[0-9a-zA-Z]+/sql_saga_history_\1_<token>/g'
+}
+
+run_old_dump_case() {
+    local case=$1 spec tag version commit rest root src ref dst dump block dir out ok=1 v want=''
+    case "$case" in old_dump_10) want=1.0 ;; old_dump_11) want=1.1 ;; esac
+    for spec in $OLD_DUMP_TAGS; do
+        tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
+        [ "$version" = "$want" ] && break
+    done
+    echo "case $case ($tag dump restored into the candidate package, then ALTER EXTENSION UPDATE)"
+    if ! root=$(old_dump_build "$tag" "$version" "$commit" 2>"$WORK/$case.build.err"); then
+        echo "    build FAILED: $(cat "$WORK/$case.build.err")"; FAILED+=("$case (building $tag)"); return
+    fi
+    src="${PREFIX}_${case}_src"; ref="${PREFIX}_${case}_ref"; dst="${PREFIX}_${case}_dst"; dump="$WORK/$case.dump"
+    createdb "$src" || { FAILED+=("$case (createdb)"); return; }
+    psql -X -q -d postgres -c "ALTER DATABASE \"$src\" SET extension_control_path = '$root/share:\$system'" \
+                           -c "ALTER DATABASE \"$src\" SET dynamic_library_path = '$root/lib:\$libdir'" >>"$LOG" 2>&1
+    if ! build_old_dump_source "$src" >"$WORK/$case.source.log" 2>&1; then
+        echo "    source build FAILED: $(grep -m1 ERROR "$WORK/$case.source.log")"; FAILED+=("$case (source)"); return
+    fi
+    v=$(psql -X -At -d "$src" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")
+    [ "$v" = "$version" ] || { echo "    source is sql_saga $v, not $version"; FAILED+=("$case (source version)"); return; }
+    pg_dump -Fc -d "$src" -f "$dump" || { FAILED+=("$case (pg_dump)"); return; }
+    local src_fp; src_fp=$(old_dump_fingerprint "$src")
+
+    # Reference: the same database updated in place with the candidate package.
+    createdb -T "$src" "$ref" >>"$LOG" 2>&1 && psql -X -q -d postgres -c "ALTER DATABASE \"$ref\" RESET ALL" >>"$LOG" 2>&1 || { FAILED+=("$case (reference copy)"); return; }
+    for v in extension_control_path dynamic_library_path; do
+        case $v in extension_control_path) out=${RESTORE_EXTENSION_CONTROL_PATH:-} ;; *) out=${RESTORE_DYNAMIC_LIBRARY_PATH:-} ;; esac
+        [ -z "$out" ] || psql -X -q -d postgres -c "ALTER DATABASE \"$ref\" SET $v = '$out'" >>"$LOG" 2>&1
+    done
+    if ! psql -X -q -v ON_ERROR_STOP=1 -d "$ref" -c "ALTER EXTENSION sql_saga UPDATE" >"$WORK/$case.ref.log" 2>&1; then
+        echo "    in-place update of the source FAILED: $(grep -m1 ERROR "$WORK/$case.ref.log")"; FAILED+=("$case (in-place update)"); return
+    fi
+    local candidate_version; candidate_version=$(psql -X -At -d "$ref" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")
+
+    # Informational: a plain pg_restore (what doc/upgrade.md 1.2 implies) into the candidate package.
+    new_db "$dst" || { FAILED+=("$case (createdb)"); return; }
+    if pg_restore --exit-on-error --single-transaction -d "$dst" "$dump" >"$WORK/$case.plain.log" 2>&1; then
+        KNOWN+=("$case: plain pg_restore succeeded as sql_saga $(psql -X -At -d "$dst" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'") without running any update script")
+    else
+        KNOWN+=("$case: plain pg_restore into the candidate package fails: $(grep -m1 -E 'ERROR' "$WORK/$case.plain.log" | cut -c1-140)")
+    fi
+    dropdb --if-exists "$dst" >>"$LOG" 2>&1
+
+    # The documented procedure.
+    block=$(old_dump_block)
+    if [ -z "$block" ]; then
+        echo "    FAIL: no documented old-dump procedure (a \`\`\`bash block between <!-- BEGIN old-dump-restore --> and <!-- END old-dump-restore --> in $OLD_DUMP_DOC_PATH)"
+        FAILED+=("$case (no documented procedure for restoring a $version dump)"); return
+    fi
+    if [ "$(printf '%s\n' "$block" | grep -c '^OLD_VERSION=')" != 1 ]; then
+        echo "    FAIL: the documented procedure must set OLD_VERSION= on exactly one line"; FAILED+=("$case (procedure shape)"); return
+    fi
+    new_db "$dst" || { FAILED+=("$case (createdb)"); return; }
+    dir="$WORK/$case.procedure"; mkdir -p "$dir"; cp "$dump" "$dir/backup.dump"
+    printf '%s\n' "$block" | sed -E "s/^OLD_VERSION=[^ ]*/OLD_VERSION=$version/; s/(^|[^A-Za-z0-9_\$\"])mydb([^A-Za-z0-9_]|\$)/\\1\"\$mydb\"\\2/g" >"$dir/procedure.sh"
+    if ! ( cd "$dir" && mydb=$dst /bin/bash -eu ./procedure.sh ) >"$WORK/$case.procedure.log" 2>&1; then
+        echo "    documented procedure FAILED: $(grep -m1 -E 'ERROR|error:' "$WORK/$case.procedure.log")"; ok=0
+    else
+        v=$(psql -X -At -d "$dst" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")
+        if [ "$v" = "$candidate_version" ]; then echo "    restored and updated to $v: ok"; else echo "    FAIL: restored database is sql_saga $v, expected $candidate_version"; ok=0; fi
+        out=$(psql -X -At -d "$dst" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
+        if [ "$out" = t ]; then echo "    check_integrity: ok"; else echo "    FAIL: check_integrity: $out"; ok=0; fi
+        if [ "$(old_dump_fingerprint "$dst")" = "$src_fp" ]; then echo "    user data, history and catalog rows equal the source: ok"; else echo "    FAIL: data differs from the source"; ok=0; fi
+        if diff <(old_dump_normalized_dump "$ref") <(old_dump_normalized_dump "$dst") >"$WORK/$case.vs_inplace.diff"; then
+            echo "    equals the in-place update of the source: ok"
+        else
+            echo "    FAIL: differs from the in-place update of the source ($(grep -c '^[<>]' "$WORK/$case.vs_inplace.diff") lines, $WORK/$case.vs_inplace.diff)"; ok=0
+        fi
+        # (any error: 1.3 may enforce the child side with a constraint trigger instead of the CHECK)
+        out=$(psql -X -q -At -d "$dst" -v ON_ERROR_STOP=1 -c "BEGIN" -c "INSERT INTO app.lu_tag VALUES (999, 9999, 'orphan')" -c "ROLLBACK" 2>&1 | grep -c 'ERROR')
+        [ "$out" = 1 ] && echo "    regular FK still enforced: ok" || { echo "    FAIL: regular FK not enforced after restore"; ok=0; }
+        out=$(psql -X -q -At -d "$dst" -v ON_ERROR_STOP=1 -c "BEGIN" -c "UPDATE app.setting SET value = '4'" -c "SELECT count(*) FROM app.setting_history" -c "ROLLBACK" 2>&1)
+        [ "$out" = 3 ] && echo "    system versioning writes history: ok" || { echo "    FAIL: history rows after update: '$out' (expected 3)"; ok=0; }
+    fi
+    dropdb --if-exists "$dst" >>"$LOG" 2>&1; dropdb --if-exists "$ref" >>"$LOG" 2>&1; dropdb --if-exists "$src" >>"$LOG" 2>&1
+    if [ $ok = 1 ]; then PASSED+=("$case"); else FAILED+=("$case"); fi
+}
+
 # restore <case> <variant> <dump> <src-digest> <src-triggers>
 restore_variant() {
     local case=$1 variant=$2 dump=$3 src_digest=$4 src_trig=$5
@@ -698,6 +901,7 @@ restore_variant() {
 
 run_case() {
     local case=$1
+    case "$case" in old_dump_*) run_old_dump_case "$case"; return ;; esac
     local src="${PREFIX}_${case}_src"
     local dump="$WORK/${case}.dump"
     local ok=1
