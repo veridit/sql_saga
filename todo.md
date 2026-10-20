@@ -15,9 +15,15 @@ Completed and regression-tested on the development branch:
 
 Release gates still open:
 - [ ] Replace regular-FK child CHECKs with deferred constraint triggers and validate lifecycle/merge/restore behavior
+  - [ ] Queue checks for surviving rows after a deferred key check followed by a payload-only UPDATE
+  - [ ] Prevent concurrent parent deletion from leaving an orphan under REPEATABLE READ
+  - [ ] Avoid deferring unrelated constraint triggers with the same schema-qualified name
+  - [ ] Refuse noncanonical child-trigger replacements and preserve unrelated same-name constraints
+  - [ ] Adapt historical helper/CHECK fixtures without weakening pairing or enforcement assertions
 - [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
 - [ ] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL
-- [ ] Freeze 1.2 artifacts and build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
+- [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
+- [ ] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
 - [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
