@@ -4,6 +4,52 @@ This document records significant architectural decisions made during the develo
 
 ---
 
+## Decision: Use Constraint Triggers for Regular-to-Temporal Foreign Keys (1.3, 2026-10-20)
+
+### Problem
+
+A regular child row refers to a parent key that must exist at some time, without specifying a child
+period. Versions 1.0 through 1.2 enforce the child side with a CHECK that calls a parent-reading SQL
+helper. A dump can create that CHECK before loading either table, then load the child first. The
+child load fails even in a serial or single-transaction restore. Wrapping the restore in one
+transaction does not make an immediate CHECK wait for the parent data.
+
+### Decision
+
+Use a row-level constraint trigger, `DEFERRABLE INITIALLY IMMEDIATE`, for the child side. It checks
+INSERT and every UPDATE, not only updates naming the FK columns. A deferred event for an obsolete
+row version may be skipped only because the surviving version has its own check. The trigger is a
+post-data dump object, so restored data does not depend on which table's data is loaded first.
+
+The parent-side check asks whether a child still refers to the old key **and** no parent timeline
+segment retains that key. Removing one segment is not the same as removing the key. Deferred
+checks allow a merge to remove and replace segments, but reject a transaction that leaves a real
+orphan. Row locking and transaction-snapshot checks must retain this rule under concurrent writes,
+including REPEATABLE READ, rather than merely passing single-session tests.
+
+`temporal_merge` may defer its intended constraints. Since `SET CONSTRAINTS schema.name` can match
+more than one constraint, it must refuse a name collision before target DML rather than silently
+deferring an unrelated constraint. It does not rename or change a user-owned constraint.
+
+The existing catalog field `foreign_keys.fk_check_constraint` names the new child trigger. A fresh
+1.3 FK needs no helper function. The `fk_helper_function` API argument remains in the signature for
+call compatibility, but an explicit non-NULL value is refused rather than silently ignored.
+
+### Upgrade and validation contract
+
+The direct update scripts validate existing regular references before replacing CHECKs. Orphans
+cause an atomic refusal with an executable scan, not a partially converted database. Historical
+column-pairing damage is diagnosed separately and requires confirmation of the intended pairing.
+Old dumps are restored at their own extension version, then upgraded, as described in `upgrade.md`.
+
+Regression tests 125, 128 and 129 cover representation, pairing, lifecycle, deferral and row-version
+behavior. `devops/test_regular_fk_concurrency.sh` covers controlled two-session interleavings on an
+explicitly identified disposable cluster. Upgrade and restore harnesses exercise released-version
+conversion and post-data trigger restoration. These are release gates, not a substitute for running
+the final assembled 1.3 package.
+
+---
+
 ## Decision: Recognize the Teardown of `pg_restore --clean` in the Drop Protection (2026-10-15)
 
 ### Problem

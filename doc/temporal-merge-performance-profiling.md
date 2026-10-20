@@ -265,6 +265,24 @@ The native planner still reads source rows before discovering they're empty. The
 
 The native planner's full introspection runs only on a cache miss. In 1.3, each planner call and each executor-introspection call first runs one SPI query to fingerprint the source and target catalog definitions. A matching fingerprint avoids further introspection. This validation detects target DDL, rolled-back DDL and changes committed by another session, rather than assuming that cached target casts and column lists remain valid. The benchmark results above predate this validation and are not a measurement of its overhead.
 
+A controlled local A/B on 2026-10-20 measured the validation change using the real public
+`temporal_merge` procedure. A was exact v1.2 (`835058e`), B was that same tree plus only the four
+native-cache files from `9b7dc79`. C and SQL artifacts, data, settings and relation OIDs matched.
+Twelve balanced ABBA runs used six warmed sessions per variant on PostgreSQL 18.3, macOS arm64.
+Every measured call changed payload values, hit both native caches and passed plan/data assertions.
+
+| Batch | v1.2 median | With validation | Difference |
+|---|---:|---:|---:|
+| 1 row | 5.4713 ms | 5.8878 ms | +0.4165 ms (+7.61%) |
+| 1000 rows | 94.1038 ms | 96.0987 ms | +1.9950 ms (+2.12%) |
+
+These are medians of six session medians, from 300 one-row and 120 thousand-row calls per variant.
+The measured interval includes the CALL, not source preparation, assertions or commit. No outliers
+were removed. All paired one-row deltas were positive, but thousand-row deltas ranged from
+-2.58 to +5.24 ms on a non-exclusive host, so 2.12% is not a precise universal overhead estimate.
+This is an observed correctness-check cost, not a claim that validation is free or that these
+workloads predict StatBus import throughput.
+
 **4. EXECUTE phase overhead → UNCHANGED**
 
 The executor is still PL/pgSQL. It still creates ~25 temp tables with `ON COMMIT DROP`. This is now the dominant cost per call (~25-30ms). Optimizing the executor is a separate project.

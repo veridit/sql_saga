@@ -125,14 +125,15 @@ is covered by these two *contiguous* `establishment` rows:
 
 You can build `sql_saga` from source within your own Docker image. `sql_saga` requires PostgreSQL 18.
 `make install` installs the `sql_saga` extension and its two internal shared libraries (`sql_saga` in C
-and `sql_saga_native` in Rust). Building needs a Rust toolchain and libclang; `cargo-pgrx` is not
-required. Only `CREATE EXTENSION sql_saga;` is used: `sql_saga_native` is not an extension. A multi-stage
+and `sql_saga_native` in Rust). Building needs a Rust toolchain, libclang and Python 3 (standard library
+only, to generate the extension update SQL scripts); `cargo-pgrx` is not required. Only
+`CREATE EXTENSION sql_saga;` is used: `sql_saga_native` is not an extension. A multi-stage
 build keeps the toolchains out of the runtime image:
 
 ```dockerfile
 FROM postgres:18 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential git ca-certificates curl pkg-config libclang-dev \
+    build-essential git ca-certificates curl pkg-config libclang-dev python3 \
     postgresql-server-dev-18 \
     && rm -rf /var/lib/apt/lists/*
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
@@ -201,19 +202,12 @@ used. Until then, history reads through `sql_saga`'s views by users subject to r
 fail with an error (direct reads of a history table are filtered by its restored policies). It
 refuses, before changing anything, if that role does not own every system-versioned table.
 
-Measured with `devops/restore_roundtrip.sh` (`SPLIT_ONLY=1`, 20 runs per fixture, PostgreSQL 18): the
-`catalog_only`, `manual_schema_changes` and `rls_history` fixtures restored correctly 20 of 20 times
-each. The `fk_views` and `quoted_names` fixtures, which have regular foreign keys to temporal tables,
-restored correctly in at most 2 of 20 runs. Every other run failed for the reason in the next
-paragraph, never with a deadlock.
-
-**Regular foreign keys to temporal tables need a serial restore.** A database with regular foreign
-keys to temporal tables (`sql_saga.add_regular_foreign_key`, or `add_foreign_key` on a non-temporal
-table) must be restored serially or with `--single-transaction`. With `-j`, the referencing table's
-data can be checked before the referenced table's data is loaded, and the restore fails with a CHECK
-violation. It never restores bad data. Serial and single-transaction restores load and check every
-row in order. The cause is again that `pg_dump` does not record this ordering in the archive (to be
-reported upstream).
+Regular foreign keys to temporal tables (`sql_saga.add_regular_foreign_key`, or `add_foreign_key` on a
+non-temporal table) restore in any of these ways, serially, with `--single-transaction` and with the split
+restore above. Their referencing side is a constraint trigger, which `pg_dump` emits after the data of every
+table, so the order in which the tables' data is loaded does not matter. Creating that trigger does not
+validate the rows already restored, so the archive must be complete and come from a database whose regular
+foreign keys held (they are validated when added and when a database is updated to 1.3).
 
 #### Restoring over an existing database (`--clean`)
 
@@ -355,6 +349,17 @@ Dropping identifier, era or key columns remains protected. If a user-defined obj
 be rebuilt, the statement is refused with an error naming the blocking object and a repair hint. `sql_saga`
 does not rebuild user-defined views or rules. Inside another extension's script, even adding a column can require
 a rebuild and is subject to the same dependency checks.
+
+These managed views also follow supported `ALTER TABLE ... ALTER COLUMN ... TYPE` changes, including
+an explicit `USING` expression. An ordinary payload column, or an identifier that is not part of a
+sql_saga foreign key, can change type: the managed view is dropped and recreated with the new type
+and the same retained grants, comments, defaults, triggers and options described above. PostgreSQL
+evaluates `USING` as the caller, not as the extension owner. A dependent user view or rule prevents
+the rebuild and is named in the error. Era range/boundary columns and columns participating in a
+sql_saga foreign key are refused with a migration hint, even when no managed view exists. Follow
+that hint to remove the affected era or foreign key and its dependants using the public drop
+functions, change the types, then recreate them using the public add functions. `sql_saga` does not
+alter user-owned dependants.
 
 ###### Ending an Entity's Timeline (Soft-Delete)
 `sql_saga` provides two configurable modes for handling the end of an entity's timeline, controlled by the `delete_mode` parameter in `add_current_view`. This allows you to choose between maximum ORM compatibility and maximum auditability.
@@ -596,7 +601,7 @@ TABLE employees (
 
 A foreign key from `projects.lead_employee_id` to `employees.id` ensures that any `lead_employee_id` in the `projects` table corresponds to a valid employee in the `employees` table's history. Unlike temporal-to-temporal foreign keys which check for coverage over a period, this type of foreign key simply checks for the *existence* of the key in the referenced temporal table at any point in its history.
 
-This validation is implemented using a `CHECK` constraint on the regular table, which calls a high-performance helper function created by `sql_saga`.
+This validation is implemented by a constraint trigger on the regular table (named in `sql_saga.foreign_keys.fk_check_constraint`, `DEFERRABLE INITIALLY IMMEDIATE`, so `SET CONSTRAINTS` can defer it) and by constraint triggers on the temporal table: a key referenced by the regular table can be deleted or changed in the temporal table only while another row of the temporal table still has it. `MATCH SIMPLE` (the default) and `MATCH FULL` are supported, `MATCH PARTIAL` is refused.
 
 #### High-Performance Bulk Data Loading (`temporal_merge`)
 - `temporal_merge(target_table regclass, source_table regclass, identity_columns TEXT[], natural_identity_columns TEXT[], ...)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The API is designed to be orthogonal: `mode` controls the non-destructive merge behavior, and `delete_mode` provides optional, destructive overrides.
