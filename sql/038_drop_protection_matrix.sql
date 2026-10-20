@@ -91,7 +91,7 @@ SELECT dp_matrix.case_result('direct FOR PORTION OF view', $$DROP VIEW dp_matrix
 SELECT dp_matrix.case_result('direct FOR PORTION OF trigger', $$DROP TRIGGER for_portion_of_valid ON dp_matrix.view_t__for_portion_of_valid$$, 'P0001', 'cannot drop trigger "for_portion_of_valid" on view "dp_matrix.view_t__for_portion_of_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"');
 SELECT dp_matrix.case_result('direct current view', $$DROP VIEW dp_matrix.view_t__current_valid$$, 'P0001', 'cannot drop view "dp_matrix.view_t__current_valid", call "sql_saga.drop_current_view()" instead');
 SELECT dp_matrix.case_result('direct current trigger', $$DROP TRIGGER current_valid ON dp_matrix.view_t__current_valid$$, 'P0001', 'cannot drop trigger "current_valid" on view "dp_matrix.view_t__current_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"');
-SELECT dp_matrix.case_result('direct updatable-view identifier', $$ALTER TABLE dp_matrix.view_t DROP CONSTRAINT view_t_pkey$$, 'P0001', 'table "dp_matrix.view_t" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"');
+SELECT dp_matrix.case_result('direct updatable-view identifier', $$ALTER TABLE dp_matrix.view_t DROP CONSTRAINT view_t_pkey$$, 'P0001', 'table "dp_matrix.view_t" must have a primary key or a single-column temporal unique key to support its for_portion_of view "dp_matrix.view_t__for_portion_of_valid" for era "valid"; drop that view first with sql_saga.drop_for_portion_of_view()');
 
 CREATE TABLE dp_matrix.fk_parent (id int, valid_range daterange NOT NULL);
 CREATE TABLE dp_matrix.fk_temporal_child (parent_id int, valid_range daterange NOT NULL);

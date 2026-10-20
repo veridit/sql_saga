@@ -34,5 +34,5 @@ two history tables choose statement-first B | P0001: cannot drop table "dp_guard
 predicated supporting index outranks earlier-payload history view | P0001: cannot drop index "pred_compete_support" on table "dp_guard_order.pred_compete" because it is used in era unique key "pred_compete_key"
 
 pk consistency constraint outranks earlier-payload history view | P0001: cannot drop constraint "pk_compete_natural_pk_consistency_excl" on table "dp_guard_order.pk_compete" because it is used in era unique key "pk_compete_natural"
-identifier loss outranks earlier-payload temporal unique constraint | P0001: table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"
+identifier loss outranks earlier-payload temporal unique constraint | P0001: table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its current view "dp_guard_order.identifier_compete__current_valid" for era "valid"; drop that view first with sql_saga.drop_current_view()
 two managed policies choose payload-first B | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_b_history" because it is managed by sql_saga for table "dp_guard_order.guard_b"

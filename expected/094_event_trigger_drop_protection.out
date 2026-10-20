@@ -85,7 +85,7 @@ ERROR:  cannot drop trigger "for_portion_of_p" on view "dp__for_portion_of_p" be
 ROLLBACK TO SAVEPOINT s5;
 SAVEPOINT s6;
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
-ERROR:  table "dp" must have a primary key or a single-column temporal unique key to support its updatable view for era "p"
+ERROR:  table "dp" must have a primary key or a single-column temporal unique key to support its for_portion_of view "dp__for_portion_of_p" for era "p"; drop that view first with sql_saga.drop_for_portion_of_view()
 ROLLBACK TO SAVEPOINT s6;
 SELECT sql_saga.drop_for_portion_of_view('dp', 'p');
  drop_for_portion_of_view 
@@ -125,7 +125,7 @@ ERROR:  cannot drop trigger "current_p" on view "dp_current__current_p" because 
 ROLLBACK TO SAVEPOINT s_current_trigger;
 SAVEPOINT s_current_pkey;
 ALTER TABLE dp_current DROP CONSTRAINT dp_current_pkey; -- fails
-ERROR:  table "dp_current" must have a primary key or a single-column temporal unique key to support its updatable view for era "p"
+ERROR:  table "dp_current" must have a primary key or a single-column temporal unique key to support its current view "dp_current__current_p" for era "p"; drop that view first with sql_saga.drop_current_view()
 ROLLBACK TO SAVEPOINT s_current_pkey;
 SELECT sql_saga.drop_current_view('dp_current', 'p');
  drop_current_view 

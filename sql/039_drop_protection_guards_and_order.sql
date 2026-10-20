@@ -331,7 +331,7 @@ SELECT dp_guard_order.case_result(
     $$ALTER TABLE dp_guard_order.identifier_compete
           DROP CONSTRAINT identifier_compete_pkey,
           DROP CONSTRAINT identifier_compete_alt$$,
-    'table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"');
+    'table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its current view "dp_guard_order.identifier_compete__current_valid" for era "valid"; drop that view first with sql_saga.drop_current_view()');
 
 CREATE ROLE dp_guard_policy_role;
 SELECT set_config('session_replication_role', 'replica', true) IS NOT NULL AS replica_set \gset

@@ -32,7 +32,7 @@ direct FOR PORTION OF view | P0001: cannot drop view "dp_matrix.view_t__for_port
 direct FOR PORTION OF trigger | P0001: cannot drop trigger "for_portion_of_valid" on view "dp_matrix.view_t__for_portion_of_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
 direct current view | P0001: cannot drop view "dp_matrix.view_t__current_valid", call "sql_saga.drop_current_view()" instead
 direct current trigger | P0001: cannot drop trigger "current_valid" on view "dp_matrix.view_t__current_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
-direct updatable-view identifier | P0001: table "dp_matrix.view_t" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"
+direct updatable-view identifier | P0001: table "dp_matrix.view_t" must have a primary key or a single-column temporal unique key to support its for_portion_of view "dp_matrix.view_t__for_portion_of_valid" for era "valid"; drop that view first with sql_saga.drop_for_portion_of_view()
 t
 fk_parent_key
 t
