@@ -176,5 +176,17 @@ part 5c: rename of a child key column | error P0001
 part 5c: predicate kept | true
 part 5c: catalog columns | {Y,X}
 part 5c: child column "X" kept | 1
+--- part 6: a rename that recreates the triggers of a regular foreign key says so (one NOTICE per foreign key)
+part 6: era | ok
+part 6: key | ok
+part 6: foreign key | ok
+part 6: firing modes before | c6_child D, c6_del O, c6_up A
+NOTICE:  sql_saga: Dropped and recreated triggers c6_child on table rft.c6 and c6_up, c6_del on table rft.p6 of foreign key c6_fkey to follow the column rename, keeping their firing modes
+part 6: rename of the child column | ok
+NOTICE:  sql_saga: Dropped and recreated triggers c6_child on table rft.c6 and c6_up, c6_del on table rft.p6 of foreign key c6_fkey to follow the column rename, keeping their firing modes
+part 6: rename of the referenced column | ok
+NOTICE:  sql_saga: Dropped and recreated triggers c6_child on table rft.c6 and c6_up, c6_del on table rft.p6 of foreign key c6_fkey to follow the column rename, keeping their firing modes
+part 6: rename of an era boundary column | ok
+part 6: firing modes after | c6_child D, c6_del O, c6_up A
 --- final
 ok

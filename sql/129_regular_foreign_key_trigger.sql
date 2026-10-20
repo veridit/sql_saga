@@ -669,6 +669,30 @@ FROM pg_catalog.pg_attribute WHERE attrelid = 'rft.c5'::regclass AND attname = '
 ROLLBACK TO SAVEPOINT user_when;
 ROLLBACK TO SAVEPOINT part5;
 
+\echo '--- part 6: a rename that recreates the triggers of a regular foreign key says so (one NOTICE per foreign key)'
+-- Own fixture: parent rft.p6 (key id, era bounds valid_from/valid_until), child rft.c6 with the child trigger
+-- disabled and the parent update trigger ENABLE ALWAYS, so the NOTICE and the kept firing modes are both visible.
+SAVEPOINT part6;
+CREATE TABLE rft.p6 (id int NOT NULL, valid_from date, valid_until date, valid_range daterange NOT NULL);
+SELECT 'part 6: era | ' || rft.run($$SELECT sql_saga.add_era('rft.p6', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until')$$);
+SELECT 'part 6: key | ' || rft.run($$SELECT sql_saga.add_unique_key('rft.p6', ARRAY['id'], key_type => 'primary', unique_key_name => 'p6_key')$$);
+CREATE TABLE rft.c6 (id int PRIMARY KEY, p_id int);
+SELECT 'part 6: foreign key | ' || rft.run($$SELECT sql_saga.add_regular_foreign_key('rft.c6', ARRAY['p_id'], 'p6_key', foreign_key_name => 'c6_fkey', fk_check_constraint => 'c6_child', uk_update_trigger => 'c6_up', uk_delete_trigger => 'c6_del')$$);
+ALTER TABLE rft.c6 DISABLE TRIGGER c6_child;
+ALTER TABLE rft.p6 ENABLE ALWAYS TRIGGER c6_up;
+CREATE FUNCTION rft.part6_modes() RETURNS text LANGUAGE sql AS $part6_modes$
+    SELECT string_agg(t.tgname || ' ' || t.tgenabled::text, ', ' ORDER BY t.tgname)
+    FROM pg_catalog.pg_trigger AS t WHERE t.tgname IN ('c6_child', 'c6_up', 'c6_del');
+$part6_modes$;
+SELECT 'part 6: firing modes before | ' || rft.part6_modes();
+SET LOCAL client_min_messages = notice;
+SELECT 'part 6: rename of the child column | ' || rft.run('ALTER TABLE rft.c6 RENAME COLUMN p_id TO parent_id');
+SELECT 'part 6: rename of the referenced column | ' || rft.run('ALTER TABLE rft.p6 RENAME COLUMN id TO p_key');
+SELECT 'part 6: rename of an era boundary column | ' || rft.run('ALTER TABLE rft.p6 RENAME COLUMN valid_from TO starts_on');
+SET LOCAL client_min_messages = warning;
+SELECT 'part 6: firing modes after | ' || rft.part6_modes();
+ROLLBACK TO SAVEPOINT part6;
+
 \echo '--- final'
 SELECT rft.integrity();
 
