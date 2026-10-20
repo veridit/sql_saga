@@ -21,8 +21,8 @@ Release gates still open:
   - [ ] Refuse noncanonical child-trigger replacements and preserve unrelated same-name constraints
   - [ ] Adapt historical helper/CHECK fixtures without weakening pairing or enforcement assertions
 - [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
-- [ ] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL
-  - [ ] Use structured fingerprints so quoted names cannot collide with encoded column lists
+- [x] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL (133, independent G4)
+  - [x] Use structured fingerprints so quoted names cannot collide with encoded column lists
 - [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
 - [ ] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
   - [ ] Authenticate frozen inputs and test deterministic generation, SQL splitting and signature checks

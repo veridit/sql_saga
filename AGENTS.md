@@ -229,8 +229,8 @@ at `115`+ (`115` native packaging, `116`-`117` check_integrity, `118` system ver
 foreign key renames and shared helpers, `122` era boundary column renames, `123` history policy guard, `124` XOR key
 column order, `125` regular FK restore safety, `126` views follow ADD/DROP/RENAME COLUMN, `127` check_integrity repair
 hints, `128` FK column pairing, `129` regular FK constraint trigger, `130` catalog format safeguard, `131` quoting and
-renames). Benchmarks are selected by the word `benchmark` in
-the test name, not by number.
+renames, `132` view column type changes, `133` native cache schema changes, `134` dependency cleanup). Benchmarks
+are selected by the word `benchmark` in the test name, not by number.
 
 **Self-Contained Test Template:**
 ```sql
