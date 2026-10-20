@@ -142,6 +142,43 @@ SELECT nc.merge('nc.t4b', 'nc.src_int') AS merge_with_note_restored;
 SELECT * FROM nc.target_rows('nc.t4b');
 ROLLBACK;
 
+\echo '--- 5a. Two sources whose column lists only differ in where a quoted name puts the delimiters'
+-- src_5a_a has payload and shadow; src_5a_b has one column named "payload:23:-1,shadow". Naive concatenation of
+-- name:type:typmod gives the same text for both, yet they are different shapes: the second merge must write 99 into
+-- the column of that name, as in a fresh session.
+BEGIN;
+CREATE TABLE nc.t5a (id integer NOT NULL, payload integer, shadow integer, "payload:23:-1,shadow" integer,
+                     valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('nc.t5a', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nc.t5a', ARRAY['id'], key_type => 'primary');
+INSERT INTO nc.t5a (id, payload, shadow, valid_from, valid_until) VALUES (1, 1, 7, '2024-01-01', 'infinity');
+CREATE TABLE nc.src_5a_a (row_id integer, id integer, payload integer, shadow integer, valid_from date, valid_until date);
+CREATE TABLE nc.src_5a_b (row_id integer, id integer, "payload:23:-1,shadow" integer, valid_from date, valid_until date);
+INSERT INTO nc.src_5a_a VALUES (1, 1, 2, 8, '2024-02-01', '2024-03-01');
+INSERT INTO nc.src_5a_b VALUES (1, 1, 99, '2024-04-01', '2024-05-01');
+SELECT nc.merge('nc.t5a', 'nc.src_5a_a') AS warm_merge_payload_shadow;
+SELECT nc.merge('nc.t5a', 'nc.src_5a_b') AS merge_quoted_column;
+SELECT t.id, t.payload, t.shadow, t."payload:23:-1,shadow", t.valid_from, t.valid_until FROM nc.t5a AS t ORDER BY t.valid_from;
+ROLLBACK;
+
+\echo '--- 5b. Target DDL to a quoted column name that spells the dropped columns'
+-- payload and shadow are replaced by one column "payload:23:-1:f:::,shadow". The merge after it writes 99 there.
+BEGIN;
+CREATE TABLE nc.t5b (id integer NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date,
+                     payload integer, shadow integer);
+SELECT sql_saga.add_era('nc.t5b', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nc.t5b', ARRAY['id'], key_type => 'primary');
+INSERT INTO nc.t5b (id, payload, shadow, valid_from, valid_until) VALUES (1, 1, 7, '2024-01-01', 'infinity');
+CREATE TABLE nc.src_5b (row_id integer, id integer, valid_from date, valid_until date, payload integer, shadow integer,
+                        "payload:23:-1:f:::,shadow" integer);
+INSERT INTO nc.src_5b VALUES (1, 1, '2024-02-01', '2024-03-01', 2, 8, 99);
+SELECT nc.merge('nc.t5b', 'nc.src_5b') AS warm_merge_payload_shadow;
+ALTER TABLE nc.t5b DROP COLUMN payload, DROP COLUMN shadow, ADD COLUMN "payload:23:-1:f:::,shadow" integer;
+UPDATE nc.src_5b SET valid_from = '2024-04-01', valid_until = '2024-05-01';
+SELECT nc.merge('nc.t5b', 'nc.src_5b') AS merge_into_quoted_column;
+SELECT t.id, t."payload:23:-1:f:::,shadow", t.valid_from, t.valid_until FROM nc.t5b AS t ORDER BY t.valid_from;
+ROLLBACK;
+
 SELECT sql_saga.check_integrity();
 
 SET client_min_messages = warning;
