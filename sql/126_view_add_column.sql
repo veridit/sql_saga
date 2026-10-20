@@ -408,6 +408,63 @@ SELECT id, name, edited_at, valid_from, valid_until FROM vac.audited ORDER BY id
 SELECT vac.probe($$ALTER TABLE vac.audited DROP COLUMN edited_at$$) AS drop_renamed_ephemeral_column;
 SELECT uv.view_name, uv.ephemeral_columns FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'audited');
 SELECT vac.integrity('after the refused ephemeral DROP COLUMN');
+
+\echo '--- 14. DROP COLUMN keeps a view column comment or default that has no column grant'
+-- Only a comment on one view column, only a default on another, no column-level grant anywhere.
+CREATE TABLE vac.facts (id int NOT NULL, name text, note text, extra text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('vac.facts', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('vac.facts', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_for_portion_of_view('vac.facts');
+COMMENT ON COLUMN vac.facts__for_portion_of_valid.name IS 'display name';
+ALTER VIEW vac.facts__for_portion_of_valid ALTER COLUMN note SET DEFAULT 'n';
+ALTER TABLE vac.facts DROP COLUMN extra;
+SELECT a.attname, a.attacl IS NULL AS no_column_grant,
+       col_description(a.attrelid, a.attnum) AS column_comment,
+       pg_get_expr(ad.adbin, ad.adrelid) AS column_default
+FROM pg_catalog.pg_attribute AS a
+LEFT JOIN pg_catalog.pg_attrdef AS ad ON (ad.adrelid, ad.adnum) = (a.attrelid, a.attnum)
+WHERE a.attrelid = 'vac.facts__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+SELECT vac.integrity('after DROP COLUMN with a comment-only and a default-only view column');
+
+\echo '--- 15. The ADD COLUMN notice names exactly the added columns, also after an earlier DROP COLUMN'
+-- After a DROP COLUMN the table has a dropped-column hole, so attnums no longer count the columns.
+CREATE TABLE vac.holes (id int NOT NULL, name text, gone1 text, gone2 text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('vac.holes', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('vac.holes', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_for_portion_of_view('vac.holes');
+ALTER TABLE vac.holes DROP COLUMN gone1, DROP COLUMN gone2;
+SET client_min_messages = notice;
+ALTER TABLE vac.holes ADD COLUMN added1 text;
+ALTER TABLE vac.holes ADD COLUMN added2 text, ADD COLUMN added3 int;
+SET client_min_messages = warning;
+SELECT array_agg(a.attname ORDER BY a.attnum) AS holes_view_columns
+FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'vac.holes__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+SELECT vac.integrity('after ADD COLUMN with dropped-column holes');
+
+\echo '--- 16. A DROP COLUMN whose ddl_command_end did not run leaves a pending row: check_integrity reports it'
+-- Disabling only sql_saga_rename_following lets the start hook drop the view without the end hook
+-- recreating it. check_integrity first reports the disabled event trigger, then, once it is enabled
+-- again, the view left behind in the pending state, with the statements that clear it.
+BEGIN;
+ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
+ALTER TABLE vac.facts DROP COLUMN note;
+SELECT vac.integrity('with sql_saga_rename_following disabled');
+ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
+SELECT to_regclass('vac.facts__for_portion_of_valid') AS facts_view,
+       (SELECT count(*) FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'facts')) AS facts_managed_views,
+       (SELECT count(*) FROM sql_saga.__internal_updatable_view_pending) AS pending_rows;
+SELECT vac.integrity('with the pending row left behind');
+-- The repair the report names.
+DELETE FROM sql_saga.__internal_updatable_view_pending WHERE (view_schema, view_name) = ('vac', 'facts__for_portion_of_valid');
+SELECT sql_saga.add_for_portion_of_view('vac.facts', era_name => 'valid');
+SELECT (SELECT count(*) FROM sql_saga.__internal_updatable_view_pending) AS pending_rows,
+       array_agg(a.attname ORDER BY a.attnum) AS facts_view_columns
+FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'vac.facts__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+SELECT vac.integrity('after the repair of the pending row');
+ROLLBACK;
 SELECT vac.integrity('at the end');
 
 SET client_min_messages = warning;
