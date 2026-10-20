@@ -733,14 +733,23 @@ run_case() {
         restore_variant "$case" "$variant" "$dump" "$src_digest" "$src_trig" || ok=0
     done
     if is_split_case "$case"; then
-        local sfail=0 svout
+        local sfail=0 sknown=0 svout
         for i in $(seq 1 "$SPLIT_RUNS"); do
             if ! svout=$(restore_variant "$case" "split_$i" "$dump" "$src_digest" "$src_trig" 2>&1); then
-                sfail=$((sfail+1)); echo "$svout"
+                echo "$svout"
+                # README: regular foreign keys to temporal tables need a serial or --single-transaction
+                # restore; with -j their CHECK can run before the parent's data is loaded. Only that
+                # documented failure is known; every other failure (deadlock included) is hard.
+                if printf '%s\n' "$svout" | grep -q 'FAILED \[user data load order (CHECK constraint)\]'; then
+                    sknown=$((sknown+1))
+                else
+                    sfail=$((sfail+1))
+                fi
             fi
         done
-        echo "    split (README three-invocation procedure): $((SPLIT_RUNS - sfail))/$SPLIT_RUNS ok"
-        SPLIT_RESULTS+=("$case: $((SPLIT_RUNS - sfail))/$SPLIT_RUNS")
+        echo "    split (README procedure): $((SPLIT_RUNS - sfail - sknown))/$SPLIT_RUNS ok, $sknown documented CHECK load-order failures, $sfail other failures"
+        SPLIT_RESULTS+=("$case: $((SPLIT_RUNS - sfail - sknown))/$SPLIT_RUNS ok, $sknown known (regular-FK CHECK load order, README), $sfail other")
+        [ $sknown = 0 ] || KNOWN+=("$case: $sknown/$SPLIT_RUNS split restores failed on the documented regular-FK CHECK load order (README: restore such databases serially)")
         [ $sfail = 0 ] || ok=0
     fi
     local ran=${#variants[@]}
@@ -929,7 +938,7 @@ MOCK
              digest() { :; }; event_triggers() { :; }; policies() { :; }; tenant_reads() { :; }
              manual_schema_state() { :; }; rls_isolation() { :; }; policy_copy_faults() { echo 0; }; snapshot_faults() { echo 0; }
              select_cases catalog_only; run_cases; echo "exit=$?" ) 2>&1)
-    st_check "one failing split run: case fails, 2/3 reported" "  SPLIT: catalog_only: 2/3|exit=1" "$(printf '%s\n' "$out" | grep -E '^  SPLIT:|^exit=' | tr '\n' '|' | sed 's/|$//')"
+    st_check "one failing split run: case fails, 2/3 reported" "  SPLIT: catalog_only: 2/3 ok, 0 known (regular-FK CHECK load order, README), 1 other|exit=1" "$(printf '%s\n' "$out" | grep -E '^  SPLIT:|^exit=' | tr '\n' '|' | sed 's/|$//')"
 
     rm -rf "$st"
     echo "self-test: $fails failure(s)"
