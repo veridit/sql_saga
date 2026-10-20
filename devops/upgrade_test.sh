@@ -2172,6 +2172,92 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------
+# tmp/fable_audit_v13.md finding 3 (A3). The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
+# so their column list is frozen; StatBus then ran ALTER TABLE ... ADD COLUMN on era tables that already had
+# views (stat_for_unit.stat GENERATED ALWAYS ... STORED; location.region_version_id plain + FK + CHECK). On
+# v1.0 the embedded 1.0 -> 1.1 migration recreates every view, so that path passes today and is kept as a
+# guard; on v1.1 the views keep lagging their base and the final check_integrity gate refuses the update.
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    section "view column drift: views lag a later ADD COLUMN (guard: the 1.0 path rebuilds views)" "regression"
+else
+    section "view column drift: views lag a later ADD COLUMN" "expected RED"
+fi
+VIEW_CLASS=$FAILURE_CLASS
+# ---------------------------------------------------------------------------------------------
+DRIFT=${PREFIX}_view_drift
+new_db "$DRIFT" "$EXT_ROOT" "$OLD_LIB"
+out=$(sql "$DRIFT" <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE TABLE region (id int PRIMARY KEY);
+INSERT INTO region VALUES (1), (2);
+CREATE FUNCTION drift_today() RETURNS date LANGUAGE sql STABLE AS \$\$ SELECT '2024-06-01'::date \$\$;
+CREATE TABLE stat_for_unit (id int NOT NULL, value_int int, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('stat_for_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('stat_for_unit', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'stat_for_unit_id_valid');
+SELECT sql_saga.add_for_portion_of_view('stat_for_unit');
+CREATE TABLE location (id int NOT NULL, value_int int, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('location', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('location', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'location_id_valid');
+SELECT sql_saga.add_for_portion_of_view('location');
+SELECT sql_saga.add_current_view('location', current_func_name => 'drift_today()');
+INSERT INTO stat_for_unit (id, value_int, valid_from, valid_until) VALUES (1, 1, '2024-01-01', 'infinity');
+INSERT INTO location (id, value_int, valid_from, valid_until) VALUES (1, 1, '2024-01-01', 'infinity');
+-- After the views exist: the two StatBus column additions (plain + FK + CHECK, and GENERATED STORED).
+ALTER TABLE stat_for_unit ADD COLUMN stat int GENERATED ALWAYS AS (value_int * 2) STORED;
+ALTER TABLE location ADD COLUMN region_id int REFERENCES region (id) CHECK (region_id > 0);
+ALTER TABLE location ADD COLUMN note text;
+SQL
+)
+printf '%s\n' "$out" | grep -q '^ERROR' && die "view drift fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+# Base columns missing from (or retyped in) each managed view, and generated_columns versus the base.
+VIEW_DRIFT_SQL="SELECT string_agg(format('%s:%s', uv.view_name, COALESCE((SELECT string_agg(a.attname, ',' ORDER BY a.attnum)
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = format('%I.%I', uv.table_schema, uv.table_name)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+      AND NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS va WHERE va.attrelid = format('%I.%I', uv.view_schema, uv.view_name)::regclass
+                      AND va.attname = a.attname AND va.atttypid = a.atttypid AND va.attnum > 0 AND NOT va.attisdropped)), '-')), ' ' ORDER BY uv.view_name)
+FROM sql_saga.updatable_view AS uv"
+GENERATED_SQL="SELECT string_agg(format('%s:%s', uv.view_name, uv.generated_columns = (SELECT COALESCE(array_agg(a.attname ORDER BY a.attnum), '{}')
+    FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = format('%I.%I', uv.table_schema, uv.table_name)::regclass
+      AND a.attnum > 0 AND NOT a.attisdropped AND (a.attgenerated <> '' OR a.attidentity = 'a'))), ' ' ORDER BY uv.view_name)
+FROM sql_saga.updatable_view AS uv"
+FAILURE_CLASS=prerequisite
+check "view drift: the $BASELINE_VERSION views lag the columns added after them" \
+    "location__current_valid:region_id,note location__for_portion_of_valid:region_id,note stat_for_unit__for_portion_of_valid:stat" \
+    "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
+FAILURE_CLASS=$VIEW_CLASS
+psql -X -q -d postgres -c "ALTER DATABASE $DRIFT RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $DRIFT"
+check "view drift: healthy $BASELINE_VERSION database updates without refusal" "" \
+    "$(q "$DRIFT" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "view drift: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$DRIFT" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "view drift: check_integrity passes after the update" "" "$(q "$DRIFT" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "view drift: every view exposes every base column after the update" \
+    "location__current_valid:- location__for_portion_of_valid:- stat_for_unit__for_portion_of_valid:-" "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
+check "view drift: generated_columns equals the base's generated columns after the update" \
+    "location__current_valid:t location__for_portion_of_valid:t stat_for_unit__for_portion_of_valid:t" "$(q "$DRIFT" "$GENERATED_SQL")"
+check "view drift: a portion update through the view sets the added column, the generated column is computed" \
+    "2024-01-01|2024-03-01|1|2|||2024-03-01|2024-05-01|5|10|2|mid|2024-05-01|infinity|1|2||" \
+    "$(q "$DRIFT" "BEGIN;
+UPDATE stat_for_unit__for_portion_of_valid SET value_int = 5, valid_from = '2024-03-01', valid_until = '2024-05-01' WHERE id = 1;
+UPDATE location__for_portion_of_valid SET region_id = 2, note = 'mid', valid_from = '2024-03-01', valid_until = '2024-05-01' WHERE id = 1;
+SELECT string_agg(format('%s|%s|%s|%s|%s|%s', s.valid_from, s.valid_until, s.value_int, s.stat, l.region_id, l.note), '|' ORDER BY s.valid_from)
+FROM stat_for_unit AS s JOIN location AS l USING (id, valid_from);
+ROLLBACK" | grep -v '^BEGIN\|^ROLLBACK\|^UPDATE')"
+check "view drift: an update through the current view sets the added column" "2024-06-01|infinity|1|now" \
+    "$(q "$DRIFT" "BEGIN;
+UPDATE location__current_valid SET region_id = 1, note = 'now' WHERE id = 1;
+SELECT concat_ws('|', valid_from, valid_until, region_id, note) FROM location WHERE valid_from = '2024-06-01';
+ROLLBACK" | grep -v '^BEGIN\|^ROLLBACK\|^UPDATE')"
+# ADD COLUMN on the updated database: the candidate itself must keep the views in step (fresh-install
+# A3, RED on both paths until rename_following rebuilds the views).
+FAILURE_CLASS="expected RED"
+check "view drift: ADD COLUMN after the update keeps check_integrity passing" "" \
+    "$(q "$DRIFT" "ALTER TABLE location ADD COLUMN later text" | grep '^ERROR'; q "$DRIFT" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "view drift: ADD COLUMN after the update is exposed by every view of the table" \
+    "location__current_valid:- location__for_portion_of_valid:- stat_for_unit__for_portion_of_valid:-" "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
+
+# ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
