@@ -1,0 +1,22 @@
+\set ECHO none
+--- cascading era removal removes both managed view types
+drop era CASCADE | accepted
+managed views remaining | 0
+catalogued views remaining | 0
+recreate era, key and both views | accepted
+--- removal never silently cascades through a reused synchronization function
+drop era RESTRICT | refused 2BP01
+user trigger kept after drop era | true
+era kept after refusal | true
+drop synchronization trigger | refused 2BP01
+user trigger kept after sync cleanup | true
+DROP TABLE without CASCADE | refused 2BP01
+base table kept after refusal | true
+user trigger kept after DROP TABLE | true
+era drops after user removes the dependency | accepted
+--- dependency errors name the managed view and give the correct removal order
+key removal names current view and its drop API | true
+key removal names portion view and its drop API | true
+table rename guidance drops views before keys | true
+schema rename guidance drops views before keys | true
+integrity after refused operations | accepted
