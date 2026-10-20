@@ -284,6 +284,9 @@ DECLARE
     update_columns text;
     update_enabled "char";
     delete_enabled "char";
+    fk_table_oid regclass;
+    child_enabled "char";
+    child_is_trigger boolean := false;
 BEGIN
     SELECT * INTO fk FROM sql_saga.foreign_keys AS f
     WHERE f.foreign_key_name = foreign_key_name AND f.type = 'regular_to_temporal';
@@ -309,9 +312,38 @@ BEGIN
     SELECT t.tgenabled INTO delete_enabled FROM pg_catalog.pg_trigger AS t
     WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_delete_trigger;
 
+    /*
+     * The referencing-side constraint trigger (1.3) carries the same arguments, so it is re-created
+     * too. A pre-1.3 CHECK + helper referencing side is left to the helper code paths.
+     */
+    fk_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name));
+    IF fk_table_oid IS NOT NULL THEN
+        SELECT true, t.tgenabled INTO child_is_trigger, child_enabled FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = fk_table_oid AND t.tgname = fk.fk_check_constraint
+          AND t.tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()');
+        child_is_trigger := coalesce(child_is_trigger, false);
+    END IF;
+
+    /* The empty name matches no trigger, so drop_protection admits the DROP; restored below. */
     UPDATE sql_saga.foreign_keys AS f
-    SET uk_update_trigger = NULL, uk_delete_trigger = NULL
+    SET uk_update_trigger = NULL, uk_delete_trigger = NULL,
+        fk_check_constraint = CASE WHEN child_is_trigger THEN ''::name ELSE f.fk_check_constraint END
     WHERE f.foreign_key_name = fk.foreign_key_name;
+
+    IF child_is_trigger THEN
+        EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.fk_check_constraint, fk_table_oid);
+        /* The creator reads the catalog row, so its child trigger name is restored first. */
+        UPDATE sql_saga.foreign_keys AS f
+        SET fk_check_constraint = fk.fk_check_constraint
+        WHERE f.foreign_key_name = fk.foreign_key_name;
+        /* Same definition as add_regular_foreign_key. */
+        PERFORM sql_saga.__internal_create_regular_fk_child_trigger(fk.foreign_key_name);
+        IF child_enabled IS DISTINCT FROM 'O' AND child_enabled IS NOT NULL THEN
+            EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', fk_table_oid,
+                CASE child_enabled WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,
+                fk.fk_check_constraint);
+        END IF;
+    END IF;
 
     IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_update_trigger) THEN
         EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.uk_update_trigger, uk_table_oid);
@@ -380,8 +412,23 @@ BEGIN
     END IF;
 
     UPDATE sql_saga.foreign_keys AS f
-    SET uk_update_trigger = fk.uk_update_trigger, uk_delete_trigger = fk.uk_delete_trigger
+    SET uk_update_trigger = fk.uk_update_trigger, uk_delete_trigger = fk.uk_delete_trigger,
+        fk_check_constraint = fk.fk_check_constraint
     WHERE f.foreign_key_name = fk.foreign_key_name;
+
+    /* Only reached once every trigger was dropped, recreated and given back its firing mode. */
+    IF child_is_trigger THEN
+        RAISE NOTICE 'sql_saga: Dropped and recreated triggers % on table % and %, % on table % of foreign key % to follow the column rename, keeping their firing modes',
+            pg_catalog.quote_ident(fk.fk_check_constraint), pg_catalog.format('%I.%I', fk.table_schema, fk.table_name),
+            pg_catalog.quote_ident(fk.uk_update_trigger), pg_catalog.quote_ident(fk.uk_delete_trigger),
+            pg_catalog.format('%I.%I', uk.table_schema, uk.table_name),
+            pg_catalog.quote_ident(fk.foreign_key_name);
+    ELSE
+        RAISE NOTICE 'sql_saga: Dropped and recreated triggers %, % on table % of foreign key % to follow the column rename, keeping their firing modes',
+            pg_catalog.quote_ident(fk.uk_update_trigger), pg_catalog.quote_ident(fk.uk_delete_trigger),
+            pg_catalog.format('%I.%I', uk.table_schema, uk.table_name),
+            pg_catalog.quote_ident(fk.foreign_key_name);
+    END IF;
 END;
 $__internal_recreate_regular_fk_uk_triggers$;
 
@@ -470,6 +517,48 @@ $__internal_regular_fk_trigger_args$;
 REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_trigger_args(name) FROM PUBLIC;
 
 /*
+ * Whether the referencing-side constraint trigger of a regular foreign key (1.3) is exactly the one
+ * add_regular_foreign_key creates: named fk_check_constraint on the referencing table, AFTER INSERT
+ * OR UPDATE (no column list: every UPDATE is checked), FROM the referenced table, DEFERRABLE
+ * INITIALLY IMMEDIATE, FOR EACH ROW, sql_saga.regular_fk_check_c() with the canonical arguments
+ * (the same as the referenced-side triggers), no WHEN, no transition tables. Only tgenabled may
+ * differ.
+ */
+CREATE FUNCTION sql_saga.__internal_regular_fk_child_trigger_is_canonical(foreign_key_name name)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_regular_fk_child_trigger_is_canonical$
+    SELECT coalesce((
+        SELECT NOT t.tgisinternal
+           AND t.tgfoid OPERATOR(pg_catalog.=) pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()')
+           -- ROW (1) + AFTER + INSERT (4) + UPDATE (16)
+           AND t.tgtype OPERATOR(pg_catalog.=) 21
+           AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
+                       WHERE c.oid OPERATOR(pg_catalog.=) t.tgconstraint AND c.contype OPERATOR(pg_catalog.=) 't'
+                         AND c.conname OPERATOR(pg_catalog.=) t.tgname)
+           AND t.tgconstrrelid OPERATOR(pg_catalog.=) pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+           AND t.tgconstrindid OPERATOR(pg_catalog.=) 0
+           AND t.tgdeferrable AND NOT t.tginitdeferred
+           AND t.tgqual IS NULL
+           AND t.tgoldtable IS NULL AND t.tgnewtable IS NULL
+           AND t.tgparentid OPERATOR(pg_catalog.=) 0
+           AND t.tgargs OPERATOR(pg_catalog.=) sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name)
+           -- AFTER INSERT OR UPDATE with no column list: every UPDATE is checked (tgattr empty).
+           AND pg_catalog.cardinality(t.tgattr::pg_catalog.int2[]) OPERATOR(pg_catalog.=) 0
+        FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name))
+          AND t.tgname = fk.fk_check_constraint
+    ), false)
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    WHERE fk.foreign_key_name = $1 AND fk.type = 'regular_to_temporal';
+$__internal_regular_fk_child_trigger_is_canonical$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_child_trigger_is_canonical(name) FROM PUBLIC;
+
+/*
  * Whether a regular foreign key's helper function body and both referenced-side trigger argument
  * lists are the canonical ones for the current catalog (used by check_integrity).
  */
@@ -479,12 +568,14 @@ LANGUAGE sql
 STABLE
 SET search_path = sql_saga, pg_catalog
 AS $__internal_regular_foreign_key_is_attributable$
-    SELECT coalesce((
+    SELECT coalesce(CASE WHEN fk.fk_helper_function IS NULL THEN
+        sql_saga.__internal_regular_fk_child_trigger_is_canonical(fk.foreign_key_name)
+    ELSE (
         SELECT pg_catalog.btrim(p.prosrc, E' \t\r\n')
                OPERATOR(pg_catalog.=) pg_catalog.btrim(sql_saga.__internal_regular_fk_helper_body(fk.foreign_key_name), E' \t\r\n')
         FROM pg_catalog.pg_proc AS p
         WHERE p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function)
-    ) AND NOT EXISTS (
+    ) END AND NOT EXISTS (
         SELECT FROM pg_catalog.pg_trigger AS t
         WHERE t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
           AND t.tgname IN (fk.uk_update_trigger, fk.uk_delete_trigger)
@@ -603,6 +694,11 @@ BEGIN
     FROM sql_saga.foreign_keys AS fk
     WHERE fk.foreign_key_name = foreign_key_name AND fk.type = 'regular_to_temporal';
     body := sql_saga.__internal_regular_fk_helper_body(foreign_key_name);
+    /* A 1.3 foreign key has no helper function: nothing to regenerate. */
+    IF NOT FOUND OR (SELECT fk.fk_helper_function IS NULL FROM sql_saga.foreign_keys AS fk
+                     WHERE fk.foreign_key_name = foreign_key_name AND fk.type = 'regular_to_temporal') THEN
+        RETURN;
+    END IF;
     IF helper IS NULL OR body IS NULL THEN
         RAISE EXCEPTION 'sql_saga: cannot regenerate the helper function of foreign key "%"', foreign_key_name;
     END IF;
@@ -670,7 +766,12 @@ BEGIN
             WHERE fk.unique_key_name = uk_rec.unique_key_name AND fk.type = 'regular_to_temporal'
             ORDER BY fk.foreign_key_name COLLATE "C"
         LOOP
-            IF NOT sql_saga.__internal_regular_fk_helper_is_canonical(
+            IF fk_rec.fk_helper_function IS NULL THEN
+                IF NOT sql_saga.__internal_regular_fk_child_trigger_is_canonical(fk_rec.foreign_key_name) THEN
+                    RAISE EXCEPTION 'sql_saga: cannot rename a column of unique key "%" on table "%.%": the referencing-side trigger of regular foreign key "%" is not the canonical sql_saga trigger; repair with drop_foreign_key and add_regular_foreign_key first',
+                        uk_rec.unique_key_name, uk_rec.table_schema, uk_rec.table_name, fk_rec.foreign_key_name;
+                END IF;
+            ELSIF NOT sql_saga.__internal_regular_fk_helper_is_canonical(
                     pg_catalog.to_regprocedure(fk_rec.fk_helper_function),
                     uk_rec.table_schema, uk_rec.table_name, stable_columns) THEN
                 RAISE EXCEPTION 'sql_saga: cannot rename a column of unique key "%" on table "%.%": helper function % of regular foreign key "%" is not the canonical sql_saga helper; restore it, or drop the foreign key with drop_foreign_key first',
@@ -718,7 +819,11 @@ BEGIN
           AND (columns_before -> uk.unique_key_name::text) IS DISTINCT FROM pg_catalog.to_jsonb(uk.column_names)
         ORDER BY fk.foreign_key_name COLLATE "C"
     LOOP
-        PERFORM sql_saga.__internal_regenerate_regular_fk_helper(fk_rec.foreign_key_name);
+        /* Pre-1.3 foreign keys only: new ones have no helper function. */
+        IF (SELECT fk.fk_helper_function FROM sql_saga.foreign_keys AS fk
+            WHERE fk.foreign_key_name = fk_rec.foreign_key_name) IS NOT NULL THEN
+            PERFORM sql_saga.__internal_regenerate_regular_fk_helper(fk_rec.foreign_key_name);
+        END IF;
         PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);
     END LOOP;
 END;
@@ -1026,7 +1131,7 @@ BEGIN
 
         IF boundaries_changed THEN
             FOR fk_rec IN
-                SELECT fk.foreign_key_name, fk.uk_update_trigger, fk.uk_delete_trigger, uk.column_names AS uk_column_names
+                SELECT fk.foreign_key_name, fk.uk_update_trigger, fk.uk_delete_trigger, fk.fk_helper_function, uk.column_names AS uk_column_names
                 FROM sql_saga.foreign_keys AS fk
                 JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
                 WHERE fk.type = 'regular_to_temporal'
@@ -1042,7 +1147,9 @@ BEGIN
                 IF NOT coalesce(sql_saga.__internal_regular_fk_uk_trigger_is_canonical(fk_rec.foreign_key_name,
                            (SELECT t.oid FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = era_rec.table_oid AND t.tgname = fk_rec.uk_update_trigger), true, uk_update_attnums), false)
                    OR NOT coalesce(sql_saga.__internal_regular_fk_uk_trigger_is_canonical(fk_rec.foreign_key_name,
-                           (SELECT t.oid FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = era_rec.table_oid AND t.tgname = fk_rec.uk_delete_trigger), false, NULL), false) THEN
+                           (SELECT t.oid FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = era_rec.table_oid AND t.tgname = fk_rec.uk_delete_trigger), false, NULL), false)
+                   OR (fk_rec.fk_helper_function IS NULL
+                       AND NOT sql_saga.__internal_regular_fk_child_trigger_is_canonical(fk_rec.foreign_key_name)) THEN
                     RAISE EXCEPTION 'sql_saga: cannot rename a column of era "%" on table "%": a referenced-side trigger of regular foreign key "%" is not the canonical sql_saga trigger; repair with drop_foreign_key and add_regular_foreign_key first',
                         era_rec.era_name, era_display, fk_rec.foreign_key_name;
                 END IF;
@@ -1830,6 +1937,20 @@ BEGIN
                               AND old_col_name = ANY(column_names)
                             ORDER BY foreign_key_name
                         LOOP
+                            /*
+                             * Before the catalog follows: the referencing-side trigger (1.3) must be exactly
+                             * what sql_saga generated for the columns before the rename (its arguments still
+                             * name the old column), or it is a user's object and is not overwritten.
+                             */
+                            IF fk_rec.type = 'regular_to_temporal' AND fk_rec.fk_helper_function IS NULL
+                               AND NOT sql_saga.__internal_regular_fk_child_trigger_is_canonical(fk_rec.foreign_key_name) THEN
+                                RAISE EXCEPTION 'sql_saga: cannot rename a column of foreign key % on table %: the referencing-side trigger % is not the canonical sql_saga trigger',
+                                    pg_catalog.quote_ident(fk_rec.foreign_key_name),
+                                    pg_catalog.format('%I.%I', fk_rec.table_schema, fk_rec.table_name),
+                                    pg_catalog.quote_ident(fk_rec.fk_check_constraint)
+                                    USING HINT = pg_catalog.format('Confirm the intended foreign key definition, then recreate it with sql_saga.drop_foreign_key_by_name(%L, %L) and sql_saga.add_regular_foreign_key.',
+                                        pg_catalog.format('%I.%I', fk_rec.table_schema, fk_rec.table_name), fk_rec.foreign_key_name);
+                            END IF;
                             UPDATE sql_saga.foreign_keys
                             SET column_names = array_replace(fk_rec.column_names, old_col_name, new_col_name)
                             WHERE foreign_key_name = fk_rec.foreign_key_name;
@@ -1878,6 +1999,21 @@ BEGIN
                   AND NOT EXISTS (
                     SELECT FROM pg_catalog.pg_trigger AS t
                     WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
+                UNION ALL
+                /* The referencing-side constraint trigger of a regular foreign key (1.3). */
+                SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_check_constraint AS trigger_name
+                FROM sql_saga.foreign_keys AS fk
+                WHERE fk.type = 'regular_to_temporal'
+                  AND fk.fk_check_constraint IS NOT NULL AND fk.fk_check_constraint <> ''
+                  AND to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) IS NOT NULL
+                  /* A pre-1.3 CHECK referencing side is not a trigger. */
+                  AND NOT EXISTS (
+                    SELECT FROM pg_catalog.pg_constraint AS c
+                    WHERE c.conrelid = to_regclass(format('%I.%I', fk.table_schema, fk.table_name))
+                      AND c.conname = fk.fk_check_constraint AND c.contype = 'c')
+                  AND NOT EXISTS (
+                    SELECT FROM pg_catalog.pg_trigger AS t
+                    WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_check_constraint))
             LOOP
                 RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
                     r.trigger_name, sql_saga.__internal_display_name(r.table_oid), r.foreign_key_name;

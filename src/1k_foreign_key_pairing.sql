@@ -183,7 +183,23 @@ BEGIN
         END IF;
     END IF;
 
-    /* Regular: the child CHECK passes its i-th column to the helper's $i; the helper compares $i with one column. */
+    /* Regular (1.3): the referencing-side constraint trigger carries the same paired lists. */
+    SELECT t.tgargs INTO trigger_args FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = child_oid AND t.tgname = fk.fk_check_constraint
+      AND t.tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()');
+    IF trigger_args IS NOT NULL THEN
+        args := sql_saga.__internal_trigger_arguments(trigger_args);
+        child_list := args[4]::name[];
+        parent_list := args[10]::name[];
+        IF pg_catalog.cardinality(child_list) = pg_catalog.cardinality(parent_list) THEN
+            RETURN QUERY
+                SELECT k.n::integer, k.c, k.p, 'referencing-side trigger'::text
+                FROM unnest(child_list, parent_list) WITH ORDINALITY AS k (c, p, n)
+                ORDER BY k.n;
+        END IF;
+    END IF;
+
+    /* Regular (pre-1.3): the child CHECK passes its i-th column to the helper's $i; the helper compares $i with one column. */
     helper := pg_catalog.to_regprocedure(fk.fk_helper_function);
     SELECT p.prosrc INTO helper_source FROM pg_catalog.pg_proc AS p WHERE p.oid = helper;
     SELECT c.conbin::text INTO check_bin FROM pg_catalog.pg_constraint AS c
@@ -277,8 +293,6 @@ DECLARE
     options text := '';
     custom_names text := '';
     needs_regular_form boolean := false;
-    default_helpers text[];
-    helper_name text;
 BEGIN
     SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = __internal_foreign_key_repair_sql.foreign_key_name;
     SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
@@ -306,20 +320,7 @@ BEGIN
         IF fk.fk_check_constraint IS DISTINCT FROM sql_saga.__internal_make_name(ARRAY[fk.table_name] || fk.column_names || ARRAY['check']::name[]) THEN
             custom_names := custom_names || pg_catalog.format(', fk_check_constraint => %L', fk.fk_check_constraint);
         END IF;
-        /* The helper is named after the referenced table and key columns, as the catalog lists them. */
-        default_helpers := ARRAY[
-            pg_catalog.format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(ARRAY[uk.table_name] || key_columns || ARRAY['exists']::name[])),
-            pg_catalog.format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(ARRAY[uk.table_name] || uk.column_names || ARRAY['exists']::name[]))];
-        IF uk.mutually_exclusive_columns IS NOT NULL THEN
-            default_helpers := default_helpers || pg_catalog.format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(
-                ARRAY[uk.table_name] || ARRAY(SELECT c FROM pg_catalog.unnest(uk.column_names) AS c ORDER BY c) || ARRAY['exists']::name[]));
-        END IF;
-        SELECT pg_catalog.format('%I.%I', n.nspname, p.proname) INTO helper_name
-        FROM pg_catalog.pg_proc AS p JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
-        WHERE p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function);
-        IF helper_name IS NOT NULL AND NOT helper_name = ANY (default_helpers) THEN
-            custom_names := custom_names || pg_catalog.format(', fk_helper_function => %L', helper_name);
-        END IF;
+        /* No fk_helper_function option: since 1.3 add_regular_foreign_key creates no helper and refuses the argument. */
         IF fk.uk_update_trigger IS DISTINCT FROM sql_saga.__internal_make_name(ARRAY[fk.foreign_key_name], 'uk_update') THEN
             custom_names := custom_names || pg_catalog.format(', uk_update_trigger => %L', fk.uk_update_trigger);
         END IF;

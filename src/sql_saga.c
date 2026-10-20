@@ -41,6 +41,12 @@
 #include "utils/elog.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/snapmgr.h"
+#include "access/stratnum.h"
+#include "access/tableam.h"
+#include "catalog/pg_am.h"
+#include "catalog/pg_operator.h"
+#include "commands/defrem.h"
 #include "utils/acl.h"
 #include "catalog/pg_class.h"
 #include "mb/pg_wchar.h"
@@ -131,6 +137,7 @@ typedef struct FkValidationPlan
 	int			nargs;
 	Oid			argtypes[MAX_FK_COLS + 2]; /* FK cols + range start/end */
 	int			param_attnums[MAX_FK_COLS + 2]; /* attnums in heap tuple */
+	SPIPlanPtr	key_plan;	/* regular FK, referenced side: does the key still exist in the parent? */
 } FkValidationPlan;
 
 /*
@@ -239,6 +246,7 @@ typedef struct UkUpdateValidationPlan
 	int			num_uk_cols;
 	int			param_attnums_old[MAX_FK_COLS + 2];
 	int			param_attnums_new[MAX_FK_COLS + 2];
+	SPIPlanPtr	key_plan;	/* regular FK: does the old key still exist in the parent? */
 } UkUpdateValidationPlan;
 
 static void
@@ -700,6 +708,7 @@ PG_FUNCTION_INFO_V1(fk_insert_check_c);
 PG_FUNCTION_INFO_V1(fk_update_check_c);
 PG_FUNCTION_INFO_V1(uk_delete_check_c);
 PG_FUNCTION_INFO_V1(uk_update_check_c);
+PG_FUNCTION_INFO_V1(regular_fk_check_c);
 PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
 PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
@@ -1115,6 +1124,361 @@ alter_table_changes_column_shape(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(false);
+}
+
+/*
+ * Regular (non-temporal) to temporal foreign keys (design B, tmp/fable_audit_v13.md section 2.3).
+ *
+ * The referencing side is a constraint trigger (regular_fk_check_c) and the referenced side the
+ * uk_update / uk_delete constraint triggers. All three take the same 17 arguments
+ * (sql_saga.__internal_regular_fk_trigger_args): foreign key name, child schema, child table, child
+ * columns, three empty temporal child arguments, parent schema, parent table, parent key columns,
+ * parent era, its valid_from and valid_until columns, match type, update action, delete action and
+ * 'regular_to_temporal'. Child and parent columns are paired by position.
+ *
+ * The contract of a regular reference: the referenced key exists in the parent at some time, that
+ * is, in at least one parent row. The lookup "does the key exist" is
+ *     SELECT 1 FROM parent AS uk WHERE uk.c1 OPERATOR(ns.=) $1 AND ... FOR KEY SHARE OF uk
+ * with the equality operator of each column's default btree operator class (the semantics a native
+ * foreign key compares with, e.g. citext case-insensitive). FOR KEY SHARE locks the parent rows of
+ * the key, so a concurrent transaction deleting them (or changing their key) waits for this one and
+ * then sees the reference, as native referential integrity does. The lookups run as the owner of the
+ * C function (the extension owner) with row level security not forced, so whoever writes the child
+ * needs no rights on the parent and policies cannot hide parent rows (native foreign keys behave the
+ * same way).
+ */
+
+/* "OPERATOR(schema.op)" of the default btree equality operator for a column type. */
+static char *
+regular_fk_equality_operator(Oid typid)
+{
+	Oid			basetype = getBaseType(typid);
+	Oid			opclass = GetDefaultOpClass(basetype, BTREE_AM_OID);
+	Oid			opfamily;
+	Oid			opcintype;
+	Oid			opr;
+	HeapTuple	tup;
+	Form_pg_operator oprform;
+	char	   *result;
+
+	if (!OidIsValid(opclass))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("type %s has no default btree operator class, so a foreign key cannot compare it",
+						format_type_be(typid))));
+	opfamily = get_opclass_family(opclass);
+	opcintype = get_opclass_input_type(opclass);
+	opr = get_opfamily_member(opfamily, opcintype, opcintype, BTEqualStrategyNumber);
+	if (!OidIsValid(opr))
+		elog(ERROR, "no equality operator in the default btree operator class of type %s", format_type_be(typid));
+
+	tup = SearchSysCache1(OPEROID, ObjectIdGetDatum(opr));
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for operator %u", opr);
+	oprform = (Form_pg_operator) GETSTRUCT(tup);
+	result = psprintf("OPERATOR(%s.%s)",
+					  quote_identifier(get_namespace_name(oprform->oprnamespace)),
+					  NameStr(oprform->oprname));
+	ReleaseSysCache(tup);
+	return result;
+}
+
+/*
+ * Prepare (and keep) "does this key exist in the parent" for the given parent key columns, whose
+ * parameter types are argtypes[0 .. ncols-1] (the types of the paired columns, which
+ * add_regular_foreign_key requires to be equal on both sides).
+ */
+static SPIPlanPtr
+regular_fk_prepare_key_plan(const char *uk_schema_name, const char *uk_table_name,
+							Datum *uk_col_datums, int ncols, Oid *argtypes)
+{
+	StringInfoData buf;
+	SPIPlanPtr	plan;
+	int			i;
+
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "SELECT 1 FROM %s.%s AS uk WHERE ",
+					 quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
+	for (i = 0; i < ncols; i++)
+	{
+		char	   *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
+
+		if (i > 0)
+			appendStringInfoString(&buf, " AND ");
+		appendStringInfo(&buf, "uk.%s %s $%d",
+						 quote_identifier(ukc), regular_fk_equality_operator(argtypes[i]), i + 1);
+	}
+	appendStringInfoString(&buf, " LIMIT 1 FOR KEY SHARE OF uk");
+
+	plan = SPI_prepare(buf.data, ncols, argtypes);
+	if (plan == NULL)
+		elog(ERROR, "SPI_prepare for regular foreign key lookup failed: %s", SPI_result_code_string(SPI_result));
+	if (SPI_keepplan(plan))
+		elog(ERROR, "SPI_keepplan for regular foreign key lookup failed");
+	pfree(buf.data);
+	return plan;
+}
+
+/*
+ * Execute a prepared plan as the owner of the calling C function, with row level security not
+ * forced on its tables. Returns SPI_processed.
+ *
+ * detect_new_rows: as PostgreSQL's ri_PerformCheck does for the referenced side of a foreign key. In
+ * REPEATABLE READ and SERIALIZABLE the transaction snapshot cannot see a referencing row committed
+ * after it was taken, so the lookup runs with the latest snapshot as test snapshot and the transaction
+ * snapshot as crosscheck snapshot (after CommandCounterIncrement, so this transaction's own changes are
+ * included too). In READ COMMITTED each lookup takes a fresh snapshot anyway.
+ */
+static uint64
+regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
+							bool detect_new_rows)
+{
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	int			ret = 0;
+	Snapshot	test_snapshot = InvalidSnapshot;
+	Snapshot	crosscheck_snapshot = InvalidSnapshot;
+
+	if (detect_new_rows && IsolationUsesXactSnapshot())
+	{
+		CommandCounterIncrement();
+		test_snapshot = GetLatestSnapshot();
+		crosscheck_snapshot = GetTransactionSnapshot();
+	}
+
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(function_owner,
+						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+	PG_TRY();
+	{
+		ret = SPI_execute_snapshot(plan, values, nulls, test_snapshot, crosscheck_snapshot,
+								   false, false, 1);
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute_plan for regular foreign key lookup returned %s", SPI_result_code_string(ret));
+	return SPI_processed;
+}
+
+static void
+regular_fk_parse_columns(const char *str, Datum **datums, int *count)
+{
+	Datum		array_datum;
+
+	if (namearray_input_func_oid == InvalidOid)
+	{
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		char		typdelim;
+
+		get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim,
+						 &namearray_ioparam_oid, &namearray_input_func_oid);
+	}
+	array_datum = OidInputFunctionCall(namearray_input_func_oid, (char *) str, namearray_ioparam_oid, -1);
+	deconstruct_array(DatumGetArrayTypeP(array_datum), NAMEOID, NAMEDATALEN, false, 'c', datums, NULL, count);
+}
+
+/*
+ * "Does a child row reference this key" for the referenced side of a regular foreign key, comparing
+ * with the same equality operators as the referencing side.
+ */
+static char *
+regular_fk_child_reference_query(const char *fk_schema_name, const char *fk_table_name,
+								 Datum *fk_col_datums, int ncols, Oid *argtypes)
+{
+	StringInfoData buf;
+	int			i;
+
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "SELECT 1 FROM %s.%s AS fk WHERE ",
+					 quote_identifier(fk_schema_name), quote_identifier(fk_table_name));
+	for (i = 0; i < ncols; i++)
+	{
+		char	   *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+
+		if (i > 0)
+			appendStringInfoString(&buf, " AND ");
+		appendStringInfo(&buf, "fk.%s %s $%d",
+						 quote_identifier(fkc), regular_fk_equality_operator(argtypes[i]), i + 1);
+	}
+	appendStringInfoString(&buf, " LIMIT 1 FOR KEY SHARE OF fk");
+	return buf.data;
+}
+
+/*
+ * The referenced side of a regular foreign key, after OLD's key went away (deleted, or changed by an
+ * update): refuse when a child row references OLD's key and no parent row has that key any more.
+ * values/nulls hold OLD's key columns.
+ */
+static void
+regular_fk_check_referenced_key(FunctionCallInfo fcinfo, SPIPlanPtr reference_plan, SPIPlanPtr key_plan,
+								Datum *values, const char *nulls, char **tgargs)
+{
+	/*
+	 * The child table is read as the function owner too: the parent's writer needs no rights on it. Both
+	 * lookups detect rows committed after the transaction snapshot (ri_PerformCheck's detectNewRows): a
+	 * child row another transaction committed meanwhile, and parent rows deleted meanwhile.
+	 */
+	if (regular_fk_execute_as_owner(fcinfo, reference_plan, values, nulls, true) == 0)
+		return;
+
+	if (regular_fk_execute_as_owner(fcinfo, key_plan, values, nulls, true) > 0)
+		return;
+
+	ereport(ERROR,
+			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+			 errmsg("update or delete on table \"%s.%s\" violates foreign key constraint \"%s\" on table \"%s.%s\"",
+					tgargs[7], tgargs[8], tgargs[0], tgargs[1], tgargs[2]),
+			 errdetail("The key is still referenced from table \"%s.%s\" and no other row of \"%s.%s\" has it.",
+					   tgargs[1], tgargs[2], tgargs[7], tgargs[8])));
+}
+
+/*
+ * regular_fk_check_c -- the referencing side of a regular foreign key: AFTER INSERT OR UPDATE OF the
+ * foreign key columns, FOR EACH ROW, DEFERRABLE INITIALLY IMMEDIATE.
+ *
+ * Like PostgreSQL's RI_FKey_check, a row version that is no longer live when the check runs (deleted,
+ * or updated again, before a deferred check) is skipped: the live version is checked by its own event.
+ * All NULL: accepted. Partly NULL: accepted for MATCH SIMPLE, refused for MATCH FULL. MATCH PARTIAL is
+ * refused when the foreign key is created. Otherwise the key must exist in at least one parent row.
+ */
+Datum
+regular_fk_check_c(PG_FUNCTION_ARGS)
+{
+	TriggerData *trigdata;
+	Relation	rel;
+	TupleDesc	tupdesc;
+	HeapTuple	new_row;
+	TupleTableSlot *slot;
+	char	  **tgargs;
+	char	   *foreign_key_name;
+	char	   *match_type;
+	FkValidationPlan *plan_entry;
+	bool		found;
+	bool		has_nulls = false;
+	bool		all_nulls = true;
+	Datum		values[MAX_FK_COLS];
+	char		nulls[MAX_FK_COLS];
+	int			i;
+
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "regular_fk_check_c: not called by trigger manager");
+
+	trigdata = (TriggerData *) fcinfo->context;
+	if (!TRIGGER_FIRED_AFTER(trigdata->tg_event) || !TRIGGER_FIRED_FOR_ROW(trigdata->tg_event)
+		|| !(TRIGGER_FIRED_BY_INSERT(trigdata->tg_event) || TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event)))
+		elog(ERROR, "regular_fk_check_c: must be fired AFTER INSERT OR UPDATE FOR EACH ROW");
+
+	rel = trigdata->tg_relation;
+	tupdesc = rel->rd_att;
+	if (TRIGGER_FIRED_BY_UPDATE(trigdata->tg_event))
+	{
+		new_row = trigdata->tg_newtuple;
+		slot = trigdata->tg_newslot;
+	}
+	else
+	{
+		new_row = trigdata->tg_trigtuple;
+		slot = trigdata->tg_trigslot;
+	}
+
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "regular_fk_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	tgargs = trigdata->tg_trigger->tgargs;
+	foreign_key_name = tgargs[0];
+	match_type = tgargs[13];
+
+	/* A row version that is no longer live is not checked (its successor, if any, is). */
+	if (!table_tuple_satisfies_snapshot(rel, slot, SnapshotSelf))
+		return PointerGetDatum(NULL);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	init_fk_plan_cache();
+	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
+	if (!found)
+	{
+		Datum	   *uk_col_datums;
+		Datum	   *fk_col_datums;
+		int			num_uk_cols;
+		int			num_fk_cols;
+
+		plan_entry->plan = NULL;
+		plan_entry->key_plan = NULL;
+		regular_fk_parse_columns(tgargs[9], &uk_col_datums, &num_uk_cols);
+		regular_fk_parse_columns(tgargs[3], &fk_col_datums, &num_fk_cols);
+		if (num_fk_cols != num_uk_cols || num_fk_cols < 1 || num_fk_cols > MAX_FK_COLS)
+			elog(ERROR, "regular_fk_check_c: foreign key \"%s\" pairs %d child columns with %d referenced columns",
+				 foreign_key_name, num_fk_cols, num_uk_cols);
+		plan_entry->nargs = num_fk_cols;
+		for (i = 0; i < num_fk_cols; i++)
+		{
+			char	   *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+			int			attnum = SPI_fnumber(tupdesc, fkc);
+
+			if (attnum <= 0)
+				elog(ERROR, "column \"%s\" does not exist in table \"%s\"", fkc, RelationGetRelationName(rel));
+			plan_entry->param_attnums[i] = attnum;
+			plan_entry->argtypes[i] = SPI_gettypeid(tupdesc, attnum);
+		}
+		plan_entry->plan = regular_fk_prepare_key_plan(tgargs[7], tgargs[8], uk_col_datums, num_uk_cols,
+													   plan_entry->argtypes);
+	}
+
+	for (i = 0; i < plan_entry->nargs; i++)
+	{
+		bool		isnull;
+
+		values[i] = heap_getattr(new_row, plan_entry->param_attnums[i], tupdesc, &isnull);
+		nulls[i] = isnull ? 'n' : ' ';
+		if (isnull)
+			has_nulls = true;
+		else
+			all_nulls = false;
+	}
+
+	if (all_nulls || (has_nulls && strcmp(match_type, "SIMPLE") == 0))
+	{
+		SPI_finish();
+		return PointerGetDatum(NULL);
+	}
+	if (has_nulls)
+	{
+		if (strcmp(match_type, "FULL") == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+					 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
+							tgargs[1], tgargs[2], foreign_key_name),
+					 errdetail("MATCH FULL does not allow mixing of null and nonnull key values.")));
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("MATCH PARTIAL is not supported for foreign key \"%s\"", foreign_key_name)));
+	}
+
+	if (regular_fk_execute_as_owner(fcinfo, plan_entry->plan, values, nulls, false) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
+				 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
+						tgargs[1], tgargs[2], foreign_key_name),
+				 errdetail("The referenced key is not present in table \"%s.%s\".", tgargs[7], tgargs[8])));
+
+	SPI_finish();
+	return PointerGetDatum(NULL);
 }
 
 /*
@@ -1647,8 +2011,12 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 				param_idx++;
 			}
 
-			query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s)",
-				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data);
+			/* A child row referencing the old key ... */
+			query = regular_fk_child_reference_query(fk_schema_name, fk_table_name, fk_col_datums,
+													 num_uk_cols, plan_entry->argtypes);
+			/* ... is a violation only when no parent row has the key any more. */
+			plan_entry->key_plan = regular_fk_prepare_key_plan(uk_schema_name, uk_table_name, uk_col_datums,
+															   num_uk_cols, plan_entry->argtypes);
 		}
 		
 		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
@@ -1686,6 +2054,13 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		{
 			values[i] = heap_getattr(old_row, plan_entry->param_attnums[i], tupdesc, &isnull);
 			nulls[i] = isnull ? 'n' : ' ';
+		}
+
+		if (strcmp(fk_type, "temporal_to_temporal") != 0)
+		{
+			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, values, nulls, tgargs);
+			SPI_finish();
+			return PointerGetDatum(rettuple);
 		}
 		
 		ret = SPI_execute_plan(plan_entry->plan, values, nulls, true, 1);
@@ -1978,8 +2353,10 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				plan_entry->param_attnums_old[i] = attnum;
 				param_idx++;
 			}
-			query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s)",
-				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data);
+			query = regular_fk_child_reference_query(fk_schema_name, fk_table_name, fk_col_datums,
+													 num_uk_cols, plan_entry->argtypes);
+			plan_entry->key_plan = regular_fk_prepare_key_plan(uk_schema_name, uk_table_name, uk_col_datums,
+															   num_uk_cols, plan_entry->argtypes);
 		}
 
 		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
@@ -2075,6 +2452,9 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				values[i] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
 				nulls[i] = isnull ? 'n' : ' ';
 			}
+			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, values, nulls, tgargs);
+			SPI_finish();
+			return PointerGetDatum(rettuple);
 		}
 
 		ret = SPI_execute_plan(plan_entry->plan, values, nulls, true, 1);

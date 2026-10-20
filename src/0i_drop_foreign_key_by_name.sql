@@ -123,11 +123,26 @@ BEGIN
                     END IF;
                 END IF;
             WHEN 'regular_to_temporal' THEN
-                IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
+                /* 1.3: the referencing side is a constraint trigger named fk_check_constraint. */
+                IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_check_constraint
+                           AND tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()')) THEN
+                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_check_constraint /* %I */, fk_table_oid /* %s */);
+                /* Historical (pre-1.3) form: a CHECK constraint calling the helper function. */
+                ELSIF foreign_key_row.fk_check_constraint IS NOT NULL AND foreign_key_row.fk_helper_function IS NOT NULL AND EXISTS (
+                            /* Only the released CHECK: it depends on (calls) the catalogued helper function. */
+                            SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            JOIN pg_catalog.pg_depend AS d
+                              ON d.classid = 'pg_catalog.pg_constraint'::regclass AND d.objid = c.oid
+                             AND d.refclassid = 'pg_catalog.pg_proc'::regclass
+                             AND d.refobjid = pg_catalog.to_regprocedure(foreign_key_row.fk_helper_function)
+                            WHERE c.conrelid = fk_table_oid AND c.conname = foreign_key_row.fk_check_constraint AND c.contype = 'c') THEN
                     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */);
+                ELSIF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
+                    RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                        foreign_key_row.fk_check_constraint, sql_saga.__internal_display_name(fk_table_oid);
                 END IF;
-                -- If no other foreign keys use the helper function, drop it.
-                IF NOT EXISTS (
+                -- If no other foreign keys use the helper function, drop it (new 1.3 FKs have none).
+                IF foreign_key_row.fk_helper_function IS NOT NULL AND NOT EXISTS (
                     SELECT 1 FROM sql_saga.foreign_keys
                     WHERE fk_helper_function = foreign_key_row.fk_helper_function
                 ) THEN

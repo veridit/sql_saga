@@ -9,14 +9,22 @@ BEGIN
     -- Handle all incoming FK triggers to the specified tables. The table is resolved through the catalog,
     -- not by casting "schema.table" text, so names that need quoting work.
     FOR v_trigger_rec IN
-        SELECT pc.oid::regclass AS table_oid, trg.trigger_name
+        SELECT pc.oid::regclass AS table_oid, trg.trigger_name, fk.foreign_key_name, trg.n
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON fk.unique_key_name = uk.unique_key_name
         JOIN pg_catalog.pg_namespace AS pn ON pn.nspname = uk.table_schema
         JOIN pg_catalog.pg_class AS pc ON (pc.relnamespace, pc.relname) = (pn.oid, uk.table_name)
         CROSS JOIN LATERAL (VALUES (1, fk.uk_update_trigger), (2, fk.uk_delete_trigger)) AS trg(n, trigger_name)
         WHERE pc.oid = ANY (p_table_oids::oid[]) AND trg.trigger_name IS NOT NULL
-        ORDER BY fk.foreign_key_name, trg.n
+        UNION ALL
+        -- The referencing-side constraint trigger of a regular foreign key, when its table is listed.
+        SELECT pc.oid::regclass, fk.fk_check_constraint, fk.foreign_key_name, 3
+        FROM sql_saga.foreign_keys AS fk
+        JOIN pg_catalog.pg_namespace AS pn ON pn.nspname = fk.table_schema
+        JOIN pg_catalog.pg_class AS pc ON (pc.relnamespace, pc.relname) = (pn.oid, fk.table_name)
+        JOIN pg_catalog.pg_trigger AS t ON (t.tgrelid, t.tgname) = (pc.oid, fk.fk_check_constraint)
+        WHERE fk.type = 'regular_to_temporal' AND pc.oid = ANY (p_table_oids::oid[])
+        ORDER BY 3, 4
     LOOP
         EXECUTE format(v_sql, v_trigger_rec.table_oid, v_trigger_rec.trigger_name);
     END LOOP;

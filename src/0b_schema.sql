@@ -162,9 +162,10 @@ CREATE TABLE sql_saga.foreign_keys (
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
 
-    -- For regular FKs
+    -- For regular FKs: the referencing-side constraint trigger on the child table (a pg_constraint row of
+    -- type 't' of the same name, so SET CONSTRAINTS accepts it). Up to 1.2 it named a CHECK constraint.
     fk_check_constraint name,
-    fk_helper_function text, -- regprocedure signature
+    fk_helper_function text, -- regprocedure signature of the 1.2 and earlier helper; NULL since 1.3
 
     -- These are always on the unique key's table
     uk_update_trigger name,
@@ -186,7 +187,9 @@ CREATE TABLE sql_saga.foreign_keys (
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
             WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL
-                AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
+                -- The referencing-side constraint trigger. fk_helper_function is NULL for foreign keys
+                -- created by 1.3 and later (no helper function); older versions named their helper here.
+                AND fk_check_constraint IS NOT NULL
         END
     )
 );

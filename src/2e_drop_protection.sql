@@ -97,7 +97,12 @@ BEGIN
                   SELECT FROM sql_saga.foreign_keys AS fk
                   JOIN sql_saga.unique_keys AS uk USING (unique_key_name)
                   WHERE (uk.table_schema, uk.table_name) = (d.address_names[1], d.address_names[2])
-                    AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger))) THEN
+                    AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger))
+           OR EXISTS (
+                  SELECT FROM sql_saga.foreign_keys AS fk
+                  WHERE fk.type = 'regular_to_temporal'
+                    AND (fk.table_schema, fk.table_name, fk.fk_check_constraint) =
+                        (d.address_names[1], d.address_names[2], d.address_names[3]))) THEN
         RETURN;
     END IF;
 
@@ -161,6 +166,14 @@ BEGIN
         JOIN sql_saga.unique_keys AS uk
           ON uk.unique_key_name = fk.unique_key_name
          AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.foreign_keys AS fk
+          ON d.object_type = 'trigger'
+         AND fk.type = 'regular_to_temporal'
+         AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+             (fk.table_schema, fk.table_name, fk.fk_check_constraint)
         UNION ALL
         SELECT 1
         FROM dropped AS d
@@ -278,6 +291,15 @@ BEGIN
                         WHERE (uk.table_schema, uk.table_name) = (b.table_schema, b.table_name)
                           AND (d.address_names[1], d.address_names[2]) =
                               (uk.table_schema, uk.unique_constraint)))
+                   OR (d.object_type = 'trigger' AND EXISTS (
+                        /* A regular FK's child-side trigger depends on (FROM) the dropped referenced table. */
+                        SELECT 1
+                        FROM sql_saga.foreign_keys AS fk
+                        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                        WHERE (uk.table_schema, uk.table_name) = (b.table_schema, b.table_name)
+                          AND fk.type = 'regular_to_temporal'
+                          AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                              (fk.table_schema, fk.table_name, fk.fk_check_constraint)))
                    OR EXISTS (
                         SELECT 1
                         FROM sql_saga.updatable_view AS v
@@ -341,6 +363,17 @@ BEGIN
             JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
             WHERE (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+            UNION ALL
+            SELECT 125, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in era foreign key "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(fk.table_schema, fk.table_name),
+                          fk.foreign_key_name)
+            FROM dropped AS d
+            JOIN sql_saga.foreign_keys AS fk
+              ON fk.type = 'regular_to_temporal'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                 (fk.table_schema, fk.table_name, fk.fk_check_constraint)
         )
         SELECT c.message INTO v_candidate
         FROM candidates AS c
@@ -470,6 +503,19 @@ BEGIN
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
             WHERE d.object_type = 'trigger'
               AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+            UNION ALL
+            SELECT 125, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in era foreign key "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(fk.table_schema, fk.table_name),
+                          fk.foreign_key_name)
+            FROM dropped AS d
+            JOIN sql_saga.foreign_keys AS fk
+              ON fk.type = 'regular_to_temporal'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                 (fk.table_schema, fk.table_name, fk.fk_check_constraint)
+            WHERE d.object_type = 'trigger'
+              AND true
             UNION ALL
             SELECT 140, d.dropped_ordinality,
                    format('cannot drop table "%s" because it is used in SYSTEM VERSIONING for table "%s"',
@@ -601,7 +647,20 @@ BEGIN
                 -- Not during pg_restore --clean: it drops the CHECK (with the table) and the helper function itself.
                 IF fk_table_oid IS NOT NULL AND NOT v_teardown THEN
                     IF fk_row.type = 'regular_to_temporal' THEN
-                        IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
+                        IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_trigger
+                            WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_check_constraint
+                              AND tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()')) THEN
+                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_check_constraint /* %I */, fk_table_oid /* %s */);
+                        /* Historical (pre-1.3) CHECK form. */
+                        ELSIF fk_row.fk_check_constraint IS NOT NULL AND fk_row.fk_helper_function IS NOT NULL AND EXISTS (
+                            /* Only the released CHECK: it depends on (calls) the catalogued helper function. */
+                            SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            JOIN pg_catalog.pg_depend AS d
+                              ON d.classid = 'pg_catalog.pg_constraint'::regclass AND d.objid = c.oid
+                             AND d.refclassid = 'pg_catalog.pg_proc'::regclass
+                             AND d.refobjid = pg_catalog.to_regprocedure(fk_row.fk_helper_function)
+                            WHERE c.conrelid = fk_table_oid AND c.conname = fk_row.fk_check_constraint AND c.contype = 'c') THEN
                             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
                         END IF;
                         IF fk_row.fk_helper_function IS NOT NULL THEN

@@ -47,6 +47,22 @@ RETURNS trigger
 AS 'sql_saga', 'uk_update_check_c'
 LANGUAGE c;
 
+/*
+ * The referencing side of a regular (non-temporal) to temporal foreign key: a constraint trigger on the
+ * child table (see add_regular_foreign_key). The lookups switch to this function's owner in C, so the
+ * function itself is not SECURITY DEFINER.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.regular_fk_check_c()
+RETURNS trigger
+AS 'sql_saga', 'regular_fk_check_c'
+LANGUAGE c;
+
+-- EXECUTE is granted to PUBLIC explicitly, so it holds also when the extension is created by a role whose default
+-- privileges revoke EXECUTE from PUBLIC. Firing a trigger needs no privilege, but CREATE TRIGGER does: a restore
+-- (pg_restore of the post-data trigger, also --no-owner) creates it as the table owner. The function only checks
+-- the foreign key its trigger arguments name, with lookups run as its owner.
+GRANT EXECUTE ON FUNCTION sql_saga.regular_fk_check_c() TO PUBLIC;
+
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger
 AS 'sql_saga', 'generated_always_as_row_start_end'

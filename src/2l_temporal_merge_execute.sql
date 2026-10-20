@@ -746,7 +746,7 @@ BEGIN
 
         -- DELETE -> UPDATE -> INSERT order is critical for PostgreSQL 18 temporal FK compatibility.
         DECLARE
-            v_deferrable_constraints name[];
+            v_deferrable_constraints text[];
             v_set_constraints_sql text;
             v_old_search_path TEXT;
         BEGIN
@@ -755,26 +755,89 @@ BEGIN
                 -- foreign key constraints. We need to defer:
                 -- 1. Unique/exclusion constraints ON the target table (prevents overlaps)
                 -- 2. Foreign keys FROM other tables referencing the target table (tolerates gaps during DELETE)
+                -- 3. sql_saga's own constraint triggers for regular foreign keys (contype 't'): the
+                --    referenced-side triggers on the target, so a reshaped timeline is checked once the
+                --    replacement rows are in, and the referencing-side trigger when the target is a child.
+                DECLARE
+                    v_intended oid[];
+                    v_conflict record;
+                BEGIN
+                    SELECT array_agg(c.oid ORDER BY c.oid)
+                    INTO v_intended
+                    FROM pg_catalog.pg_constraint AS c
+                    WHERE c.condeferrable
+                      AND (
+                          (c.conrelid = target_table AND c.contype IN ('u', 'x'))
+                          OR
+                          (c.confrelid = target_table AND c.contype = 'f')
+                          OR
+                          (c.conrelid = target_table AND c.contype = 't' AND EXISTS (
+                              SELECT FROM pg_catalog.pg_trigger AS t
+                              WHERE t.tgconstraint = c.oid
+                                AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                                 'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure,
+                                                 'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure)))
+                      );
+
+                    /*
+                     * SET CONSTRAINTS schema.name selects every constraint of that name in the schema, not one OID.
+                     * Refuse, before any DML, when that would also select a constraint outside the intended set:
+                     * deferring it (and later forcing it immediate) would change the checking moment of an object
+                     * this merge has no business with.
+                     */
+                    SELECT pg_catalog.format('%I.%I', n.nspname, c.conname) AS deferred_name,
+                           other.conname AS other_name,
+                           pg_catalog.format('%I.%I', on_.nspname, oc.relname) AS other_table,
+                           EXISTS (SELECT FROM pg_catalog.pg_trigger AS t
+                                   WHERE t.tgconstraint = other.oid
+                                     AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                                      'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure,
+                                                      'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure))
+                           OR EXISTS (SELECT FROM sql_saga.unique_keys AS uk
+                                      WHERE (uk.table_schema, uk.table_name) = (on_.nspname, oc.relname)
+                                        AND other.conname IN (uk.unique_constraint, uk.exclude_constraint))
+                           OR EXISTS (SELECT FROM sql_saga.foreign_keys AS fk
+                                      WHERE (fk.table_schema, fk.table_name, fk.foreign_key_name)
+                                          = (on_.nspname, oc.relname, other.conname)) AS other_managed
+                    INTO v_conflict
+                    FROM pg_catalog.pg_constraint AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+                    JOIN pg_catalog.pg_constraint AS other
+                      ON (other.connamespace, other.conname) = (c.connamespace, c.conname)
+                     AND other.oid <> ALL (v_intended)
+                    JOIN pg_catalog.pg_class AS oc ON oc.oid = other.conrelid
+                    JOIN pg_catalog.pg_namespace AS on_ ON on_.oid = oc.relnamespace
+                    WHERE c.oid = ANY (v_intended)
+                    ORDER BY c.oid, other.oid
+                    LIMIT 1;
+
+                    IF FOUND THEN
+                        IF v_conflict.other_managed THEN
+                            RAISE EXCEPTION 'sql_saga: temporal_merge on table % cannot defer constraint %: SET CONSTRAINTS by that name would also defer constraint % on table %, which belongs to another sql_saga object; rename one of them',
+                                (SELECT pg_catalog.format('%I.%I', tn.nspname, tc.relname) FROM pg_catalog.pg_class AS tc JOIN pg_catalog.pg_namespace AS tn ON tn.oid = tc.relnamespace WHERE tc.oid = target_table),
+                                v_conflict.deferred_name, pg_catalog.quote_ident(v_conflict.other_name), v_conflict.other_table
+                                USING ERRCODE = 'duplicate_object';
+                        END IF;
+                        RAISE EXCEPTION 'sql_saga: temporal_merge on table % cannot defer constraint %: SET CONSTRAINTS by that name would also defer constraint % on table %, which sql_saga does not manage; rename that constraint',
+                            (SELECT pg_catalog.format('%I.%I', tn.nspname, tc.relname) FROM pg_catalog.pg_class AS tc JOIN pg_catalog.pg_namespace AS tn ON tn.oid = tc.relnamespace WHERE tc.oid = target_table),
+                            v_conflict.deferred_name, pg_catalog.quote_ident(v_conflict.other_name), v_conflict.other_table
+                            USING ERRCODE = 'duplicate_object';
+                    END IF;
+
+                    -- Names are schema-qualified: SET CONSTRAINTS resolves a bare name through search_path.
+                    SELECT array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname))
+                    INTO v_deferrable_constraints
+                    FROM pg_catalog.pg_constraint AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+                    WHERE c.oid = ANY (v_intended);
+                END;
+
                 v_old_search_path := current_setting('search_path');
                 EXECUTE format('SET search_path = %I, public', v_target_schema_name);
 
-                -- Get deferrable constraints on target table (unique, exclusion)
-                -- AND foreign keys from other tables that reference the target table
-                SELECT array_agg(conname)
-                INTO v_deferrable_constraints
-                FROM pg_constraint
-                WHERE condeferrable
-                  AND (
-                      -- Constraints ON the target table (unique, exclusion)
-                      (conrelid = target_table AND contype IN ('u', 'x'))
-                      OR
-                      -- Foreign keys FROM other tables TO the target table
-                      (confrelid = target_table AND contype = 'f')
-                  );
-
                 IF v_deferrable_constraints IS NOT NULL THEN
                     v_set_constraints_sql := format('SET CONSTRAINTS %s DEFERRED',
-                        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                        array_to_string(v_deferrable_constraints, ', ')
                     );
                     IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
                     EXECUTE v_set_constraints_sql;
@@ -1116,7 +1179,7 @@ BEGIN
                     IF delay_constraints THEN
                         IF v_deferrable_constraints IS NOT NULL THEN
                             v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
-                                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                                array_to_string(v_deferrable_constraints, ', ')
                             );
                             IF v_log_execute THEN RAISE NOTICE '(%) Executing on error: %', v_log_id, v_set_constraints_sql; END IF;
                             EXECUTE v_set_constraints_sql;
@@ -1130,7 +1193,7 @@ BEGIN
             IF delay_constraints THEN
                 IF v_deferrable_constraints IS NOT NULL THEN
                     v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
-                        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                        array_to_string(v_deferrable_constraints, ', ')
                     );
                     IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
                     EXECUTE v_set_constraints_sql;

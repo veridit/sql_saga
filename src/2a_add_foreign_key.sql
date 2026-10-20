@@ -213,6 +213,84 @@ END;
 $function_declarative_fk$;
 
 
+/*
+ * The referencing side of a regular foreign key: a constraint trigger on the child table, created from the
+ * sql_saga.foreign_keys row of the given foreign key, under its fk_check_constraint name:
+ *     CREATE CONSTRAINT TRIGGER <fk_check_constraint> AFTER INSERT OR UPDATE ON <child> FROM <parent>
+ *     DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.regular_fk_check_c(<arguments>)
+ * The arguments are those of the referenced-side triggers (sql_saga.__internal_regular_fk_trigger_args), so
+ * the child and referenced columns are paired by position. Unlike a CHECK constraint reading the parent,
+ * pg_dump emits the trigger as a separate post-data item, so a restore loads the data of both tables before
+ * it exists, whatever order it loads them in. It fires on every UPDATE, not only UPDATE OF the key columns:
+ * a deferred check skips a row version that is no longer live, so the version that replaces it (also through
+ * an UPDATE of other columns) must queue a check of its own (as PostgreSQL's RI_FKey_fk_upd_check_required
+ * does). The new trigger fires in origin mode.
+ *
+ * Shared by add_regular_foreign_key and the rename following that re-creates the trigger. It neither
+ * validates existing rows nor writes the catalog nor raises notices; it refuses when the child table already
+ * has a trigger or constraint of that name.
+ */
+CREATE FUNCTION sql_saga.__internal_create_regular_fk_child_trigger(foreign_key_name name)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_create_regular_fk_child_trigger$
+#variable_conflict use_variable
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    uk_era sql_saga.era;
+    child_oid regclass;
+BEGIN
+    SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = foreign_key_name;
+    IF NOT FOUND OR fk.type IS DISTINCT FROM 'regular_to_temporal' THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign key "%" not found', foreign_key_name;
+    END IF;
+    IF fk.fk_check_constraint IS NULL OR fk.fk_check_constraint = '' THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign key "%" names no referencing-side trigger', foreign_key_name;
+    END IF;
+    SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    SELECT e.* INTO uk_era FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+    IF uk_era.era_name IS NULL OR pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name)) IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: referenced table of foreign key "%" not found', foreign_key_name;
+    END IF;
+    child_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name));
+    IF child_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: referencing table of foreign key "%" not found', foreign_key_name;
+    END IF;
+    IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = child_oid AND t.tgname = fk.fk_check_constraint)
+       OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = child_oid AND c.conname = fk.fk_check_constraint) THEN
+        RAISE EXCEPTION 'sql_saga: cannot create the referencing-side trigger of foreign key %: table % already has a trigger or constraint named %',
+            pg_catalog.quote_ident(fk.foreign_key_name), child_oid, pg_catalog.quote_ident(fk.fk_check_constraint)
+            USING ERRCODE = 'duplicate_object';
+    END IF;
+
+    EXECUTE pg_catalog.format($$
+        CREATE CONSTRAINT TRIGGER %1$I AFTER INSERT OR UPDATE ON %2$I.%3$I FROM %4$I.%5$I DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION
+        sql_saga.regular_fk_check_c(%6$L, %2$L, %3$L, %7$L, '', '', '', %4$L, %5$L, %8$L, %9$L, %10$L, %11$L, %12$L, %13$L, %14$L, 'regular_to_temporal');
+        $$
+        , /* %1$I */ fk.fk_check_constraint
+        , /* %2$I */ fk.table_schema
+        , /* %3$I */ fk.table_name
+        , /* %4$I */ uk.table_schema
+        , /* %5$I */ uk.table_name
+        , /* %6$L */ fk.foreign_key_name
+        , /* %7$L */ fk.column_names::text
+        , /* %8$L */ uk.column_names::text
+        , /* %9$L */ uk_era.era_name
+        , /* %10$L*/ coalesce(uk_era.valid_from_column_name::text, 'null')
+        , /* %11$L*/ coalesce(uk_era.valid_until_column_name::text, 'null')
+        , /* %12$L*/ fk.match_type
+        , /* %13$L*/ fk.update_action
+        , /* %14$L*/ fk.delete_action
+    );
+END;
+$__internal_create_regular_fk_child_trigger$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_create_regular_fk_child_trigger(name) FROM PUBLIC;
+
+
 -- Overloaded function for regular (non-temporal) to temporal foreign keys
 CREATE FUNCTION sql_saga.add_regular_foreign_key(
         fk_table_oid regclass,
@@ -246,7 +324,6 @@ DECLARE
     pass integer;
     unique_columns_with_era_columns text;
     uk_where_clause text;
-    helper_signature text;
     v_fk_index_name name;
     v_uk_stable_cols name[];
     v_missing_equality boolean;
@@ -335,142 +412,55 @@ BEGIN
     END LOOP;
     foreign_key_name := foreign_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
-    -- Create helper function and CHECK constraint
-    DECLARE
-        fk_column_signatures text;
-        fk_column_list text;
-        helper_body text;
-        existing_proc oid;
-    BEGIN
-        -- Both lists follow fk_column_names by position: the helper's $i is the i-th referenced key column, so
-        -- the CHECK must pass the i-th child column there, whatever join plan the server picks (W11).
-        SELECT
-            string_agg(format_type(a.atttypid, a.atttypmod), ', ' ORDER BY n.ordinality),
-            string_agg(quote_ident(n.name), ', ' ORDER BY n.ordinality)
-        INTO
-            fk_column_signatures,
-            fk_column_list
-        FROM unnest(fk_column_names) WITH ORDINALITY AS n (name, ordinality)
-        LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (fk_table_oid, n.name);
+    /* The referencing side is created after the catalog row (__internal_create_regular_fk_child_trigger). */
+    IF match_type = 'PARTIAL' THEN
+        RAISE EXCEPTION 'sql_saga: MATCH PARTIAL is not supported for regular foreign keys'
+            USING ERRCODE = 'feature_not_supported';
+    END IF;
+    IF fk_helper_function IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: fk_helper_function is no longer used: since 1.3 a regular foreign key has no helper function'
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Omit fk_helper_function.';
+    END IF;
 
-        -- The helper function is owned by the schema of the referenced (UK) table.
-        -- Its name is derived from the UK table, so it can be shared by multiple FKs.
-        fk_helper_function := coalesce(fk_helper_function,
-            format('%I.%I', uk_schema_name /* %I */, sql_saga.__internal_make_name(
-                ARRAY[uk_table_name] || v_uk_stable_cols || ARRAY['exists']) /* %I */
-            )
-        );
+    SELECT bool_or(eq.oid IS NULL)
+    INTO v_missing_equality
+    FROM unnest(v_uk_stable_cols) AS u(name)
+    JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.name)
+    LEFT JOIN LATERAL (
+        SELECT o.oid
+        FROM pg_catalog.pg_opclass AS opc
+        JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
+        JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
+             AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
+             AND amop.amopstrategy = 3
+        JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
+        WHERE opc.opcdefault
+          AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
+                               FROM pg_catalog.pg_type AS t WHERE t.oid = ua.atttypid)
+        LIMIT 1
+    ) AS eq ON true;
+    IF v_missing_equality THEN
+        RAISE EXCEPTION 'a column of unique key % has a type without a default btree equality operator', unique_key_name;
+    END IF;
 
-        helper_signature := format('%s(%s)', fk_helper_function /* %s */, fk_column_signatures /* %s */);
-
-        -- The helper runs with search_path = pg_catalog. Each column is compared with the equality operator of its
-        -- type's default btree operator class, written schema-qualified, so a type whose = lives elsewhere
-        -- (for example citext in public) compares with its own semantics, as a native foreign key would.
-        SELECT string_agg(format('uk.%I OPERATOR(%I.=) $%s',
-                                 u.name /* %I */,
-                                 eq.nspname /* %I */,
-                                 u.ordinality /* %s */), ' AND ' ORDER BY u.ordinality),
-               bool_or(eq.oid IS NULL)
-        INTO uk_where_clause, v_missing_equality
-        FROM unnest(v_uk_stable_cols) WITH ORDINALITY AS u(name, ordinality)
-        JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.name)
-        LEFT JOIN LATERAL (
-            SELECT o.oid, n.nspname
-            FROM pg_catalog.pg_opclass AS opc
-            JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
-            JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
-                 AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
-                 AND amop.amopstrategy = 3
-            JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
-            JOIN pg_catalog.pg_namespace AS n ON n.oid = o.oprnamespace
-            WHERE opc.opcdefault
-              AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
-                                   FROM pg_catalog.pg_type AS t WHERE t.oid = ua.atttypid)
-            LIMIT 1
-        ) AS eq ON true;
-
-        IF v_missing_equality THEN
-            RAISE EXCEPTION 'a column of unique key % has a type without a default btree equality operator', unique_key_name;
-        END IF;
-
-        helper_body := format($$
-            CREATE FUNCTION %s
-            RETURNS boolean
-            LANGUAGE sql STABLE STRICT
-            SECURITY DEFINER
-            SET search_path = pg_catalog
-            AS $func_body$
-                SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);
-            $func_body$;
-            $$,
-            helper_signature, /* %s */
-            uk_schema_name, /* %I */
-            uk_table_name, /* %I */
-            uk_where_clause /* %s */
-        );
-
-        -- Check if a function with this signature already exists. The signature is parsed as SQL, so a
-        -- schema or function name that needs quoting (format %I above) resolves too.
-        existing_proc := pg_catalog.to_regprocedure(helper_signature);
-
-        IF existing_proc IS NULL THEN
-             EXECUTE helper_body;
-             existing_proc := to_regprocedure(helper_signature);
-        ELSIF NOT EXISTS (
-            -- fk_helper_function may name any function; only reuse the very helper sql_saga generates for
-            -- this referenced key (same body, language and result), never an unrelated function.
-            SELECT FROM pg_catalog.pg_proc AS p
-            WHERE p.oid = existing_proc
-              AND p.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
-              AND p.prorettype = 'pg_catalog.bool'::pg_catalog.regtype
-              AND p.proisstrict AND p.provolatile = 's' AND p.prokind = 'f'
-              AND btrim(p.prosrc, E' \t\r\n') = format('SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);',
-                                                       uk_schema_name, uk_table_name, uk_where_clause))
-        THEN
-            RAISE EXCEPTION 'function % exists but is not the foreign key helper sql_saga generates for %',
-                existing_proc::regprocedure, uk_table_oid
-                USING HINT = 'Pass a different fk_helper_function, or drop the existing function.';
-        END IF;
-        -- The CHECK constraint calls the helper as whoever writes the child table. Like a native foreign
-        -- key, that writer needs no SELECT on the referenced table: the helper answers only whether the key
-        -- exists, with the referenced table owner's rights, and is executable by everyone (also where
-        -- EXECUTE is revoked from PUBLIC by default). A reused (shared) helper is brought to the same state.
-        EXECUTE format('ALTER FUNCTION %s SECURITY DEFINER SET search_path = pg_catalog',
-            existing_proc::regprocedure /* %s */);
-        EXECUTE format('ALTER FUNCTION %s OWNER TO %I',
-            existing_proc::regprocedure, /* %s */
-            (SELECT r.rolname FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_roles AS r ON r.oid = c.relowner
-             WHERE c.oid = uk_table_oid) /* %I */);
-        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', existing_proc::regprocedure /* %s */);
-
-        fk_check_constraint := coalesce(fk_check_constraint, sql_saga.__internal_make_name(
-            ARRAY[fk_table_name] || fk_column_names || ARRAY['check']
-        ));
-        -- Two foreign keys on the same child columns (to different keys) would generate the same name.
-        pass := 0;
-        WHILE EXISTS (
-            SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE c.conrelid = fk_table_oid
-              AND c.conname = fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
-        LOOP
-            pass := pass + 1;
-        END LOOP;
-        fk_check_constraint := fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
-
-        DECLARE
-            check_clause text;
-        BEGIN
-            check_clause := format('%s(%s)', fk_helper_function /* %s */, fk_column_list /* %s */);
-
-            EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)',
-                fk_schema_name, /* %I */
-                fk_table_name, /* %I */
-                fk_check_constraint, /* %I */
-                check_clause /* %s */
-            );
-        END;
-    END;
-
+    fk_check_constraint := coalesce(fk_check_constraint, sql_saga.__internal_make_name(
+        ARRAY[fk_table_name] || fk_column_names || ARRAY['check']
+    ));
+    -- Two foreign keys on the same child columns (to different keys) would generate the same name.
+    pass := 0;
+    WHILE EXISTS (
+        SELECT FROM pg_catalog.pg_constraint AS c
+        WHERE c.conrelid = fk_table_oid
+          AND c.conname = fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+       OR EXISTS (
+        SELECT FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = fk_table_oid
+          AND t.tgname = fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+    LOOP
+        pass := pass + 1;
+    END LOOP;
+    fk_check_constraint := fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
     /* Get the columns that require checking the constraint on the UK table */
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
@@ -536,7 +526,10 @@ BEGIN
     INSERT INTO sql_saga.foreign_keys
         ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger, fk_index_name)
     VALUES
-        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
+        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, NULL, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
+
+    /* The referencing side, from the catalog row just written (see __internal_create_regular_fk_child_trigger). */
+    PERFORM sql_saga.__internal_create_regular_fk_child_trigger(foreign_key_name);
 
 
     /* Validate the constraint on existing data. */
@@ -544,13 +537,33 @@ BEGIN
         violating_row_found boolean;
         fk_not_null_clause text;
     BEGIN
-        SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc /* %I */), ' AND ' ORDER BY u.o)
+        -- MATCH SIMPLE checks rows whose key columns are all non-NULL, MATCH FULL every row that is not all NULL
+        -- (a partly NULL key is a violation then).
+        SELECT CASE WHEN match_type = 'FULL'
+                    THEN 'NOT (' || string_agg(format('fk.%I IS NULL', u.fkc /* %I */), ' AND ' ORDER BY u.o) || ')'
+                    ELSE string_agg(format('fk.%I IS NOT NULL', u.fkc /* %I */), ' AND ' ORDER BY u.o) END
         INTO fk_not_null_clause
         FROM unnest(fk_column_names) WITH ORDINALITY AS u(fkc, o);
 
-        SELECT string_agg(format('uk.%I = fk.%I', u.ukc /* %I */, u.fkc /* %I */), ' AND ' ORDER BY u.o)
+        -- The comparison the trigger uses: the default btree equality operator of each column type.
+        SELECT string_agg(format('uk.%I OPERATOR(%I.=) fk.%I', u.ukc /* %I */, eq.nspname /* %I */, u.fkc /* %I */), ' AND ' ORDER BY u.o)
         INTO uk_where_clause
-        FROM unnest(v_uk_stable_cols, fk_column_names) WITH ORDINALITY AS u(ukc, fkc, o);
+        FROM unnest(v_uk_stable_cols, fk_column_names) WITH ORDINALITY AS u(ukc, fkc, o)
+        JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.ukc)
+        CROSS JOIN LATERAL (
+            SELECT n.nspname
+            FROM pg_catalog.pg_opclass AS opc
+            JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
+            JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
+                 AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
+                 AND amop.amopstrategy = 3
+            JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = o.oprnamespace
+            WHERE opc.opcdefault
+              AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
+                                   FROM pg_catalog.pg_type AS t WHERE t.oid = ua.atttypid)
+            LIMIT 1
+        ) AS eq;
 
         EXECUTE format('SELECT EXISTS( ' ||
             'SELECT 1 FROM %1$I.%2$I AS fk ' ||
@@ -568,7 +581,9 @@ BEGIN
         IF violating_row_found THEN
             RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
                 sql_saga.__internal_display_name(fk_table_oid),
-                foreign_key_name;
+                foreign_key_name
+                USING ERRCODE = 'foreign_key_violation',
+                      DETAIL = 'A row of the table references a key that is not present in the referenced table.';
         END IF;
     END;
 
@@ -740,10 +755,10 @@ END;
 $function$;
 
 COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
-'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
+'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000.';
 
 COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, boolean) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
 
 COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS
-'Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name.';
+'Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name. The two column arrays are paired positionally. The referenced columns may be listed in another order than the registered unique key, provided they name the same set; both arrays are normalized together to the unique key''s order, preserving each child-to-parent pairing.';
