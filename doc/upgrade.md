@@ -183,11 +183,38 @@ Then run application smoke tests as every relevant role, especially RLS tenant r
 
 ## Dump and restore
 
-A dump records the installed extension version. Keep both frozen released install scripts available:
+`pg_dump` does **not** record the extension version: the archive says `CREATE EXTENSION IF NOT EXISTS sql_saga`,
+which installs the destination's *default* version, and then loads the old catalog rows into it without
+running any update script. With the current package installed, a plain `pg_restore` of an older dump either
+fails (a database with system versioning: `null value in column "table_columns_snapshot"`) or produces a
+database whose objects are still in the old shape (`check_integrity()` refuses it).
 
-- A 1.0 dump restores as 1.0, then upgrades directly to 1.2.
-- A 1.1 dump restores as 1.1, then upgrades through 1.1-to-1.2.
-- A 1.2 dump restores as 1.2.
+A dump of the current version restores as usual. To restore a dump made by an older sql_saga (1.0 or 1.1), install
+that version first: the current package ships every released install script, and they load with the
+current libraries. `IF NOT EXISTS` then keeps it, the dump restores into its own version, and
+`ALTER EXTENSION sql_saga UPDATE` runs the normal upgrade. Set `OLD_VERSION` to the version of the database that
+was dumped (`SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'` on the source; keep it with your
+backups, since it cannot be read reliably from the archive):
+
+<!-- BEGIN old-dump-restore -->
+```bash
+OLD_VERSION=1.0
+pg_restore -f restore.sql backup.dump
+psql -X -v ON_ERROR_STOP=1 --single-transaction -d mydb -c "CREATE EXTENSION IF NOT EXISTS btree_gist" -c "CREATE EXTENSION sql_saga VERSION '$OLD_VERSION'" -f restore.sql -c "ALTER EXTENSION sql_saga UPDATE" -c "DO \$\$ BEGIN PERFORM sql_saga.check_integrity(); END \$\$"
+```
+<!-- END old-dump-restore -->
+
+The whole restore, the update and the integrity check are one transaction: if any step fails, `mydb` is left
+exactly as it was (empty). `mydb` must be a new, empty database. Equivalent with `pg_restore` itself, for
+example in a split restore: run `CREATE EXTENSION sql_saga VERSION '<old>' CASCADE` in the new database
+before the first `pg_restore` invocation, and `ALTER EXTENSION sql_saga UPDATE` plus
+`SELECT sql_saga.check_integrity()` after the last one (that is not atomic across invocations). Do not use
+`pg_restore --clean` for an old dump: it drops the extension you installed and recreates the default version.
+
+If you install the wrong old version, the procedure usually fails and rolls back (a 1.1 dump with system
+versioning or managed views restored as 1.0; a 1.0 dump with regular foreign keys or system versioning restored
+as 1.1). It does not fail for a 1.0 dump with `for_portion_of`/`current` views restored as 1.1: the views
+then miss the grants the 1.0 to 1.1 step gives them. Use the version of the source.
 
 Restores mint a new installation token on the destination.
 
