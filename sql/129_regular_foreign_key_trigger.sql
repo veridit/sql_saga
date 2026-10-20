@@ -132,7 +132,7 @@ CREATE FUNCTION rft.child_side(fk_name name) RETURNS SETOF text LANGUAGE sql AS 
             || concat_ws(' or ',
                    CASE WHEN t.tgtype & 4 = 4 THEN ' insert' END,
                    CASE WHEN t.tgtype & 16 = 16 THEN 'update' END
-                       || CASE WHEN t.tgattr::int2[] <> '{}' THEN ' of ' || (
+                       || CASE WHEN coalesce(cardinality(t.tgattr::int2[]), 0) > 0 THEN ' of ' || (
                               SELECT string_agg(a.attname, ', ' ORDER BY u.ord)
                               FROM unnest(t.tgattr::int2[]) WITH ORDINALITY AS u (attnum, ord)
                               JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (t.tgrelid, u.attnum)) ELSE '' END,
