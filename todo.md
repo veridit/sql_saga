@@ -2,8 +2,28 @@
 
 A living document of upcoming tasks.
 
-## Current Priority - Critical Issues & Bugs
-(none open; the 2026-10-15 items are listed under Done, design records in the git history of this file)
+## Current Priority - Version 1.3 release in progress
+
+Completed and regression-tested on the development branch:
+- [x] Preserve XOR unique-key constraint order and pair foreign-key columns in that order
+- [x] Diagnose historical foreign-key mispairing with executable, option-preserving repairs
+- [x] Managed views follow ADD, DROP and RENAME COLUMN while preserving view state and refusing user dependants
+- [x] Integrity checks cover event-trigger shape, membership and enablement, with tested repair hints
+- [x] Reject old catalog rows restored into the wrong version with the named catalog-format safeguard
+- [x] Fix quoted relation lookup and ephemeral/key-consistency metadata renames
+
+Release gates still open:
+- [ ] Replace regular-FK child CHECKs with deferred constraint triggers and validate lifecycle/merge/restore behavior
+- [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
+- [ ] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL
+- [ ] Audit dependency refusals without modifying user-defined dependent objects
+- [ ] Freeze 1.2 artifacts and build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
+- [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
+- [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
+- [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
+- [ ] Finish 1.3 API/runbook documentation, full regression/native tests and performance checks
+- [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
+- [ ] Obtain owner approval before pushing or tagging the release and before sending external notices
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] Automate README.md example testing (literate programming approach)

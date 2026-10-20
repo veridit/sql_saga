@@ -347,6 +347,15 @@ The updatable views (`for_portion_of` and `current`) are designed for transparen
 - **Regular Usage:** If your table only has `valid_from` and `valid_until`, the views will expose just those two columns.
 - **Advanced Usage:** If you add synchronized columns like a human-readable `valid_to` or a native `range` column to your base table, they will also be visible in the views. This allows you to interact with whichever temporal representation is most convenient.
 
+Starting with 1.3, these views also follow `ALTER TABLE ... ADD COLUMN`, `DROP COLUMN` and `RENAME COLUMN`
+on their base table. Adding or renaming a column normally keeps the view's identity. Removing an ordinary
+column rebuilds the managed view, preserving its grants, column grants, comments, column defaults, user triggers
+and view options. The view remains owned by the base-table owner, and a NOTICE describes each change.
+Dropping identifier, era or key columns remains protected. If a user-defined object depends on a view that must
+be rebuilt, the statement is refused with an error naming the blocking object and a repair hint. `sql_saga`
+does not rebuild user-defined views or rules. Inside another extension's script, even adding a column can require
+a rebuild and is subject to the same dependency checks.
+
 ###### Ending an Entity's Timeline (Soft-Delete)
 `sql_saga` provides two configurable modes for handling the end of an entity's timeline, controlled by the `delete_mode` parameter in `add_current_view`. This allows you to choose between maximum ORM compatibility and maximum auditability.
 
