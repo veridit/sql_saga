@@ -225,7 +225,11 @@ SELECT 'Transaction still active';
 The ranges are guidance, and several are full. A new test takes a free slot as close to its topic as
 possible rather than renumbering dozens of existing tests. Current overflow: `037-039` drop protection,
 `056` system-versioning column snapshot, `058` managed relation rename/move, `059` system-versioning function attribution. All slots below `100` are taken; non-benchmark tests continue
-at `115`+ (`115` native packaging, `116`-`117` check_integrity, `118` system versioning move workflow). Benchmarks are selected by the word `benchmark` in
+at `115`+ (`115` native packaging, `116`-`117` check_integrity, `118` system versioning move workflow, `119`-`121`
+foreign key renames and shared helpers, `122` era boundary column renames, `123` history policy guard, `124` XOR key
+column order, `125` regular FK restore safety, `126` views follow ADD/DROP/RENAME COLUMN, `127` check_integrity repair
+hints, `128` FK column pairing, `129` regular FK constraint trigger, `130` catalog format safeguard, `131` quoting and
+renames). Benchmarks are selected by the word `benchmark` in
 the test name, not by number.
 
 **Self-Contained Test Template:**
