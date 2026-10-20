@@ -183,8 +183,11 @@ BEGIN
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
         -- would recreate the history policies drop_protection has just dropped for the teardown).
+        -- Not in a declared parallel pg_restore either: the sync locks both tables of the family, which
+        -- other workers may hold (deadlock); sync_all_history_policies() runs it after the restore.
         IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid)
            AND NOT sql_saga.__internal_is_clean_teardown()
+           AND NOT sql_saga.__internal_is_parallel_restore()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
         END IF;

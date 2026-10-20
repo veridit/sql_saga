@@ -3319,6 +3319,210 @@ END;
 $upgrade_rename_following_era_columns$;
 /* ITEM 5 (era column renames): END. */
 
+/* SPLIT RESTORE (parallel pg_restore without deadlocks): BEGIN. See the README, "Backup and Restore". */
+
+/*
+ * Is this statement run by a parallel pg_restore (pg_restore -j N) that the caller has declared with
+ * PGOPTIONS='-c sql_saga.parallel_restore=on' (README, "Backup and Restore")?
+ *
+ * Then health_checks defers the synchronization of history policies: each sync reads and alters both
+ * tables of a family, while parallel workers already hold exclusive locks on one table each, so two
+ * workers restoring the two tables of one family would deadlock. The documented final command,
+ * sql_saga.sync_all_history_policies(), runs the deferred synchronization once the restore is done.
+ * Recognized only in a pg_restore session (the settings pg_dump and pg_restore always set, and
+ * application_name 'pg_restore'), and only with the explicit setting, which is meant for the -j
+ * invocation alone. Serial and --single-transaction restores keep synchronizing as they go.
+ * Not a security boundary: deferring only delays the copy of policies the restoring owner could
+ * change anyway, and guarded history reads fail closed until the sync has run.
+ * Called only by the SECURITY DEFINER event triggers.
+ */
+CREATE FUNCTION sql_saga.__internal_is_parallel_restore()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_is_parallel_restore$
+    SELECT current_setting('check_function_bodies') = 'off'
+       AND current_setting('row_security') = 'off'
+       AND current_setting('application_name') = 'pg_restore'
+       -- '' (not NULL) once the session has seen the placeholder, so coalesce both
+       AND coalesce(current_setting('sql_saga.parallel_restore', true), '') = 'on';
+$__internal_is_parallel_restore$;
+
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_parallel_restore() FROM PUBLIC;
+
+/*
+ * pg_get_constraintdef of a constraint of one of the given relations, NULL for any other constraint
+ * (so it matches no expected definition). rename_following compares definitions only for the
+ * relations its DDL command touched: deparsing a CHECK constraint locks the constraint's table, which
+ * a concurrent session may hold exclusively (see rename_following). The CASE, unlike a WHERE
+ * condition next to the deparse, guarantees that the definition of another relation is never read,
+ * whatever order the planner evaluates the conditions in.
+ */
+CREATE FUNCTION sql_saga.__internal_constraintdef_if_touched(constraint_oid oid, table_oid oid, touched_relation_oids oid[])
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_constraintdef_if_touched$
+    SELECT CASE WHEN table_oid = ANY (touched_relation_oids) THEN pg_catalog.pg_get_constraintdef(constraint_oid) END;
+$__internal_constraintdef_if_touched$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_constraintdef_if_touched(oid, oid, oid[]) FROM PUBLIC;
+
+-- The final command of a parallel restore (README, "Backup and Restore"; see
+-- sql_saga.__internal_is_parallel_restore), and the repair after policy DDL with event triggers off.
+-- SECURITY INVOKER like sync_history_policies, with the same ownership rule. It refuses before any
+-- change when the caller does not own every system-versioned table, rather than skipping those: a
+-- restore that leaves some histories unsynchronized must fail visibly, not look finished.
+CREATE FUNCTION sql_saga.sync_all_history_policies()
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $sync_all_history_policies$
+DECLARE
+    table_oid regclass;
+BEGIN
+    SELECT c.oid::regclass INTO table_oid
+    FROM sql_saga.system_versioning AS sv
+    JOIN pg_catalog.pg_class AS c ON c.oid = pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass
+    WHERE NOT pg_catalog.pg_has_role(c.relowner, 'USAGE')
+    ORDER BY sv.table_schema, sv.table_name
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'must be owner of table %', table_oid USING ERRCODE = 'insufficient_privilege',
+            HINT = 'Run sql_saga.sync_all_history_policies() as a role that owns every system-versioned table (for example the role that ran the restore), or sql_saga.sync_history_policies(table) per table as its owner.';
+    END IF;
+    FOR table_oid IN
+        SELECT pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass
+        FROM sql_saga.system_versioning AS sv
+        ORDER BY sv.table_schema, sv.table_name
+    LOOP
+        PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    END LOOP;
+END;
+$sync_all_history_policies$;
+COMMENT ON FUNCTION sql_saga.sync_all_history_policies() IS
+'Runs sync_history_policies for every system-versioned table, in name order. The final command after a parallel pg_restore with sql_saga.parallel_restore = on, which defers that synchronization. Refuses before any change unless the caller owns every system-versioned table.';
+
+/*
+ * rename_following deparses constraint definitions only for the relations its DDL command touched.
+ * Exact replacements in the function as upgraded above (ITEM 5); each released fragment must occur
+ * exactly once and no new fragment may be present yet, otherwise the update fails closed.
+ */
+DO $upgrade_rename_following_touched_relations$
+DECLARE
+    definition text := pg_catalog.pg_get_functiondef('sql_saga.rename_following()'::regprocedure);
+    replacements text[] := ARRAY[
+        ARRAY[$old1$    v_altered_table_oids oid[];
+$old1$, $new1$    v_altered_table_oids oid[];
+    v_touched_relation_oids oid[];
+$new1$],
+        ARRAY[$old2$        RETURN;
+    END IF;
+    /*
+     * Anything that is stored by reg* type$old2$, $new2$        RETURN;
+    END IF;
+
+    /*
+     * The relations this command touched: tables, views and indexes it names directly, the tables of
+     * the constraints, triggers, policies and indexes it names, and their inheritance descendants
+     * (PostgreSQL propagates renames to them). Built once from the catalog only.
+     *
+     * The constraint renames below are found by comparing constraint definitions
+     * (pg_get_constraintdef), and deparsing a CHECK constraint takes a lock on its table. They only
+     * deparse constraints of these relations: a rename can only happen on a relation the command
+     * touched, and a concurrent session (such as another pg_restore -j worker) may hold an exclusive
+     * lock on any other table while it waits for one of ours, which would be a deadlock.
+     */
+    v_touched_relation_oids := ARRAY(
+        WITH RECURSIVE touched(relation_oid) AS (
+            SELECT CASE ev.classid
+                       WHEN 'pg_catalog.pg_class'::regclass THEN
+                           coalesce((SELECT i.indrelid FROM pg_catalog.pg_index AS i WHERE i.indexrelid = ev.objid), ev.objid)
+                       WHEN 'pg_catalog.pg_constraint'::regclass THEN
+                           (SELECT c.conrelid FROM pg_catalog.pg_constraint AS c WHERE c.oid = ev.objid)
+                       WHEN 'pg_catalog.pg_trigger'::regclass THEN
+                           (SELECT t.tgrelid FROM pg_catalog.pg_trigger AS t WHERE t.oid = ev.objid)
+                       WHEN 'pg_catalog.pg_policy'::regclass THEN
+                           (SELECT p.polrelid FROM pg_catalog.pg_policy AS p WHERE p.oid = ev.objid)
+                   END
+            FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+            UNION
+            SELECT i.inhrelid
+            FROM touched AS t
+            JOIN pg_catalog.pg_inherits AS i ON i.inhparent = t.relation_oid
+        )
+        SELECT t.relation_oid FROM touched AS t WHERE t.relation_oid IS NOT NULL);
+
+    /*
+     * Anything that is stored by reg* type$new2$],
+        ARRAY[$old3$          AND e.bounds_check_constraint <> c.conname
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((NOT isempty(%I)))', e.range_column_name)
+$old3$, $new3$          AND e.bounds_check_constraint <> c.conname
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK ((NOT isempty(%I)))', e.range_column_name)
+$new3$],
+        ARRAY[$old4$          AND e.valid_until_column_name IS NOT NULL
+          AND sql_saga.__internal_era_boundary_check_matches(pg_catalog.pg_get_constraintdef(c.oid), e.valid_from_column_name, e.valid_until_column_name)
+$old4$, $new4$          AND e.valid_until_column_name IS NOT NULL
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_era_boundary_check_matches(sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids), e.valid_from_column_name, e.valid_until_column_name)
+$new4$],
+        ARRAY[$old5$        WHERE ste.infinity_check_constraint <> c.conname
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', e.range_column_name)
+$old5$, $new5$        WHERE ste.infinity_check_constraint <> c.conname
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', e.range_column_name)
+$new5$],
+        ARRAY[$old6$          AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
+$old6$, $new6$          AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
+          AND pc.oid = ANY (v_touched_relation_oids)
+$new6$],
+        ARRAY[$old7$            -- Match traditional constraint format
+            pg_get_constraintdef(c.oid) = (
+$old7$, $new7$            -- Match traditional constraint format
+            sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
+$new7$],
+        ARRAY[$old8$            -- Match NULLS NOT DISTINCT constraint format
+            pg_get_constraintdef(c.oid) = (
+$old8$, $new8$            -- Match NULLS NOT DISTINCT constraint format
+            sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
+$new8$],
+        ARRAY[$old9$          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
+          AND pg_get_constraintdef(c.oid) = (
+$old9$, $new9$          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
+$new9$],
+        ARRAY[$old10$        AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
+        AND pg_get_constraintdef(c.oid) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
+$old10$, $new10$        AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
+        AND pc.oid = ANY (v_touched_relation_oids)
+        AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
+$new10$]
+    ];
+    i integer;
+BEGIN
+    IF pg_catalog.strpos(definition, 'v_touched_relation_oids') > 0
+       OR pg_catalog.strpos(definition, '__internal_constraintdef_if_touched') > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following touched relations: already present';
+    END IF;
+    FOR i IN 1 .. pg_catalog.array_length(replacements, 1) LOOP
+        IF (pg_catalog.length(definition) - pg_catalog.length(pg_catalog.replace(definition, replacements[i][1], '')))
+           <> pg_catalog.length(replacements[i][1]) THEN
+            RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following touched relations: fragment % not found exactly once', i;
+        END IF;
+        definition := pg_catalog.replace(definition, replacements[i][1], replacements[i][2]);
+    END LOOP;
+    IF definition ~ 'pg_get_constraintdef\(c\.oid\)' THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following touched relations: a definition read is left unscoped';
+    END IF;
+    EXECUTE definition;
+END;
+$upgrade_rename_following_touched_relations$;
+/* SPLIT RESTORE: END. */
+
 /*
  * add_regular_foreign_key: find an existing (shared) helper by its parsed signature, so a helper whose
  * schema or name needs quoting is reused instead of re-created. Exact replacement of the single released
@@ -6092,8 +6296,11 @@ BEGIN
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
         -- would recreate the history policies drop_protection has just dropped for the teardown).
+        -- Not in a declared parallel pg_restore either: the sync locks both tables of the family, which
+        -- other workers may hold (deadlock); sync_all_history_policies() runs it after the restore.
         IF NOT sql_saga.__internal_history_policy_sync_active(r.base_oid)
            AND NOT sql_saga.__internal_is_clean_teardown()
+           AND NOT sql_saga.__internal_is_parallel_restore()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
         END IF;

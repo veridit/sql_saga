@@ -533,6 +533,41 @@ $sync_history_policies$;
 COMMENT ON FUNCTION sql_saga.sync_history_policies(regclass) IS
 'Makes the row-level security of the history table of a system-versioned table match its base table: one copy per SELECT/ALL policy, FORCE as on the base. sql_saga does this automatically on policy DDL; this function repairs a history whose policies changed while event triggers were off.';
 
+-- The final command of a parallel restore (README, "Backup and Restore"; see
+-- sql_saga.__internal_is_parallel_restore), and the repair after policy DDL with event triggers off.
+-- SECURITY INVOKER like sync_history_policies, with the same ownership rule. It refuses before any
+-- change when the caller does not own every system-versioned table, rather than skipping those: a
+-- restore that leaves some histories unsynchronized must fail visibly, not look finished.
+CREATE FUNCTION sql_saga.sync_all_history_policies()
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $sync_all_history_policies$
+DECLARE
+    table_oid regclass;
+BEGIN
+    SELECT c.oid::regclass INTO table_oid
+    FROM sql_saga.system_versioning AS sv
+    JOIN pg_catalog.pg_class AS c ON c.oid = pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass
+    WHERE NOT pg_catalog.pg_has_role(c.relowner, 'USAGE')
+    ORDER BY sv.table_schema, sv.table_name
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'must be owner of table %', table_oid USING ERRCODE = 'insufficient_privilege',
+            HINT = 'Run sql_saga.sync_all_history_policies() as a role that owns every system-versioned table (for example the role that ran the restore), or sql_saga.sync_history_policies(table) per table as its owner.';
+    END IF;
+    FOR table_oid IN
+        SELECT pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass
+        FROM sql_saga.system_versioning AS sv
+        ORDER BY sv.table_schema, sv.table_name
+    LOOP
+        PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    END LOOP;
+END;
+$sync_all_history_policies$;
+COMMENT ON FUNCTION sql_saga.sync_all_history_policies() IS
+'Runs sync_history_policies for every system-versioned table, in name order. The final command after a parallel pg_restore with sql_saga.parallel_restore = on, which defers that synchronization. Refuses before any change unless the caller owns every system-versioned table.';
+
 /*
  * The text of B_history_gated: owner-rights view of B_history, readable only by callers that may
  * SELECT B, and only while B's RLS does not apply to them (otherwise history is read as the caller).

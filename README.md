@@ -168,17 +168,16 @@ Databases using `sql_saga` can be dumped with `pg_dump` and restored with `pg_re
 (the default) or with `--single-transaction`, into a new database or, with `--clean`, into a database
 that already holds them.
 
-**Parallel restore (`pg_restore -j N`) is not supported** until a PostgreSQL bug is fixed:
+**Plain parallel restore (`pg_restore -j N`) is not supported** until a PostgreSQL bug is fixed:
 `sql_saga` keeps its bookkeeping in extension configuration tables that reference each other by
 foreign key (for example `sql_saga.system_versioning` references `sql_saga.era`). `pg_dump`
 computes the order in which their data must be loaded, but does not write that order into the
 archive, so parallel workers can load a referencing table before the table it references and the
 restore fails with a foreign key violation. The bug affects every extension whose configuration
 tables use foreign keys; details and a minimal reproducer are in `doc/decision-log.md`.
-User tables, including tables with `sql_saga` temporal foreign keys, are not affected.
 
 Workaround for large databases: restore the schema and `sql_saga`'s own catalog data serially, then
-everything else in parallel (0 failures in 20 runs, where plain `-j 4` failed 2 of 20):
+everything else in parallel, then synchronize the history policies once:
 
 ```bash
 # BEGIN split-restore (devops/restore_roundtrip.sh runs exactly these lines)
@@ -187,9 +186,34 @@ grep    'TABLE DATA sql_saga ' all.list > saga.list
 grep -v 'TABLE DATA sql_saga ' all.list > rest.list
 pg_restore --exit-on-error --section=pre-data -d mydb backup.dump
 pg_restore --exit-on-error -L saga.list -d mydb backup.dump
-pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
+PGOPTIONS='-c sql_saga.parallel_restore=on' pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
+psql -X -v ON_ERROR_STOP=1 -d mydb -c 'SELECT sql_saga.sync_all_history_policies()' -c 'SELECT sql_saga.check_integrity()'
 # END split-restore
 ```
+
+`sql_saga.parallel_restore=on` is only for the `-j` command. It tells `sql_saga` not to synchronize
+history policies while parallel workers restore tables (two workers restoring the base and the
+history table of one family would otherwise deadlock). `sql_saga.sync_all_history_policies()` does
+that synchronization afterwards, and `sql_saga.check_integrity()` then confirms that every managed
+object is consistent, so the last line fails loudly if anything was left out. Both are quick and safe
+to run again. Run them as the role that ran the restore, before the database is
+used. Until then, history reads through `sql_saga`'s views by users subject to row-level security
+fail with an error (direct reads of a history table are filtered by its restored policies). It
+refuses, before changing anything, if that role does not own every system-versioned table.
+
+Measured with `devops/restore_roundtrip.sh` (`SPLIT_ONLY=1`, 20 runs per fixture, PostgreSQL 18): the
+`catalog_only`, `manual_schema_changes` and `rls_history` fixtures restored correctly 20 of 20 times
+each. The `fk_views` and `quoted_names` fixtures, which have regular foreign keys to temporal tables,
+restored correctly in at most 2 of 20 runs. Every other run failed for the reason in the next
+paragraph, never with a deadlock.
+
+**Regular foreign keys to temporal tables need a serial restore.** A database with regular foreign
+keys to temporal tables (`sql_saga.add_regular_foreign_key`, or `add_foreign_key` on a non-temporal
+table) must be restored serially or with `--single-transaction`. With `-j`, the referencing table's
+data can be checked before the referenced table's data is loaded, and the restore fails with a CHECK
+violation. It never restores bad data. Serial and single-transaction restores load and check every
+row in order. The cause is again that `pg_dump` does not record this ordering in the archive (to be
+reported upstream).
 
 #### Restoring over an existing database (`--clean`)
 
@@ -245,10 +269,7 @@ If policy DDL is restored while event triggers are disabled with
 Repair every system-versioned table with:
 
 ```sql
-SELECT sql_saga.sync_history_policies(
-    format('%I.%I', sv.table_schema, sv.table_name)::regclass
-)
-FROM sql_saga.system_versioning AS sv;
+SELECT sql_saga.sync_all_history_policies();
 ```
 
 A non-managed policy created on a history table while event triggers are disabled is different. History
@@ -256,7 +277,8 @@ reads by callers subject to the base table's RLS fail closed, and `sync_history_
 Drop that policy, define it on the base table if it is needed, then run synchronization again. `sql_saga`
 never silently drops a user's policy.
 
-The parallel restore limitation above is unrelated to privileges and history policies.
+The parallel restore limitations above are unrelated to privileges and history policies, except that a
+parallel restore defers history policy synchronization to `sql_saga.sync_all_history_policies()`.
 
 TODO: Build an Ubuntu packate with sql_saga.
 

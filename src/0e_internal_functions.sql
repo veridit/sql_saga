@@ -130,6 +130,36 @@ $__internal_is_clean_teardown$;
 
 REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() FROM PUBLIC;
 
+/*
+ * Is this statement run by a parallel pg_restore (pg_restore -j N) that the caller has declared with
+ * PGOPTIONS='-c sql_saga.parallel_restore=on' (README, "Backup and Restore")?
+ *
+ * Then health_checks defers the synchronization of history policies: each sync reads and alters both
+ * tables of a family, while parallel workers already hold exclusive locks on one table each, so two
+ * workers restoring the two tables of one family would deadlock. The documented final command,
+ * sql_saga.sync_all_history_policies(), runs the deferred synchronization once the restore is done.
+ * Recognized only in a pg_restore session (the settings pg_dump and pg_restore always set, and
+ * application_name 'pg_restore'), and only with the explicit setting, which is meant for the -j
+ * invocation alone. Serial and --single-transaction restores keep synchronizing as they go.
+ * Not a security boundary: deferring only delays the copy of policies the restoring owner could
+ * change anyway, and guarded history reads fail closed until the sync has run.
+ * Called only by the SECURITY DEFINER event triggers.
+ */
+CREATE FUNCTION sql_saga.__internal_is_parallel_restore()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_is_parallel_restore$
+    SELECT current_setting('check_function_bodies') = 'off'
+       AND current_setting('row_security') = 'off'
+       AND current_setting('application_name') = 'pg_restore'
+       -- '' (not NULL) once the session has seen the placeholder, so coalesce both
+       AND coalesce(current_setting('sql_saga.parallel_restore', true), '') = 'on';
+$__internal_is_parallel_restore$;
+
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_parallel_restore() FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_make_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
  RETURNS name
  IMMUTABLE

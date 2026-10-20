@@ -745,6 +745,25 @@ $__internal_era_boundary_check_matches$;
 REVOKE ALL ON FUNCTION sql_saga.__internal_era_boundary_check_matches(text, name, name) FROM PUBLIC;
 
 /*
+ * pg_get_constraintdef of a constraint of one of the given relations, NULL for any other constraint
+ * (so it matches no expected definition). rename_following compares definitions only for the
+ * relations its DDL command touched: deparsing a CHECK constraint locks the constraint's table, which
+ * a concurrent session may hold exclusively (see rename_following). The CASE, unlike a WHERE
+ * condition next to the deparse, guarantees that the definition of another relation is never read,
+ * whatever order the planner evaluates the conditions in.
+ */
+CREATE FUNCTION sql_saga.__internal_constraintdef_if_touched(constraint_oid oid, table_oid oid, touched_relation_oids oid[])
+RETURNS text
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_constraintdef_if_touched$
+    SELECT CASE WHEN table_oid = ANY (touched_relation_oids) THEN pg_catalog.pg_get_constraintdef(constraint_oid) END;
+$__internal_constraintdef_if_touched$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_constraintdef_if_touched(oid, oid, oid[]) FROM PUBLIC;
+
+/*
  * Whether a regular foreign key's referenced-side trigger is exactly what add_regular_foreign_key
  * creates (see __internal_recreate_regular_fk_uk_triggers): a non-internal constraint trigger on the
  * referenced table FROM the referencing table, DEFERRABLE INITIALLY IMMEDIATE, row level, AFTER
@@ -1087,6 +1106,7 @@ DECLARE
     v_missing_excluded name;
     v_unique_key_columns_before jsonb;
     v_altered_table_oids oid[];
+    v_touched_relation_oids oid[];
 BEGIN
     /* DROP statements cannot rename or reshape surviving managed objects. */
     IF tg_tag LIKE 'DROP %' THEN
@@ -1169,6 +1189,38 @@ BEGIN
        AND NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
         RETURN;
     END IF;
+
+    /*
+     * The relations this command touched: tables, views and indexes it names directly, the tables of
+     * the constraints, triggers, policies and indexes it names, and their inheritance descendants
+     * (PostgreSQL propagates renames to them). Built once from the catalog only.
+     *
+     * The constraint renames below are found by comparing constraint definitions
+     * (pg_get_constraintdef), and deparsing a CHECK constraint takes a lock on its table. They only
+     * deparse constraints of these relations: a rename can only happen on a relation the command
+     * touched, and a concurrent session (such as another pg_restore -j worker) may hold an exclusive
+     * lock on any other table while it waits for one of ours, which would be a deadlock.
+     */
+    v_touched_relation_oids := ARRAY(
+        WITH RECURSIVE touched(relation_oid) AS (
+            SELECT CASE ev.classid
+                       WHEN 'pg_catalog.pg_class'::regclass THEN
+                           coalesce((SELECT i.indrelid FROM pg_catalog.pg_index AS i WHERE i.indexrelid = ev.objid), ev.objid)
+                       WHEN 'pg_catalog.pg_constraint'::regclass THEN
+                           (SELECT c.conrelid FROM pg_catalog.pg_constraint AS c WHERE c.oid = ev.objid)
+                       WHEN 'pg_catalog.pg_trigger'::regclass THEN
+                           (SELECT t.tgrelid FROM pg_catalog.pg_trigger AS t WHERE t.oid = ev.objid)
+                       WHEN 'pg_catalog.pg_policy'::regclass THEN
+                           (SELECT p.polrelid FROM pg_catalog.pg_policy AS p WHERE p.oid = ev.objid)
+                   END
+            FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+            UNION
+            SELECT i.inhrelid
+            FROM touched AS t
+            JOIN pg_catalog.pg_inherits AS i ON i.inhparent = t.relation_oid
+        )
+        SELECT t.relation_oid FROM touched AS t WHERE t.relation_oid IS NOT NULL);
+
     /*
      * Anything that is stored by reg* type will auto-adjust, but anything we
      * store by name will need to be updated after a rename. One way to do this
@@ -1206,7 +1258,8 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE e.bounds_check_constraint IS NOT NULL
           AND e.bounds_check_constraint <> c.conname
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((NOT isempty(%I)))', e.range_column_name)
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK ((NOT isempty(%I)))', e.range_column_name)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.bounds_check_constraint))
     LOOP
         EXECUTE sql;
@@ -1227,7 +1280,8 @@ BEGIN
           AND e.boundary_check_constraint <> c.conname
           AND e.valid_from_column_name IS NOT NULL
           AND e.valid_until_column_name IS NOT NULL
-          AND sql_saga.__internal_era_boundary_check_matches(pg_catalog.pg_get_constraintdef(c.oid), e.valid_from_column_name, e.valid_until_column_name)
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_era_boundary_check_matches(sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids), e.valid_from_column_name, e.valid_until_column_name)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.boundary_check_constraint))
     LOOP
         EXECUTE sql;
@@ -1251,7 +1305,8 @@ BEGIN
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE ste.infinity_check_constraint <> c.conname
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', e.range_column_name)
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', e.range_column_name)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, ste.infinity_check_constraint))
     LOOP
         EXECUTE sql;
@@ -1476,9 +1531,10 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE uk.unique_constraint IS NOT NULL AND uk.unique_constraint <> c.conname
           AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
+          AND pc.oid = ANY (v_touched_relation_oids)
           AND (
             -- Match traditional constraint format
-            pg_get_constraintdef(c.oid) = (
+            sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
                 SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
                     CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END,
                     string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
@@ -1488,7 +1544,7 @@ BEGIN
             )
             OR
             -- Match NULLS NOT DISTINCT constraint format
-            pg_get_constraintdef(c.oid) = (
+            sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
                 SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
                     CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY NULLS NOT DISTINCT' ELSE 'UNIQUE NULLS NOT DISTINCT' END,
                     string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
@@ -1513,7 +1569,8 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE uk.exclude_constraint IS NOT NULL AND uk.exclude_constraint <> c.conname
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
-          AND pg_get_constraintdef(c.oid) = (
+          AND pc.oid = ANY (v_touched_relation_oids)
+          AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
             SELECT format('EXCLUDE USING gist (%s, %I WITH &&) WHERE (%s) DEFERRABLE',
                 string_agg(quote_ident(u.name) || ' WITH =', ', ' ORDER BY u.ordinality),
                 e.range_column_name,
@@ -1537,7 +1594,8 @@ BEGIN
         AND uk.check_constraint <> c.conname
         AND c.contype = 'c'
         AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
-        AND pg_get_constraintdef(c.oid) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
+        AND pc.oid = ANY (v_touched_relation_oids)
+        AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
     LOOP
         EXECUTE sql;
     END LOOP;
