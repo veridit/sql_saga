@@ -332,6 +332,10 @@ SECURITY DEFINER
 
 > Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name.
 
+The two column arrays are paired positionally. Referenced columns may be listed in a different order from
+the registered unique key, provided they name the same set. sql_saga normalizes both arrays together to
+the unique key's order, preserving each child-to-parent pairing.
+
 ```sql
 FUNCTION add_foreign_key(
     fk_table_oid regclass,
@@ -351,6 +355,12 @@ SECURITY DEFINER
 ### add_regular_foreign_key
 
 > Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history.
+
+In 1.3, the referencing-side check is a `DEFERRABLE INITIALLY IMMEDIATE` constraint trigger. The retained
+`fk_check_constraint` parameter names that trigger and its constraint, not a CHECK expression.
+`fk_helper_function` remains in the signature for call compatibility, but must be NULL: 1.3 creates no
+helper function and refuses an explicit helper with SQLSTATE `0A000`. `MATCH SIMPLE` and `MATCH FULL`
+are supported. `MATCH PARTIAL` is refused with SQLSTATE `0A000`.
 
 ```sql
 FUNCTION add_regular_foreign_key(
