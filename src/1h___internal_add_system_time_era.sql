@@ -110,8 +110,8 @@ BEGIN
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
     RAISE NOTICE 'sql_saga: Created trigger "%" on table "%" for system time era', quote_ident(truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name);
 
-    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint)
-    VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'tstzmultirange', 'timestamptz', 'D', NULL);
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, catalog_format)
+    VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'tstzmultirange', 'timestamptz', 'D', NULL, '1.3');
 
     INSERT INTO sql_saga.system_time_era (
         table_schema, table_name, era_name, infinity_check_constraint,
