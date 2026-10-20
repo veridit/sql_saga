@@ -1,0 +1,103 @@
+\set ECHO none
+--- baseline ---
+fresh | check_integrity ok
+Chi ld FK|temporal_to_temporal||
+Re g FK|regular_to_temporal|Re g FK_uk_update|Re g FK_uk_delete
+plain_ref_fk|regular_to_temporal|plain_ref_fk_uk_update|plain_ref_fk_uk_delete
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+1 | one | 2024-01-01 | [2024-01-01,2024-06-01)
+1 | uno | 2024-02-01 | [2024-06-01,infinity)
+2 | two | 2024-01-01 | [2024-01-01,infinity)
+--- 1a: UPDATE through the for_portion_of view of an odd-named table ---
+data-only update of ID 2 | ok
+update of a portion of ID 2 | ok
+1 | one | 2024-01-01 | [2024-01-01,2024-06-01)
+1 | uno | 2024-02-01 | [2024-06-01,infinity)
+2 | deux | 2024-01-01 | [2024-01-01,2025-01-01)
+2 | dos | 2024-01-01 | [2025-01-01,2026-01-01)
+2 | deux | 2024-01-01 | [2026-01-01,infinity)
+--- 1b: disable/enable_temporal_triggers with odd names in the catalog ---
+disable plain_parent | ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | D
+plain_parent | plain_ref_fk_uk_update | D
+enable plain_parent | ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+disable Ta'ble | ok
+"Ta'ble" | Re g FK_uk_delete | D
+"Ta'ble" | Re g FK_uk_update | D
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+enable Ta'ble | ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+disable both | ok
+"Ta'ble" | Re g FK_uk_delete | D
+"Ta'ble" | Re g FK_uk_update | D
+plain_parent | plain_ref_fk_uk_delete | D
+plain_parent | plain_ref_fk_uk_update | D
+enable both | ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+--- 2a: era.ephemeral_columns follows RENAME COLUMN ---
+Ta'ble|{"Edit At"}
+Ta'ble|{"Edited \"At\""}
+after ephemeral column rename | check_integrity ok
+Ta'ble|{"Edited \"At\""}
+after non-ephemeral column rename and back | check_integrity ok
+view update after rename | ok
+1 | one | 2024-07-01 | [2024-01-01,infinity)
+2 | two | 2024-01-01 | [2024-01-01,infinity)
+temporal_merge after rename | ok
+1 | one | 2024-07-01 | [2024-01-01,infinity)
+2 | two | 2024-01-01 | [2024-01-01,infinity)
+--- 2b: unique_keys.pk_consistency_constraint_names follows RENAME CONSTRAINT ---
+nat_code|{nat_code_pk_consistency_excl}
+nat_code|{"Nat \"Code\" Excl"}
+after consistency constraint rename | check_integrity ok
+code A later under another id | 23P01: conflicting key value violates exclusion constraint "Nat "Code" Excl"
+drop the renamed constraint | P0001: cannot drop constraint "Nat "Code" Excl" on table "Odd "Schema".Nat Tab" because it is used in era unique key "nat_code"
+drop_unique_key | ok
+Nat Tab_pkey
+Nat Tab_valid_check
+after drop_unique_key | check_integrity ok
+rolled back | check_integrity ok
+--- 3: disable_temporal_triggers and native temporal foreign keys ---
+comment documents SET CONSTRAINTS|t
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS "Odd ""Schema"""."Chi ld FK" DEFERRED
+disable Chi ld | ok
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS "Odd ""Schema"""."Chi ld FK", "Odd ""Schema""".kid_fk DEFERRED
+disable kid and Chi ld | ok
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS "Odd ""Schema"""."Chi ld FK", "Odd ""Schema""".kid_fk DEFERRED
+disable Ta'ble and Chi ld | ok
+disable plain_parent | ok
+enable Ta'ble and plain_parent | ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
+Chi ld FK|t|f|0
+kid_fk|t|f|0
+disable Ta'ble | ok
+delete entity 1 with the native keys deferred | ok
+restore entity 1 | ok
+deferred checks at SET CONSTRAINTS ALL IMMEDIATE | ok
+disable Ta'ble | ok
+delete a referenced row without SET CONSTRAINTS | 23503: update or delete on table "Ta'ble" violates foreign key constraint "Chi ld FK" on table "Chi ld"
+--- final ---
+end | check_integrity ok
+"Ta'ble" | Re g FK_uk_delete | O
+"Ta'ble" | Re g FK_uk_update | O
+plain_parent | plain_ref_fk_uk_delete | O
+plain_parent | plain_ref_fk_uk_update | O
