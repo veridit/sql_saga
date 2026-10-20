@@ -14,7 +14,7 @@ jobs:
         run: |
           sudo apt-get install -y postgresql-common ca-certificates
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config
+          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3
 
       - name: Start PostgreSQL 18
         run: |
@@ -28,7 +28,7 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v5
         with:
-          # The 1.2 upgrade matrix builds the released v1.0 and v1.1 tags.
+          # The 1.3 upgrade matrix builds released v1.0, v1.1 and v1.2 tags.
           fetch-depth: 0
           fetch-tags: true
 
@@ -42,6 +42,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: native -> target
+
+      - name: Test deterministic update-script generation
+        run: |
+          make test-generator PG_CONFIG=${{ env.PG_CONFIG }}
+          MAKEFLAGS=PG_STAT_MONITOR_AVAILABLE=no devops/test_update_scripts_make.sh
 
       - name: Build and install sql_saga (C library, internal native library, SQL)
         run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
@@ -63,9 +68,9 @@ jobs:
         # limitation and does not fail the job (see doc/decision-log.md).
         run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
 
-      - name: Run the v1.0 and v1.1 to 1.2 upgrade matrix
-        # Builds both release tags in scratch directories, upgrades each path to candidate 1.2 and
-        # compares upgraded databases with a fresh 1.2 install (devops/upgrade_test.sh).
+      - name: Run released 1.0, 1.1 and 1.2 to 1.3 upgrade matrix
+        # Builds all three release tags privately, upgrades each directly to candidate 1.3 and compares
+        # with a fresh 1.3 install, including ACLs and generated objects (devops/upgrade_test.sh).
         run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Run concurrent function-attribution isolation test
