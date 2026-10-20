@@ -2227,15 +2227,15 @@ XORFK_REF_ADD="SELECT sql_saga.add_foreign_key('public.person_ref', ARRAY['a_per
 XORFK_REF_SCAN="SELECT fk.* FROM public.person_ref AS fk WHERE fk.a_person IS NOT NULL AND fk.b_role IS NOT NULL AND fk.c_lu IS NOT NULL AND fk.d_est IS NOT NULL AND NOT EXISTS (SELECT FROM public.person_for_unit AS uk WHERE uk.person_id = fk.a_person AND uk.person_role_id = fk.b_role AND uk.legal_unit_id = fk.c_lu AND uk.establishment_id = fk.d_est)"
 XORFK_TREF_DROP="SELECT sql_saga.drop_foreign_key('public.person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'])"
 XORFK_TREF_ADD="SELECT sql_saga.add_foreign_key('public.person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'], 'public.person_for_unit', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], foreign_key_name => 'person_tref_fkey')"
-XORFK_REF_MESSAGE="sql_saga: integrity violation for foreign key \"person_ref_fkey\": pairs child column a_person with referenced column establishment_id, but unique key \"person_for_unit_natural_key_valid\" pairs it with referenced column person_id; repair with $XORFK_REF_DROP; $XORFK_REF_ADD"
-XORFK_TREF_MESSAGE="sql_saga: integrity violation for foreign key \"person_tref_fkey\": pairs child column a_person with referenced column establishment_id, but unique key \"person_for_unit_natural_key_valid\" pairs it with referenced column person_id; repair with $XORFK_TREF_DROP; $XORFK_TREF_ADD"
+XORFK_REF_MESSAGE="sql_saga: integrity violation for foreign key person_ref_fkey: pairs child column a_person with referenced column establishment_id, but unique key person_for_unit_natural_key_valid pairs it with referenced column person_id; repair with $XORFK_REF_DROP; $XORFK_REF_ADD"
+XORFK_TREF_MESSAGE="sql_saga: integrity violation for foreign key person_tref_fkey: pairs child column a_person with referenced column establishment_id, but unique key person_for_unit_natural_key_valid pairs it with referenced column person_id; repair with $XORFK_TREF_DROP; $XORFK_TREF_ADD"
 # The update cannot run that repair for the user: its add part pairs by position, which only the user can
 # confirm, and the old add_foreign_key cannot even find the key by its constraint order. So the refusal of
 # the update carries an upgrade-specific HINT with the sequence (check_integrity on an updated database keeps
 # the plain two-statement repair, see sql/128).
-XORFK_UPGRADE_STEPS="The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. To upgrade: on the current version run the drop_foreign_key statement, then ALTER EXTENSION sql_saga UPDATE, then run the add_foreign_key statement on the new version."
+XORFK_UPGRADE_STEPS="The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. To upgrade: on the current version run the drop_foreign_key statement, then ALTER EXTENSION sql_saga UPDATE, then run the add_foreign_key statement on the new version. Repeat the drop for every other mispaired foreign key the update reports."
 XORFK_REF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with $XORFK_REF_SCAN"
-XORFK_TREF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows that reference a missing key; add_foreign_key re-validates the native foreign key and refuses while they exist."
+XORFK_TREF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows that reference a missing key; add_foreign_key creates and validates the replacement native foreign key and refuses while they exist."
 # The shape this section is about. If the baseline did not mispair, the section proves nothing.
 FAILURE_CLASS=prerequisite
 check "mispaired FKs: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,legal_unit_id,person_id,person_role_id}" "$(q "$XORFK" "$XORFK_CATALOG_SQL")"
@@ -2270,7 +2270,7 @@ check "mispaired FKs: the drop part of the regular repair succeeds on $BASELINE_
 xorfk_between=$(xorfk_state "$XORFK") || die "mispaired FK fixture: state capture failed: $xorfk_between"
 out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$XORFK" 2>&1)
 check "mispaired FKs: update then refused naming the temporal FK with its exact repair" "ERROR:  $XORFK_TREF_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
-check "mispaired FKs: the temporal refusal has the upgrade HINT (the native FK re-validates on add)" "HINT:  $XORFK_TREF_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+check "mispaired FKs: the temporal refusal has the upgrade HINT (the replacement native FK is validated on add)" "HINT:  $XORFK_TREF_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
 check "mispaired FKs: second refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$XORFK" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "mispaired FKs: second refusal leaves extension objects, user schema and catalog rows unchanged" "$xorfk_between" "$(xorfk_state "$XORFK")"
 check "mispaired FKs: the drop part of the temporal repair succeeds on $BASELINE_VERSION" "" \
