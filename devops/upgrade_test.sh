@@ -2306,6 +2306,213 @@ check "mispaired FKs: an unreferenced key row can be deleted" "accepted" "$(xorf
 check "mispaired FKs: an unreferenced key can be updated" "accepted" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 3")"
 
 # ---------------------------------------------------------------------------------------------
+section "regular FK child side: the update converts the CHECK into a constraint trigger" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# tmp/v13_designB_red_brief.md item 5, tmp/fable_audit_v13.md section 2.3 and P2 item 8, sql/129. Up to 1.2
+# the referencing side of a regular foreign key is a CHECK constraint calling a helper that reads the
+# parent, which pg_dump emits inline with the child table (restore order defect B). The update replaces
+# each such CHECK with a constraint trigger on the child (DEFERRABLE INITIALLY IMMEDIATE, AFTER INSERT OR
+# UPDATE OF the foreign key columns, FOR EACH ROW) under the same name, so foreign_keys.fk_check_constraint
+# keeps naming the child-side object. Because the trigger never re-validates existing rows, the update
+# scans each regular FK once and refuses, atomically, while a child row references a missing key (next
+# section). Baselines: v1.0 and v1.1 (this harness). TODO: add the v1.2 baseline (tag v1.2) once the
+# harness runs 1.2 as a released baseline towards 1.3; the section is version-agnostic.
+RFK_CONVERT=${PREFIX}_rfk_convert
+RFK_ORPHAN=${PREFIX}_rfk_orphan
+# Parent legal_unit (primary key id, natural key (ident_type, ident)); regular children activity_note (sorts
+# before the parent) and unit_note (after it) by id, contact_note by the natural key. Child column names
+# sort in key order (a_type, b_code), so the baseline CHECK argument order (W11) cannot mispair.
+rfk_fixture() {
+    cat <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE TABLE legal_unit (id int NOT NULL, ident_type text NOT NULL, ident text NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['ident_type', 'ident']::name[], 'valid', key_type => 'natural', unique_key_name => 'legal_unit_ident_valid');
+INSERT INTO legal_unit (id, ident_type, ident, valid_from, valid_until)
+SELECT g, 'tax', (100 * g)::text, '2020-01-01', 'infinity' FROM generate_series(1, 6) AS g;
+CREATE TABLE activity_note (id int PRIMARY KEY, legal_unit_id int);
+CREATE TABLE unit_note (id int PRIMARY KEY, legal_unit_id int);
+CREATE TABLE contact_note (id int PRIMARY KEY, a_type text, b_code text);
+SELECT sql_saga.add_foreign_key('activity_note', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('unit_note', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('contact_note', ARRAY['a_type', 'b_code']::name[], 'legal_unit', ARRAY['ident_type', 'ident']::name[]);
+-- legal unit 1 <- activity_note, 2 <- unit_note, (tax, 300) <- contact_note, 5 <- activity_note 10 and 11;
+-- 4 and 6 unreferenced.
+INSERT INTO activity_note VALUES (1, 1), (2, NULL), (10, 5), (11, 5);
+INSERT INTO unit_note VALUES (1, 2);
+INSERT INTO contact_note VALUES (1, 'tax', '300'), (2, NULL, NULL);
+SQL
+}
+RFK_SCAN="SELECT fk.* FROM public.activity_note AS fk WHERE fk.legal_unit_id IS NOT NULL AND NOT EXISTS (SELECT FROM public.legal_unit AS uk WHERE uk.id = fk.legal_unit_id)"
+# Per regular FK: the non-internal triggers on its child table and their user-visible shape.
+RFK_CHILD_SIDE_SQL="SELECT string_agg(format('%s:%s=%s/%s/%s/%s/%s', fk.foreign_key_name, t.tgname,
+    CASE WHEN t.tgname = fk.fk_check_constraint THEN 'catalogued' ELSE 'uncatalogued' END,
+    CASE WHEN c.contype = 't' THEN 'constraint trigger' ELSE 'plain trigger' END,
+    CASE WHEN c.condeferrable AND NOT c.condeferred THEN 'deferrable initially immediate' ELSE 'other deferral' END,
+    CASE WHEN t.tgtype = 21 THEN 'after insert or update of ' || (SELECT string_agg(a.attname, ',' ORDER BY u.o) FROM unnest(t.tgattr::int2[]) WITH ORDINALITY AS u (n, o)
+                                  JOIN pg_attribute AS a ON (a.attrelid, a.attnum) = (t.tgrelid, u.n)) ELSE 'tgtype ' || t.tgtype END,
+    CASE t.tgenabled WHEN 'O' THEN 'enabled' ELSE 'not enabled' END), ' ' ORDER BY fk.foreign_key_name, t.tgname)
+FROM sql_saga.foreign_keys AS fk
+JOIN pg_trigger AS t ON t.tgrelid = format('%I.%I', fk.table_schema, fk.table_name)::regclass AND NOT t.tgisinternal
+LEFT JOIN pg_constraint AS c ON c.oid = t.tgconstraint
+WHERE fk.type = 'regular_to_temporal'"
+RFK_CHILD_SIDE="activity_note_legal_unit_id_fkey:activity_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of legal_unit_id/enabled contact_note_a_type_b_code_fkey:contact_note_a_type_b_code_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of a_type,b_code/enabled unit_note_legal_unit_id_fkey:unit_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of legal_unit_id/enabled"
+# CHECK constraints on the regular FK children that call a function outside pg_catalog.
+RFK_HELPER_CHECKS_SQL="SELECT count(*) FROM pg_constraint AS c
+JOIN pg_depend AS d ON (d.classid, d.objid, d.refclassid) = ('pg_constraint'::regclass, c.oid, 'pg_proc'::regclass)
+JOIN pg_proc AS p ON p.oid = d.refobjid
+WHERE c.conrelid IN ('activity_note'::regclass, 'unit_note'::regclass, 'contact_note'::regclass) AND c.contype = 'c' AND p.pronamespace <> 'pg_catalog'::regnamespace"
+RFK_CATALOG_SQL="SELECT string_agg(foreign_key_name || '=' || fk_check_constraint, ' ' ORDER BY foreign_key_name) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'"
+RFK_CATALOG="activity_note_legal_unit_id_fkey=activity_note_legal_unit_id_check contact_note_a_type_b_code_fkey=contact_note_a_type_b_code_check unit_note_legal_unit_id_fkey=unit_note_legal_unit_id_check"
+rfk_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
+rfk_enforcement() {  # rfk_enforcement <db> <label>
+    local db=$1 label=$2
+    check "$label: activity_note (sorts before the parent) refuses a missing key" "refused" "$(rfk_probe "$db" "INSERT INTO activity_note VALUES (90, 99)")"
+    check "$label: activity_note refuses an update to a missing key" "refused" "$(rfk_probe "$db" "UPDATE activity_note SET legal_unit_id = 99 WHERE id = 1")"
+    check "$label: activity_note accepts an existing key and NULL" "accepted" "$(rfk_probe "$db" "INSERT INTO activity_note VALUES (90, 4); INSERT INTO activity_note VALUES (91, NULL)")"
+    check "$label: unit_note (sorts after the parent) refuses a missing key" "refused" "$(rfk_probe "$db" "INSERT INTO unit_note VALUES (90, 99)")"
+    check "$label: contact_note refuses a missing composite key" "refused" "$(rfk_probe "$db" "INSERT INTO contact_note VALUES (90, 'tax', '999')")"
+    check "$label: contact_note accepts an existing composite key and a partly NULL key (MATCH SIMPLE)" "accepted" \
+        "$(rfk_probe "$db" "INSERT INTO contact_note VALUES (90, 'tax', '400'); INSERT INTO contact_note VALUES (91, 'tax', NULL)")"
+    check "$label: a child row loaded before its parent row is accepted once deferred" "accepted" \
+        "$(rfk_probe "$db" "SET CONSTRAINTS ALL DEFERRED; INSERT INTO activity_note VALUES (92, 7); INSERT INTO legal_unit (id, ident_type, ident, valid_from, valid_until) VALUES (7, 'tax', '700', '2020-01-01', 'infinity')")"
+    check "$label: deleting a legal unit referenced by activity_note is refused" "refused" "$(rfk_probe "$db" "DELETE FROM legal_unit WHERE id = 1")"
+    check "$label: deleting a legal unit referenced by unit_note is refused" "refused" "$(rfk_probe "$db" "DELETE FROM legal_unit WHERE id = 2")"
+    check "$label: changing the natural key referenced by contact_note is refused" "refused" "$(rfk_probe "$db" "UPDATE legal_unit SET ident = '301' WHERE id = 3")"
+    check "$label: an unreferenced legal unit can be deleted" "accepted" "$(rfk_probe "$db" "DELETE FROM legal_unit WHERE id = 6")"
+}
+new_db "$RFK_CONVERT" "$EXT_ROOT" "$OLD_LIB"
+out=$(rfk_fixture | sql "$RFK_CONVERT")
+printf '%s\n' "$out" | grep -q '^ERROR' && die "regular FK conversion fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+FAILURE_CLASS=prerequisite
+check "regular FK conversion: the $BASELINE_VERSION baseline enforces all three children with a CHECK calling a helper" "3" "$(q "$RFK_CONVERT" "$RFK_HELPER_CHECKS_SQL")"
+check "regular FK conversion: the $BASELINE_VERSION catalog names the CHECKs" "$RFK_CATALOG" "$(q "$RFK_CONVERT" "$RFK_CATALOG_SQL")"
+check "regular FK conversion: the $BASELINE_VERSION database has no orphan" "" "$(q "$RFK_CONVERT" "$RFK_SCAN")"
+FAILURE_CLASS="expected RED"
+psql -X -q -d postgres -c "ALTER DATABASE $RFK_CONVERT RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_CONVERT"
+check "regular FK conversion: healthy $BASELINE_VERSION database updates without refusal" "" "$(q "$RFK_CONVERT" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "regular FK conversion: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$RFK_CONVERT" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "regular FK conversion: no child CHECK calls a helper after the update" "0" "$(q "$RFK_CONVERT" "$RFK_HELPER_CHECKS_SQL")"
+check "regular FK conversion: each child has one catalogued constraint trigger after the update" "$RFK_CHILD_SIDE" "$(q "$RFK_CONVERT" "$RFK_CHILD_SIDE_SQL")"
+check "regular FK conversion: the catalog keeps the child-side names" "$RFK_CATALOG" "$(q "$RFK_CONVERT" "$RFK_CATALOG_SQL")"
+check "regular FK conversion: check_integrity passes after the update" "" "$(q "$RFK_CONVERT" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "regular FK conversion: all child rows kept" "4|1|2" \
+    "$(q "$RFK_CONVERT" "SELECT (SELECT count(*) FROM activity_note) || '|' || (SELECT count(*) FROM unit_note) || '|' || (SELECT count(*) FROM contact_note)")"
+rfk_enforcement "$RFK_CONVERT" "regular FK conversion"
+
+# ---------------------------------------------------------------------------------------------
+section "regular FK child side: the update refuses while a child row references a missing key" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# The same fixture, then legal unit 5 is deleted in a replica session, the narrowest real way past the
+# baseline: session_replication_role = replica skips the referenced-side constraint triggers (the child
+# CHECK only runs on child writes), as bulk loads and logical replication do. activity_note 10 and 11 are
+# orphans. The CHECK accepted them when they were written, and the constraint trigger would never look at
+# them again, so the update must refuse with the orphan count and the scan that lists them, change
+# nothing, and succeed once they are resolved on the baseline.
+RFK_ORPHAN_MESSAGE="sql_saga: cannot convert the referencing side of foreign key activity_note_legal_unit_id_fkey to a constraint trigger: 2 rows of public.activity_note reference a missing key of public.legal_unit; list them with $RFK_SCAN"
+RFK_ORPHAN_HINT="Delete or correct those rows on the current version, then run ALTER EXTENSION sql_saga UPDATE again."
+new_db "$RFK_ORPHAN" "$EXT_ROOT" "$OLD_LIB"
+out=$( { rfk_fixture; printf '%s\n' "SET session_replication_role = replica;" "DELETE FROM legal_unit WHERE id = 5;" "RESET session_replication_role;"; } | sql "$RFK_ORPHAN")
+printf '%s\n' "$out" | grep -q '^ERROR' && die "regular FK orphan fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+FAILURE_CLASS=prerequisite
+check "regular FK orphan: the $BASELINE_VERSION baseline holds the two orphans" "10|5 11|5" "$(q "$RFK_ORPHAN" "SELECT string_agg(id || '|' || legal_unit_id, ' ' ORDER BY id) FROM ($RFK_SCAN) AS o")"
+check "regular FK orphan: the $BASELINE_VERSION CHECK still refuses a new orphan (the shape is the CHECK form)" "refused" "$(rfk_probe "$RFK_ORPHAN" "INSERT INTO activity_note VALUES (90, 99)")"
+FAILURE_CLASS="expected RED"
+psql -X -q -d postgres -c "ALTER DATABASE $RFK_ORPHAN RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_ORPHAN"
+# This database has no system versioning: fingerprint extension objects, user schema and catalog rows.
+rfk_state() {
+    local parts="" p rc=0
+    p=$(fingerprint_part ext ext_snapshot "$1") || rc=1; parts="$p"
+    p=$(fingerprint_part dump raw_dump_schema "$1") || rc=1; parts="$parts|$p"
+    p=$(fingerprint_part catalog_rows raw_catalog_rows "$1") || rc=1; parts="$parts|$p"
+    echo "$parts"
+    return $rc
+}
+rfk_before=$(rfk_state "$RFK_ORPHAN") || die "regular FK orphan fixture: prior-state capture failed: $rfk_before"
+out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$RFK_ORPHAN" 2>&1)
+check "regular FK orphan: update refused with the orphan count and the scan" "ERROR:  $RFK_ORPHAN_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+check "regular FK orphan: the refusal says how to proceed" "HINT:  $RFK_ORPHAN_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+check "regular FK orphan: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$RFK_ORPHAN" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "regular FK orphan: refusal leaves extension objects, user schema and catalog rows unchanged" "$rfk_before" "$(rfk_state "$RFK_ORPHAN")"
+check "regular FK orphan: the scan from the message, run verbatim, lists the orphans" "10|5 11|5" \
+    "$(q "$RFK_ORPHAN" "SELECT string_agg(id || '|' || legal_unit_id, ' ' ORDER BY id) FROM ($(printf '%s\n' "$out" | grep -m1 '^ERROR' | sed 's/^.*; list them with //')) AS o")"
+check "regular FK orphan: resolving the orphans on $BASELINE_VERSION succeeds" "" "$(q "$RFK_ORPHAN" "DELETE FROM activity_note WHERE id IN (10, 11)" | grep '^ERROR')"
+check "regular FK orphan: update succeeds once the orphans are resolved" "" "$(q "$RFK_ORPHAN" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "regular FK orphan: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$RFK_ORPHAN" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "regular FK orphan: each child has one catalogued constraint trigger after the update" "$RFK_CHILD_SIDE" "$(q "$RFK_ORPHAN" "$RFK_CHILD_SIDE_SQL")"
+check "regular FK orphan: no child CHECK calls a helper after the update" "0" "$(q "$RFK_ORPHAN" "$RFK_HELPER_CHECKS_SQL")"
+check "regular FK orphan: check_integrity passes after the update" "" "$(q "$RFK_ORPHAN" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+rfk_enforcement "$RFK_ORPHAN" "regular FK orphan"
+
+# ---------------------------------------------------------------------------------------------
+section "regular FK child side: the orphan refusal quotes names that need quoting" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# tmp/review_v13_designB_red.md R2. The same refusal for a schema, tables, columns and a foreign key whose
+# names contain a double quote, an apostrophe, a space and upper case. The message names relations and
+# columns as quote_ident/regclass text would (identifier quoting), the FK name in quote_ident form, and the
+# emitted scan must run verbatim and list exactly the orphan rows. The update must be atomic.
+RFK_QUOTED=${PREFIX}_rfk_quoted
+new_db "$RFK_QUOTED" "$EXT_ROOT" "$OLD_LIB"
+out=$(sql "$RFK_QUOTED" <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE SCHEMA "odd ""s'ch";
+CREATE TABLE "odd ""s'ch"."Par'ent ""T""" ("Id ""k'" int NOT NULL, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('"odd ""s''ch"."Par''ent ""T"""', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('"odd ""s''ch"."Par''ent ""T"""', ARRAY['Id "k''']::name[], 'valid', key_type => 'primary', unique_key_name => 'par "odd" ''k''');
+INSERT INTO "odd ""s'ch"."Par'ent ""T""" SELECT g, '[2020-01-01,infinity)' FROM generate_series(1, 5) AS g;
+CREATE TABLE "odd ""s'ch"."Chi'ld ""R""" (id int PRIMARY KEY, "Par ""id'" int);
+SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['Par "id''']::name[], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['Id "k''']::name[],
+    foreign_key_name => 'fk "odd" ''r''');
+INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (1, 1), (2, NULL), (7, 4), (8, 4), (9, 5);
+-- Parent 4 deleted past the baseline: children 7 and 8 are orphans, 9 is not.
+SET session_replication_role = replica;
+DELETE FROM "odd ""s'ch"."Par'ent ""T""" WHERE "Id ""k'" = 4;
+RESET session_replication_role;
+SQL
+)
+printf '%s\n' "$out" | grep -q '^ERROR' && die "quoted regular FK orphan fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+RFK_QUOTED_CHILD="\"odd \"\"s'ch\".\"Chi'ld \"\"R\"\"\""
+RFK_QUOTED_PARENT="\"odd \"\"s'ch\".\"Par'ent \"\"T\"\"\""
+RFK_QUOTED_SCAN="SELECT fk.* FROM $RFK_QUOTED_CHILD AS fk WHERE fk.\"Par \"\"id'\" IS NOT NULL AND NOT EXISTS (SELECT FROM $RFK_QUOTED_PARENT AS uk WHERE uk.\"Id \"\"k'\" = fk.\"Par \"\"id'\")"
+RFK_QUOTED_MESSAGE="sql_saga: cannot convert the referencing side of foreign key \"fk \"\"odd\"\" 'r'\" to a constraint trigger: 2 rows of $RFK_QUOTED_CHILD reference a missing key of $RFK_QUOTED_PARENT; list them with $RFK_QUOTED_SCAN"
+# The orphan rows a scan lists, as "id|key" in id order (the scan is embedded as a subquery, never as a format).
+rfk_quoted_rows() { q "$RFK_QUOTED" "SELECT string_agg(o.id || '|' || o.\"Par \"\"id'\", ' ' ORDER BY o.id) FROM ($1) AS o"; }
+FAILURE_CLASS=prerequisite
+check "quoted regular FK orphan: the $BASELINE_VERSION baseline holds exactly the two orphans" "7|4 8|4" \
+    "$(rfk_quoted_rows "$RFK_QUOTED_SCAN")"
+check "quoted regular FK orphan: the $BASELINE_VERSION baseline enforces the child with a CHECK calling a helper" "1" \
+    "$(q "$RFK_QUOTED" "SELECT count(*) FROM pg_constraint AS c JOIN pg_depend AS d ON (d.classid, d.objid, d.refclassid) = ('pg_constraint'::regclass, c.oid, 'pg_proc'::regclass) JOIN pg_proc AS p ON p.oid = d.refobjid WHERE c.conrelid = '$(printf '%s' "$RFK_QUOTED_CHILD" | sed "s/'/''/g")'::regclass AND c.contype = 'c' AND p.pronamespace <> 'pg_catalog'::regnamespace")"
+FAILURE_CLASS="expected RED"
+psql -X -q -d postgres -c "ALTER DATABASE $RFK_QUOTED RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_QUOTED"
+rfk_quoted_before=$(rfk_state "$RFK_QUOTED") || die "quoted regular FK orphan fixture: prior-state capture failed: $rfk_quoted_before"
+out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$RFK_QUOTED" 2>&1)
+check "quoted regular FK orphan: update refused with quoted names, the orphan count and the scan" "ERROR:  $RFK_QUOTED_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+check "quoted regular FK orphan: the refusal says how to proceed" "HINT:  $RFK_ORPHAN_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+check "quoted regular FK orphan: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$RFK_QUOTED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "quoted regular FK orphan: refusal leaves extension objects, user schema and catalog rows unchanged" "$rfk_quoted_before" "$(rfk_state "$RFK_QUOTED")"
+rfk_quoted_emitted=$(printf '%s\n' "$out" | grep -m1 '^ERROR' | sed 's/^.*; list them with //')
+check "quoted regular FK orphan: the scan from the message, run verbatim, lists exactly the orphans" "7|4 8|4" \
+    "$(rfk_quoted_rows "$rfk_quoted_emitted")"
+check "quoted regular FK orphan: resolving the orphans on $BASELINE_VERSION succeeds" "" \
+    "$(q "$RFK_QUOTED" "DELETE FROM $RFK_QUOTED_CHILD WHERE id IN (7, 8)" | grep '^ERROR')"
+check "quoted regular FK orphan: update succeeds once the orphans are resolved" "" "$(q "$RFK_QUOTED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "quoted regular FK orphan: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$RFK_QUOTED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "quoted regular FK orphan: the child has one catalogued constraint trigger after the update" \
+    "fk \"odd\" 'r':Chi'ld \"R\"_Par \"id'_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of Par \"id'/enabled" \
+    "$(q "$RFK_QUOTED" "$RFK_CHILD_SIDE_SQL")"
+check "quoted regular FK orphan: check_integrity passes after the update" "" "$(q "$RFK_QUOTED" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "quoted regular FK orphan: the child refuses a missing key after the update" "refused" "$(rfk_probe "$RFK_QUOTED" "INSERT INTO $RFK_QUOTED_CHILD VALUES (90, 99)")"
+check "quoted regular FK orphan: the child accepts an existing key and NULL after the update" "accepted" \
+    "$(rfk_probe "$RFK_QUOTED" "INSERT INTO $RFK_QUOTED_CHILD VALUES (90, 5); INSERT INTO $RFK_QUOTED_CHILD VALUES (91, NULL)")"
+check "quoted regular FK orphan: deleting a referenced parent is refused after the update" "refused" \
+    "$(rfk_probe "$RFK_QUOTED" "DELETE FROM $RFK_QUOTED_PARENT WHERE \"Id \"\"k'\" = 1")"
+
+# ---------------------------------------------------------------------------------------------
 # tmp/fable_audit_v13.md finding 3 (A3). The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
 # so their column list is frozen; StatBus then ran ALTER TABLE ... ADD COLUMN on era tables that already had
 # views (stat_for_unit.stat GENERATED ALWAYS ... STORED; location.region_version_id plain + FK + CHECK). On

@@ -77,7 +77,11 @@ ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_h
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
-SPLIT_CASES=(catalog_only manual_schema_changes fk_views quoted_names rls_history)
+SPLIT_CASES=(catalog_only manual_schema_changes fk_views quoted_names rls_history regular_fk_order)
+# Split cases for which a regular-FK CHECK load-order failure is NOT the documented README limitation but a
+# hard failure: regular_fk_order states the 1.3 contract (design B, the referencing side is a post-data
+# constraint trigger, so the -j data phase cannot trip it; tmp/v13_designB_red2_brief.md N2).
+SPLIT_HARD_CHECK_ORDER_CASES=(regular_fk_order)
 SPLIT_RUNS=${SPLIT_RUNS:-20}
 README_PATH="$(cd "$(dirname "$0")/.." && pwd)/README.md"
 
@@ -983,7 +987,8 @@ run_case() {
                 # README: regular foreign keys to temporal tables need a serial or --single-transaction
                 # restore; with -j their CHECK can run before the parent's data is loaded. Only that
                 # documented failure is known; every other failure (deadlock included) is hard.
-                if printf '%s\n' "$svout" | grep -q 'FAILED \[user data load order (CHECK constraint)\]'; then
+                if printf '%s\n' "$svout" | grep -q 'FAILED \[user data load order (CHECK constraint)\]' \
+                   && [[ " ${SPLIT_HARD_CHECK_ORDER_CASES[*]} " != *" $case "* ]]; then
                     sknown=$((sknown+1))
                 else
                     sfail=$((sfail+1))

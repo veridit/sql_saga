@@ -1,0 +1,148 @@
+\set ECHO none
+--- baseline
+ok
+--- part 1: temporal_merge on a parent referenced by a regular child (activity -> 1) and a temporal child (stat -> 2)
+regular child: REPLACE + DELETE_MISSING_TIMELINE coalesces the timeline | accepted
+regular child: resulting timeline | 1 c [2020-01-01,infinity), 2 a [2020-01-01,2022-01-01), 2 b [2022-01-01,infinity), 3 a [2020-01-01,infinity), 4 a [2020-01-01,infinity)
+regular child: check_integrity after the merge | ok
+regular child: REPLACE + DELETE_MISSING_TIMELINE shrinks the timeline | accepted
+regular child: UPSERT splits the timeline | accepted
+regular child: REPLACE + DELETE_MISSING_ENTITIES orphaning it is refused | refused
+regular children: REPLACE + DELETE_MISSING_TIMELINE on legal units 1 and 3 | accepted
+temporal child: REPLACE + DELETE_MISSING_TIMELINE coalesces the timeline | accepted
+temporal child: UPSERT splits the timeline | accepted
+temporal child: REPLACE + DELETE_MISSING_TIMELINE uncovering it is refused | refused
+both children: one merge reshaping legal units 1 and 2 | accepted
+regular child: REPLACE + DELETE_MISSING_TIMELINE replacing every old segment | accepted
+regular child: timeline after replacing every old segment | 1 c [2019-01-01,2020-01-01), 2 a [2020-01-01,2022-01-01), 2 b [2022-01-01,infinity), 3 a [2020-01-01,infinity), 4 a [2020-01-01,infinity)
+--- part 1: referenced-side semantics without temporal_merge (a regular reference needs the key at some time)
+DELETE one of the two timeline rows of legal unit 1 | accepted
+deferred: DELETE every row of legal unit 1, reinsert the key, then check | accepted
+deferred: DELETE every row of legal unit 1 without reinsert, then check | refused
+immediate: DELETE every row of legal unit 1 | refused
+deferred: change the natural key of legal unit 3 and change it back, then check | accepted
+legal_unit unchanged after the rolled back merges | 1 a [2020-01-01,2022-01-01), 1 b [2022-01-01,infinity), 2 a [2020-01-01,2022-01-01), 2 b [2022-01-01,infinity), 3 a [2020-01-01,infinity), 4 a [2020-01-01,infinity)
+--- part 2: the child side is a catalogued constraint trigger
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+contact_ident_type_ident_fkey | contact_ident_type_ident_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of ident_type, ident | for each row | enabled
+CHECK constraints calling a function on activity, contact | 0, 0
+SET CONSTRAINTS <fk_check_constraint> DEFERRED, child before parent | accepted
+--- part 2: drop protection
+DROP TRIGGER on the child-side trigger | P0001: cannot drop trigger "activity_legal_unit_id_check" on table "rft.activity" because it is used in era foreign key "activity_legal_unit_id_fkey"
+ALTER TABLE DROP CONSTRAINT on the child-side trigger | refused
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+--- part 2: a direct ALTER TRIGGER ... RENAME of the child-side trigger is refused
+ALTER TRIGGER RENAME on the child-side trigger | P0001: cannot drop or rename trigger "activity_legal_unit_id_check" on table "rft.activity" because it is used in an era foreign key "activity_legal_unit_id_fkey"
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+after the refused rename: catalog name | activity_legal_unit_id_check
+after the refused rename: missing parent | refused
+after the refused rename: check_integrity | ok
+after the refused rename: disable_temporal_triggers | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | disabled
+after the refused rename: enable_temporal_triggers | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+after the refused rename: drop_foreign_key | ok
+after the refused rename and drop_foreign_key: triggers and constraints on activity | 0, 0
+--- part 2: drop_foreign_key removes the child-side trigger
+drop_foreign_key | ok
+after drop_foreign_key: catalog rows, triggers, CHECKs on activity | 0, 0, 0
+after drop_foreign_key: a missing parent is accepted | accepted
+after drop_foreign_key: check_integrity | ok
+--- part 2: RENAME COLUMN of a child key column
+ALTER TABLE rft.activity RENAME COLUMN legal_unit_id TO lu_id | ok
+ALTER TABLE rft.contact RENAME COLUMN ident TO ident_code | ok
+catalog column_names | activity_legal_unit_id_fkey {lu_id}, contact_ident_type_ident_fkey {ident_type,ident_code}
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of lu_id | for each row | enabled
+contact_ident_type_ident_fkey | contact_ident_type_ident_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of ident_type, ident_code | for each row | enabled
+renamed child: missing parent | refused
+renamed child: existing parent | accepted
+renamed child: update to missing | refused
+renamed composite child: missing parent | refused
+renamed composite child: existing parent | accepted
+renamed child: deleting the referenced parent | refused
+renamed child: check_integrity | ok
+--- part 2: RENAME COLUMN of a referenced column
+ALTER TABLE rft.legal_unit RENAME COLUMN id TO unit_id | ok
+ALTER TABLE rft.legal_unit RENAME COLUMN ident TO ident_code | ok
+renamed parent: missing parent | refused
+renamed parent: existing parent | accepted
+renamed parent: composite missing parent | refused
+renamed parent: composite existing parent | accepted
+renamed parent: deleting the referenced parent | refused
+renamed parent: deleting an unreferenced parent | accepted
+renamed parent: check_integrity | ok
+--- part 2: check_integrity reports a disabled child-side trigger, and its repair works
+disable the child-side trigger | ok
+disabled | P0001: sql_saga: integrity violation for foreign key activity_legal_unit_id_fkey: referencing-side trigger activity_legal_unit_id_check on table rft.activity is disabled; repair with ALTER TABLE rft.activity ENABLE TRIGGER activity_legal_unit_id_check
+disabled, run the advertised repair | ok
+disabled, after the advertised repair | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+disabled, after the advertised repair: missing parent | refused
+--- part 2: check_integrity reports a missing child-side trigger, and its repair works
+drop the child-side trigger as replica | ok
+missing | P0001: sql_saga: integrity violation for foreign key activity_legal_unit_id_fkey: referencing-side trigger activity_legal_unit_id_check on table rft.activity is missing; repair with SELECT sql_saga.drop_foreign_key_by_name('rft.activity', 'activity_legal_unit_id_fkey'); SELECT sql_saga.add_foreign_key('rft.activity', ARRAY['legal_unit_id'], 'rft.legal_unit', ARRAY['id'], foreign_key_name => 'activity_legal_unit_id_fkey')
+missing, run the advertised repair | ok
+missing, after the advertised repair | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+missing, after the advertised repair: missing parent | refused
+--- part 2: names that need quoting (double quote, apostrophe, space, upper case)
+create schema and tables | ok
+add era, key and foreign key | ok
+fk "odd" 'r' | Chi'ld "R"_Par "id'_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of Par "id' | for each row | enabled
+quoted: missing parent | refused
+quoted: existing parent | accepted
+quoted: check_integrity | ok
+quoted: ALTER TRIGGER RENAME on the child-side trigger | P0001: cannot drop or rename trigger "Chi'ld "R"_Par "id'_check" on table "odd "s'ch.Chi'ld "R"" because it is used in an era foreign key "fk "odd" 'r'"
+fk "odd" 'r' | Chi'ld "R"_Par "id'_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of Par "id' | for each row | enabled
+quoted: disable the child-side trigger | ok
+quoted: disabled | P0001: sql_saga: integrity violation for foreign key "fk ""odd"" 'r'": referencing-side trigger "Chi'ld ""R""_Par ""id'_check" on table "odd ""s'ch"."Chi'ld ""R""" is disabled; repair with ALTER TABLE "odd ""s'ch"."Chi'ld ""R""" ENABLE TRIGGER "Chi'ld ""R""_Par ""id'_check"
+quoted: disabled, run the advertised repair | ok
+quoted: disabled, after the advertised repair | ok
+fk "odd" 'r' | Chi'ld "R"_Par "id'_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of Par "id' | for each row | enabled
+quoted: disabled, after the advertised repair: missing parent | refused
+quoted: drop the child-side trigger as replica | ok
+quoted: missing | P0001: sql_saga: integrity violation for foreign key "fk ""odd"" 'r'": referencing-side trigger "Chi'ld ""R""_Par ""id'_check" on table "odd ""s'ch"."Chi'ld ""R""" is missing; repair with SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""R"""', 'fk "odd" ''r'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['Par "id'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['id'], foreign_key_name => 'fk "odd" ''r''')
+quoted: missing, run the advertised repair | ok
+quoted: missing, after the advertised repair | ok
+fk "odd" 'r' | Chi'ld "R"_Par "id'_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of Par "id' | for each row | enabled
+quoted: missing, after the advertised repair: missing parent | refused
+--- part 3: disable_temporal_triggers / enable_temporal_triggers include the child-side trigger
+CALL sql_saga.disable_temporal_triggers('rft.legal_unit', 'rft.activity', 'rft.contact', 'rft.stat') | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | disabled
+contact_ident_type_ident_fkey | contact_ident_type_ident_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of ident_type, ident | for each row | disabled
+disabled: activity accepts a missing parent | accepted
+disabled: contact accepts a missing parent | accepted
+disabled: deleting a referenced parent is accepted | accepted
+CALL sql_saga.enable_temporal_triggers('rft.legal_unit', 'rft.activity', 'rft.contact', 'rft.stat') | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | enabled
+contact_ident_type_ident_fkey | contact_ident_type_ident_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of ident_type, ident | for each row | enabled
+re-enabled: activity refuses a missing parent | refused
+re-enabled: contact refuses a missing parent | refused
+re-enabled: deleting a referenced parent is refused | refused
+re-enabled: check_integrity | ok
+CALL sql_saga.disable_temporal_triggers('rft.activity') | ok
+activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of legal_unit_id | for each row | disabled
+child alone disabled: activity accepts a missing parent | accepted
+child alone disabled: deleting a referenced parent is still refused | refused
+CALL sql_saga.enable_temporal_triggers('rft.activity') | ok
+child alone re-enabled: activity refuses a missing parent | refused
+--- part 4: MATCH FULL (contact) and MATCH SIMPLE (activity)
+FULL: existing key | accepted
+FULL: missing key | refused
+FULL: all NULL | accepted
+FULL: first column NULL | refused
+FULL: second column NULL | refused
+FULL: update to partly NULL | refused
+FULL: update all NULL to partly NULL | refused
+SIMPLE: NULL | accepted
+create contact_simple | ok
+SIMPLE composite: add | ok
+SIMPLE composite: partly NULL | accepted
+SIMPLE composite: missing key | refused
+--- part 4: MATCH PARTIAL is refused at creation
+era on stat_partial | ok
+regular PARTIAL | error 0A000
+temporal PARTIAL | error 0A000
+PARTIAL leaves no catalog row, trigger or constraint | 0, 0, 0
+--- final
+ok
