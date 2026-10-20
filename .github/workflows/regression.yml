@@ -26,7 +26,7 @@ jobs:
         run: echo "/usr/lib/postgresql/18/bin" >> $GITHUB_PATH
 
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           # The 1.2 upgrade matrix builds the released v1.0 and v1.1 tags.
           fetch-depth: 0
