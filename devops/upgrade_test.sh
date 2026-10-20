@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # upgrade_test.sh - prove that databases created with each released sql_saga baseline reach the
-# candidate design with one ALTER EXTENSION command. PostgreSQL selects the direct generated
-# 1.0--1.2 script for the v1.0 path, while the v1.1 path uses 1.1--1.2.
+# candidate design with one ALTER EXTENSION command. Target 1.3 (UPGRADE_NEW_VERSION overrides, e.g. 1.2
+# to re-run the released 1.2 gates): every released baseline older than the target (v1.0, v1.1, v1.2)
+# takes its own direct single-hop script <baseline>--1.3 (tmp/v13_upgrade_integration_plan.md section 0).
 # Design: tmp/design_drop_protection_v12_r4.md section 6 and the retained 1.1 upgrade assertions.
 #
 # What it does
@@ -24,6 +25,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
+#   UPGRADE_NEW_VERSION        default 1.3: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -50,7 +52,36 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=1.2
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.3}
+# Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e"
+version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
+baseline_specs() {  # the released baselines older than NEW_VERSION
+    local spec v
+    for spec in $RELEASED_BASELINES; do
+        v=${spec#*|}; v=${v%%|*}
+        version_lt "$v" "$NEW_VERSION" && echo "$spec"
+    done
+}
+# Every frozen release artifact the candidate package must still ship, byte-identical to versions/.
+frozen_artifacts() {
+    local spec v
+    for spec in $RELEASED_BASELINES; do
+        v=${spec#*|}; v=${v%%|*}
+        version_lt "$v" "$NEW_VERSION" && echo "sql_saga--$v.sql"
+    done
+    echo "sql_saga--1.0--1.1.sql"
+    if version_lt 1.2 "$NEW_VERSION"; then echo "sql_saga--1.0--1.2.sql"; echo "sql_saga--1.1--1.2.sql"; fi
+}
+# The candidate's update scripts: one direct hop from every released baseline.
+update_artifacts() {
+    local spec v
+    for spec in $(baseline_specs); do
+        v=${spec#*|}; v=${v%%|*}
+        [ "$v" = 1.0 ] && [ "$NEW_VERSION" = 1.1 ] && continue
+        echo "sql_saga--$v--$NEW_VERSION.sql"
+    done
+}
 
 # The public entry point first verifies the complete candidate artifact set, then runs the same
 # assertion suite independently from each released baseline. Keeping each path in a child process
@@ -184,7 +215,7 @@ SQL
         exit $?
     fi
 
-    echo "== candidate 1.2 artifacts"
+    echo "== candidate $NEW_VERSION artifacts"
     control_version=""
     if [ -f "$CANDIDATE_DIR/sql_saga.control" ]; then
         control_version=$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CANDIDATE_DIR/sql_saga.control")
@@ -196,7 +227,7 @@ SQL
         artifact_fails=$((artifact_fails + 1))
     fi
 
-    for spec in "v1.0|1.0|9e39fcc" "v1.1|1.1|9c72e66"; do
+    for spec in $(baseline_specs); do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         tag_dir="$ARTIFACT_WORK/$version"
         mkdir -p "$tag_dir"
@@ -225,7 +256,24 @@ SQL
         fi
     done
 
-    for artifact in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.0--$NEW_VERSION.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
+    # Released scripts are immutable: the candidate ships every frozen install and update script exactly
+    # as versions/ holds it (the old-dump procedure installs the dump's own version from the package).
+    for artifact in $(frozen_artifacts); do
+        if [ ! -f "$CANDIDATE_DIR/$artifact" ]; then
+            echo "    FAIL [expected RED] candidate ships frozen $artifact (missing in $CANDIDATE_DIR)"
+            artifact_fails=$((artifact_fails + 1))
+        elif [ ! -f "$RELEASE_ARTIFACT_DIR/$artifact" ]; then
+            echo "    FAIL [prerequisite] versions/$artifact is missing"
+            artifact_fails=$((artifact_fails + 1))
+        elif cmp -s "$CANDIDATE_DIR/$artifact" "$RELEASE_ARTIFACT_DIR/$artifact"; then
+            echo "    ok    candidate frozen $artifact is byte-identical to versions/"
+        else
+            echo "    FAIL [prerequisite] candidate frozen $artifact differs from versions/ (released scripts are immutable)"
+            artifact_fails=$((artifact_fails + 1))
+        fi
+    done
+
+    for artifact in "sql_saga--$NEW_VERSION.sql" $(update_artifacts); do
         if [ -f "$CANDIDATE_DIR/$artifact" ]; then
             echo "    ok    candidate ships $artifact"
         else
@@ -236,14 +284,14 @@ SQL
 
     if [ "$artifact_fails" -ne 0 ]; then
         echo
-        echo "RED. Candidate 1.2 artifact gate has $artifact_fails failure(s); upgrade fixtures were not created."
+        echo "RED. Candidate $NEW_VERSION artifact gate has $artifact_fails failure(s); upgrade fixtures were not created."
         exit 1
     fi
 
     overall=0
     extension_scripts_section
     case $? in 0) ;; 1) overall=1 ;; *) exit 2 ;; esac
-    for spec in "v1.0|1.0|9e39fcc" "v1.1|1.1|9c72e66"; do
+    for spec in $(baseline_specs); do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         echo
         echo "################################################################################"
@@ -1389,7 +1437,10 @@ SQL
 )
     check "INSERT-only regular-FK role inserts a valid reference without parent SELECT" "blind_valid" "$(printf '%s\n' "$out" | grep -m1 -E 'blind_valid|ERROR')"
     r=$(as_role "$db" ${PREFIX}_blind "INSERT INTO rchild VALUES (21, 999)")
-    case "$r" in *"violates check constraint"*) ok "INSERT-only regular-FK role gets the check violation for a missing key" ;; *"permission denied"*) fail "regular FK leaked a parent SELECT requirement: '$r'" ;; *) fail "regular FK missing-key result was not its check violation: '$r'" ;; esac
+    # Adapted for 1.3 (Design B, sql/129): the referencing side is a constraint trigger, so a missing key
+    # raises its foreign key violation; up to 1.2 it was the child CHECK's violation.
+    if [ "$NEW_VERSION" = 1.2 ]; then want_violation="violates check constraint"; else want_violation="violates foreign key constraint"; fi
+    case "$r" in *"$want_violation"*) ok "INSERT-only regular-FK role gets the $want_violation error for a missing key" ;; *"permission denied"*) fail "regular FK leaked a parent SELECT requirement: '$r'" ;; *) fail "regular FK missing-key result was not its check violation: '$r'" ;; esac
 
     check "fixtures cover every unique_key_type enum value" "" \
         "$(q "$db" "SELECT coalesce(string_agg(v::text,',' ORDER BY v::text),'') FROM unnest(enum_range(NULL::sql_saga.unique_key_type)) AS v WHERE NOT EXISTS (SELECT FROM sql_saga.unique_keys AS u WHERE u.key_type=v)")"
@@ -1498,7 +1549,8 @@ else
     fail "no sql_saga.control in $CANDIDATE_DIR"; CANDIDATE_OK=0
     cp "$BASELINE_BUILD/sql_saga.control" "$EXT/"
 fi
-for f in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.0--$NEW_VERSION.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
+for f in "sql_saga--$NEW_VERSION.sql" $(update_artifacts) $(frozen_artifacts); do
+    [ "$f" = "sql_saga--$BASELINE_VERSION.sql" ] && continue
     if [ -f "$CANDIDATE_DIR/$f" ]; then cp "$CANDIDATE_DIR/$f" "$EXT/"; ok "candidate ships $f"
     else fail "candidate ships $f (missing in $CANDIDATE_DIR)"; CANDIDATE_OK=0; fi
 done
@@ -1511,6 +1563,7 @@ if [ -f "$CANDIDATE_DIR/sql_saga--$BASELINE_VERSION.sql" ]; then
 else
     fail "candidate does not ship frozen sql_saga--$BASELINE_VERSION.sql"
 fi
+if [ "$NEW_VERSION" = 1.2 ]; then
 UPD="$EXT/sql_saga--1.1--$NEW_VERSION.sql"
 DIRECT_UPD="$EXT/sql_saga--1.0--$NEW_VERSION.sql"
 if [ -f "$UPD" ]; then
@@ -1561,6 +1614,58 @@ if [ "$BASELINE_VERSION" = 1.0 ]; then
     EXPECTED_PATH='1.0--1.2'
 else
     EXPECTED_PATH='1.1--1.2'
+fi
+else
+# 1.3 and later: one direct single-hop script per released baseline (plan section 0.1). A chained
+# 1.1 -> 1.2 -> 1.3 would run the frozen 1.2 integrity gate before any 1.3 repair.
+# Contract change (coordinator, plan section 0.3): the 1.3 scripts disable sql_saga_rename_following for
+# the duration of the update, so old following code cannot re-sort XOR keys, and put back the recorded
+# state. The 1.2 rule "keeps event triggers on" becomes: no session_replication_role, no other event
+# trigger disabled, the one DISABLE is sql_saga_rename_following's and the state is restored afterwards.
+# executable_migration_sql <file>: the update script's migration statements, with comments, string
+# literals and routine bodies (CREATE FUNCTION/PROCEDURE dollar-quoted text) removed. DO blocks stay:
+# they run during the update. Used by the static safety scans (CASCADE etc.).
+executable_migration_sql() {
+    perl -0777 -ne '
+        my $s = $_; my $o = ""; my $stmt = "";
+        while (length $s) {
+            if ($s =~ s/\A--[^\n]*//) { next }
+            if ($s =~ s/\A\/\*.*?\*\///s) { next }
+            if ($s =~ s/\A\x27(?:[^\x27]|\x27\x27)*\x27//s) { $o .= "\x27\x27"; next }
+            if ($s =~ s/\A(\$[A-Za-z_0-9]*\$)(.*?)\1//s) {
+                my ($tag, $body) = ($1, $2);
+                if ($stmt =~ /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i) { $o .= "$tag$tag" }
+                else { $o .= "$tag$body$tag" }
+                next;
+            }
+            $s =~ s/\A(.)//s; my $c = $1; $o .= $c; $stmt .= $c; $stmt = "" if $c eq ";";
+        }
+        print $o;' "$1"
+}
+DIRECT_UPD="$EXT/sql_saga--$BASELINE_VERSION--$NEW_VERSION.sql"
+if [ -f "$DIRECT_UPD" ]; then
+    body=$(executable_migration_sql "$DIRECT_UPD") || die "scanning $DIRECT_UPD"
+    check "direct $BASELINE_VERSION--$NEW_VERSION header line is the ALTER EXTENSION guard"         "\\echo Use \"ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'\" to load this file. \\quit" "$(head -1 "$DIRECT_UPD")"
+    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
+    if printf '%s\n' "$body" | grep -qiw 'CASCADE'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    if printf '%s\n' "$body" | grep -qi 'session_replication_role'; then fail "direct update script changes session_replication_role"
+    else ok "direct update script leaves session_replication_role alone"; fi
+    other_disable=$(printf '%s\n' "$body" | grep -iE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE' | grep -vc 'sql_saga_rename_following' || true)
+    check "direct update script disables no event trigger other than sql_saga_rename_following" "0" "$other_disable"
+    check "direct update script disables sql_saga_rename_following exactly once" "1" \
+        "$(printf '%s\n' "$body" | grep -ciE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[[:space:]]+sql_saga_rename_following[[:space:]]+DISABLE' || true)"
+    check "direct update script records the rename_following state before disabling it" "t" \
+        "$(awk 'tolower($0) ~ /evtenabled/ && !s { s = NR } tolower($0) ~ /alter event trigger sql_saga_rename_following disable/ && !d { d = NR } END { print (s && d && s < d) ? "t" : "f" }' "$DIRECT_UPD")"
+    check "direct update script ends with the $NEW_VERSION integrity gate" "SELECT sql_saga.check_integrity();" \
+        "$(printf '%s\n' "$body" | grep -v '^[[:space:]]*$' | tail -1)"
+    check "direct update script carries no frozen 1.2 integrity gate before the 1.3 repairs" "1" \
+        "$(grep -Fxc 'SELECT sql_saga.check_integrity();' "$DIRECT_UPD" || true)"
+    if [ "$BASELINE_VERSION" != 1.2 ]; then
+        check "direct $BASELINE_VERSION--$NEW_VERSION script targets no intermediate version" "0" \
+            "$(grep -cE "UPDATE TO ''?1\.[12]''?|extension update version 1\.[12]'" "$DIRECT_UPD" || true)"
+    fi
+fi
+EXPECTED_PATH="$BASELINE_VERSION--$NEW_VERSION"
 fi
 ACTUAL_PATH=$(q postgres "SET extension_control_path = '$EXT_ROOT:\$system'; SELECT path FROM pg_extension_update_paths('sql_saga') WHERE source = '$BASELINE_VERSION' AND target = '$NEW_VERSION';")
 check "PostgreSQL chooses the approved $BASELINE_VERSION to $NEW_VERSION update path" "$EXPECTED_PATH" "$ACTUAL_PATH"
@@ -1652,7 +1757,8 @@ OLD_DIGEST=$(acl_digest "$OLD")
 
 # Anchor generated query functions to the released 1.1 state. The direct v1.1 path captures the
 # pristine fixture. The v1.0 path uses a sibling clone upgraded only through immutable 1.0--1.1.
-if [ "$BASELINE_VERSION" = 1.1 ]; then
+# The v1.2 path anchors to its own pristine released state (a later release cannot step back to 1.1).
+if [ "$BASELINE_VERSION" != 1.0 ]; then
     QUERY_ANCHOR="$OLD"
 else
     QUERY_ANCHOR=${PREFIX}_query_anchor_11
@@ -1670,8 +1776,8 @@ else
     CREATED_DBS+=("$HOP_REFUSAL")
     psql -X -q -d postgres -c "ALTER DATABASE $HOP_REFUSAL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $HOP_REFUSAL"
     out=$(q "$HOP_REFUSAL" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
-    check "explicit 1.0 to 1.1 hop with the 1.2 libraries is refused by the frozen native guard" \
-        "ERROR:  sql_saga: native library version 1.2 does not match extension update version 1.1" "$out"
+    check "explicit 1.0 to 1.1 hop with the $NEW_VERSION libraries is refused by the frozen native guard" \
+        "ERROR:  sql_saga: native library version $NEW_VERSION does not match extension update version 1.1" "$out"
     check "refused explicit intermediate hop leaves extversion 1.0" "1.0" \
         "$(q "$HOP_REFUSAL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 fi
@@ -1900,7 +2006,7 @@ RESET session_replication_role;" \
     'sql_saga: integrity violation for era "valid" on table "public.dmg": named check or synchronization object is noncanonical; repair with drop_era and add_era' \
     "SELECT sql_saga.drop_era('dmg', 'valid');
 SELECT sql_saga.add_era('dmg', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');"
-if [ "$BASELINE_VERSION" = 1.1 ]; then
+if [ "$BASELINE_VERSION" != 1.0 ]; then
     damage_case volatile_as_of \
         "ALTER FUNCTION sv__as_of(timestamptz) VOLATILE;" \
         'sql_saga: integrity violation for system-versioned table "public.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views' \
@@ -1961,13 +2067,13 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
     asv_case revoke_public \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;" \
         "$ASV_ERR" \
-        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
     asv_case grant_option \
         "GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "$ASV_ERR" \
-        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "PUBLIC,$ASV_OWNER,${PREFIX}_asv*" \
         "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;"
     # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
@@ -1976,7 +2082,7 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
         "$ASV_ERR" \
-        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
     # Delegation plus changed defaults (G4 R2.1): A holds EXECUTE WITH GRANT OPTION and granted it to B;
@@ -1994,7 +2100,7 @@ GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B;
 RESET ROLE;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
         "$ASV_ERR" \
-        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
         "$ASV_A*,PUBLIC,$ASV_OWNER,$ASV_B" \
         "GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_A WITH GRANT OPTION;|GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_B;"
     # Unmodified hardened installation ({owner=X} from default privileges): no refusal, and the new
@@ -2012,6 +2118,9 @@ ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
 fi
 
 # ---------------------------------------------------------------------------------------------
+if [ "$BASELINE_VERSION" = 1.2 ]; then
+    echo; echo "== system time era NOTICE patch is fail-closed: not applicable (the 1.2 body is already patched; the 1.1 and 1.0 paths run it)"
+else
 section "system time era NOTICE patch is fail-closed" "expected RED"
 # ---------------------------------------------------------------------------------------------
 # The 1.1--1.2 script patches the released __internal_add_system_time_era body textually
@@ -2078,6 +2187,7 @@ case "$out" in
 esac
 check "NOTICE patch probes roll back: released body untouched" "$era_before" \
     "$(q "$QUERY_ANCHOR" "SELECT md5(pg_catalog.pg_get_functiondef($ERA_FN))")"
+fi
 
 # ---------------------------------------------------------------------------------------------
 section "shared regular-FK helper (two regular FKs on one key)" "expected RED"
@@ -2124,7 +2234,10 @@ check "shared helper: healthy $BASELINE_VERSION database updates without refusal
     "$(q "$SHARED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "shared helper: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$SHARED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "shared helper: check_integrity passes after the update" "" "$(q "$SHARED" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
-check "shared helper: after the update two helpers still serve four regular FKs" "2|4" \
+# Adapted for 1.3 (Design B): the conversion drops every helper and clears fk_helper_function; up to 1.2
+# the two shared helpers survive the update.
+if [ "$NEW_VERSION" = 1.2 ]; then SHARED_AFTER="2|4"; else SHARED_AFTER="0|4"; fi
+check "shared helper: after the update the expected helpers serve four regular FKs" "$SHARED_AFTER" \
     "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
 # Valid references are still accepted by every FK (rolled back).
 check "shared helper: valid inserts into c1, c2, d1, d2 succeed after the update" "" \
@@ -2135,8 +2248,10 @@ for probe in "c1|INSERT INTO c1 VALUES (9, 99)|c1_par_id_check" \
              "d1|INSERT INTO d1 VALUES (9, 9, 'q')|d1_a_b_check" \
              "d2|INSERT INTO d2 VALUES (9, 9, 'q')|d2_a_b_check"; do
     IFS='|' read -r child stmt con <<<"$probe"
+    if [ "$NEW_VERSION" = 1.2 ]; then want="ERROR:  new row for relation \"$child\" violates check constraint \"$con\""
+    else want="ERROR:  insert or update on table \"public.$child\" violates foreign key constraint \"${con%_check}_fkey\""; fi
     check "shared helper: $child rejects a missing parent after the update" \
-        "ERROR:  new row for relation \"$child\" violates check constraint \"$con\"" \
+        "$want" \
         "$(q "$SHARED" "BEGIN; $stmt; ROLLBACK")"
 done
 # Referenced side: delete the parent row referenced only by that FK, each in its own session.
@@ -2475,14 +2590,15 @@ RFK_CHILD_SIDE_SQL="SELECT string_agg(format('%s:%s=%s/%s/%s/%s/%s', fk.foreign_
     CASE WHEN t.tgname = fk.fk_check_constraint THEN 'catalogued' ELSE 'uncatalogued' END,
     CASE WHEN c.contype = 't' THEN 'constraint trigger' ELSE 'plain trigger' END,
     CASE WHEN c.condeferrable AND NOT c.condeferred THEN 'deferrable initially immediate' ELSE 'other deferral' END,
-    CASE WHEN t.tgtype = 21 THEN 'after insert or update of ' || (SELECT string_agg(a.attname, ',' ORDER BY u.o) FROM unnest(t.tgattr::int2[]) WITH ORDINALITY AS u (n, o)
+    CASE WHEN t.tgtype = 21 AND t.tgattr::int2[] = '{}' THEN 'after insert or update'
+         WHEN t.tgtype = 21 THEN 'after insert or update of ' || (SELECT string_agg(a.attname, ',' ORDER BY u.o) FROM unnest(t.tgattr::int2[]) WITH ORDINALITY AS u (n, o)
                                   JOIN pg_attribute AS a ON (a.attrelid, a.attnum) = (t.tgrelid, u.n)) ELSE 'tgtype ' || t.tgtype END,
     CASE t.tgenabled WHEN 'O' THEN 'enabled' ELSE 'not enabled' END), ' ' ORDER BY fk.foreign_key_name, t.tgname)
 FROM sql_saga.foreign_keys AS fk
 JOIN pg_trigger AS t ON t.tgrelid = format('%I.%I', fk.table_schema, fk.table_name)::regclass AND NOT t.tgisinternal
 LEFT JOIN pg_constraint AS c ON c.oid = t.tgconstraint
 WHERE fk.type = 'regular_to_temporal'"
-RFK_CHILD_SIDE="activity_note_legal_unit_id_fkey:activity_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of legal_unit_id/enabled contact_note_a_type_b_code_fkey:contact_note_a_type_b_code_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of a_type,b_code/enabled unit_note_legal_unit_id_fkey:unit_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of legal_unit_id/enabled"
+RFK_CHILD_SIDE="activity_note_legal_unit_id_fkey:activity_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update/enabled contact_note_a_type_b_code_fkey:contact_note_a_type_b_code_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update/enabled unit_note_legal_unit_id_fkey:unit_note_legal_unit_id_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update/enabled"
 # CHECK constraints on the regular FK children that call a function outside pg_catalog.
 RFK_HELPER_CHECKS_SQL="SELECT count(*) FROM pg_constraint AS c
 JOIN pg_depend AS d ON (d.classid, d.objid, d.refclassid) = ('pg_constraint'::regclass, c.oid, 'pg_proc'::regclass)
@@ -2626,7 +2742,7 @@ check "quoted regular FK orphan: resolving the orphans on $BASELINE_VERSION succ
 check "quoted regular FK orphan: update succeeds once the orphans are resolved" "" "$(q "$RFK_QUOTED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "quoted regular FK orphan: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$RFK_QUOTED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "quoted regular FK orphan: the child has one catalogued constraint trigger after the update" \
-    "fk \"odd\" 'r':Chi'ld \"R\"_Par \"id'_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update of Par \"id'/enabled" \
+    "fk \"odd\" 'r':Chi'ld \"R\"_Par \"id'_check=catalogued/constraint trigger/deferrable initially immediate/after insert or update/enabled" \
     "$(q "$RFK_QUOTED" "$RFK_CHILD_SIDE_SQL")"
 check "quoted regular FK orphan: check_integrity passes after the update" "" "$(q "$RFK_QUOTED" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
 check "quoted regular FK orphan: the child refuses a missing key after the update" "refused" "$(rfk_probe "$RFK_QUOTED" "INSERT INTO $RFK_QUOTED_CHILD VALUES (90, 99)")"
@@ -2721,6 +2837,223 @@ check "view drift: ADD COLUMN after the update keeps check_integrity passing" ""
 check "view drift: ADD COLUMN after the update is exposed by every view of the table" \
     "location__current_valid:- location__for_portion_of_valid:- stat_for_unit__for_portion_of_valid:-" "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
 
+# =============================================================================================
+# 1.3 release-gate fixtures (tmp/v13_upgrade_harness_brief.md). Each builds its own database on the
+# released baseline binaries, then "restarts" onto the candidate and runs the update.
+# =============================================================================================
+v13_db() {  # v13_db <db> <setup sql>: a baseline database with btree_gist + sql_saga <baseline>
+    local out
+    new_db "$1" "$EXT_ROOT" "$OLD_LIB"
+    out=$(printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n%s\n" "$BASELINE_VERSION" "$2" | sql "$1")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "fixture $1: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    return 0
+}
+v13_restart() { psql -X -q -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"; }
+v13_version() { q "$1" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'"; }
+v13_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
+
+# ---------------------------------------------------------------------------------------------
+section "correctly paired FKs created before the XOR sort survive the sort and the update" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# Plan sections 0.4/0.5 (a): FKs created while the catalog still held the constraint order are paired
+# correctly; a later unrelated DDL (and, on 1.0, a GRANT: (b)) sorts the catalog. The update must not refuse
+# them as mispaired, must not re-pair them, and must leave the intended pairs enforcing.
+xor_presort_case() {  # xor_presort_case <label> <sorting statement>
+    local label=$1 sorter=$2 db=${PREFIX}_xorpre_$1 got
+    v13_db "$db" "CREATE TABLE unit_role (id int NOT NULL, kind text NOT NULL, legal_unit_id int, establishment_id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('unit_role', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'unit_role', key_type => 'natural', column_names => ARRAY['kind', 'legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'unit_role_kind_valid');
+INSERT INTO unit_role VALUES (1, 'a', 30, 40, '[2020-01-01,infinity)'), (2, 'b', 31, 41, '[2020-01-01,infinity)');
+CREATE TABLE role_ref (id int PRIMARY KEY, r_kind text, r_lu int, r_est int);
+CREATE TABLE role_tref (id int, r_kind text, r_lu int, r_est int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('role_tref', 'valid_range', 'valid');
+SELECT sql_saga.add_foreign_key('role_ref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_ref_fkey');
+SELECT sql_saga.add_foreign_key('role_tref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_tref_fkey');
+INSERT INTO role_ref VALUES (1, 'a', 30, 40);
+INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');
+$sorter"
+    FAILURE_CLASS=prerequisite
+    check "$label: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,kind,legal_unit_id}" \
+        "$(q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
+    check "$label: before the update the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
+    check "$label: before the update the regular FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
+    check "$label: before the update the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
+    FAILURE_CLASS="expected RED"
+    v13_restart "$db"
+    got=$(q "$db" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')
+    check "$label: the update succeeds (no mispairing refusal for correctly paired FKs)" "" "$got"
+    check "$label: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$db")"
+    check "$label: the XOR key catalog is in constraint order after the update" "{kind,legal_unit_id,establishment_id}" \
+        "$(q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
+    check "$label: the native temporal FK still references the constraint order" \
+        "FOREIGN KEY (r_kind, r_lu, r_est, PERIOD valid_range) REFERENCES unit_role(kind, legal_unit_id, establishment_id, PERIOD valid_range) DEFERRABLE" \
+        "$(q "$db" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'role_tref'::regclass AND conname = 'role_tref_fkey'")"
+    check "$label: check_integrity passes after the update" "" "$(q "$db" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+    check "$label: the regular FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
+    check "$label: the regular FK refuses the crossed key after the update" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
+    check "$label: the temporal FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
+    check "$label: the temporal FK refuses the crossed key after the update" "refused" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 40, 30, '[2021-01-01,2022-01-01)')")"
+    check "$label: deleting a referenced parent is refused after the update" "refused" "$(v13_probe "$db" "DELETE FROM unit_role WHERE id = 1")"
+    check "$label: unrelated DDL after the update keeps the constraint order" "{kind,legal_unit_id,establishment_id}" \
+        "$(q "$db" "ALTER TABLE unit_role ADD COLUMN later text" | grep '^ERROR'; q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
+}
+xor_presort_case alter "ALTER TABLE unit_role ADD COLUMN note text;"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    # (b) 1.0's rename_following also fires (and sorts) on GRANT/REVOKE.
+    new_role "${PREFIX}_xorgrant"
+    xor_presort_case grant10 "GRANT SELECT ON unit_role TO ${PREFIX}_xorgrant;"
+fi
+
+# ---------------------------------------------------------------------------------------------
+section "own-script stale view repair keeps the managed view's OID, grants, comment and user dependents" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# Plan section 4 (c). The managed for_portion_of view lags an ADD COLUMN (1.1 and 1.2 do not follow it) and a
+# user view depends on it. The 1.3 update repairs it in place: same OID, user view untouched, grants and
+# comment kept, not left an extension member, no pg_init_privs. On 1.0 the frozen reconciler rebuilds every
+# view: a clear refusal naming the dependent view, atomically, is accepted there.
+new_role "${PREFIX}_viewer"
+SV=${PREFIX}_staleview
+v13_db "$SV" "CREATE TABLE sv_base (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('sv_base', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('sv_base', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'sv_base_id_valid');
+SELECT sql_saga.add_for_portion_of_view('sv_base');
+INSERT INTO sv_base (id, name, valid_from, valid_until) VALUES (1, 'one', '2024-01-01', 'infinity');
+GRANT SELECT ON sv_base__for_portion_of_valid TO ${PREFIX}_viewer;
+COMMENT ON VIEW sv_base__for_portion_of_valid IS 'site comment';
+CREATE VIEW user_names AS SELECT id, name FROM sv_base__for_portion_of_valid;
+GRANT SELECT ON user_names TO ${PREFIX}_viewer;
+ALTER TABLE sv_base ADD COLUMN note text;"
+SV_VIEW_SQL="SELECT c.oid || '|' || coalesce(c.relacl::text, '') || '|' || coalesce(obj_description(c.oid, 'pg_class'), '') FROM pg_class AS c WHERE c.oid = 'sv_base__for_portion_of_valid'::regclass"
+SV_USER_SQL="SELECT 'user_names'::regclass::oid || '|' || pg_get_viewdef('user_names'::regclass) || '|' || coalesce((SELECT relacl::text FROM pg_class WHERE oid = 'user_names'::regclass), '')"
+SV_COLS_SQL="SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'sv_base__for_portion_of_valid'::regclass AND attnum > 0 AND NOT attisdropped"
+SV_MEMBER_SQL="SELECT (SELECT count(*) FROM pg_depend WHERE deptype = 'e' AND ((classid = 'pg_class'::regclass AND objid IN ('sv_base__for_portion_of_valid'::regclass, 'user_names'::regclass)) OR (classid = 'pg_type'::regclass AND objid IN (SELECT reltype FROM pg_class WHERE oid IN ('sv_base__for_portion_of_valid'::regclass, 'user_names'::regclass))))) || '|' || (SELECT count(*) FROM pg_init_privs WHERE classoid = 'pg_class'::regclass AND objoid IN ('sv_base__for_portion_of_valid'::regclass, 'user_names'::regclass))"
+FAILURE_CLASS=prerequisite
+check "stale view: the $BASELINE_VERSION managed view lags the added column" "id,name,valid_range,valid_from,valid_until" "$(q "$SV" "$SV_COLS_SQL")"
+sv_view_before=$(q "$SV" "$SV_VIEW_SQL"); sv_user_before=$(q "$SV" "$SV_USER_SQL")
+sv_state_before="$(ext_snapshot "$SV" | md5)$(dump_schema "$SV" | md5)"
+FAILURE_CLASS="expected RED"
+v13_restart "$SV"
+out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$SV" 2>&1)
+sv_err=$(printf '%s\n' "$out" | grep -m1 '^ERROR')
+if [ "$BASELINE_VERSION" = 1.0 ] && [ -n "$sv_err" ]; then
+    case "$sv_err" in
+        *user_names*) ok "stale view (1.0): the update refuses naming the dependent user view" ;;
+        *) fail "stale view (1.0): the update refused, but not naming the dependent view user_names: $sv_err" ;;
+    esac
+    check "stale view (1.0): refusal leaves extversion 1.0" "1.0" "$(v13_version "$SV")"
+    check "stale view (1.0): refusal is atomic" "$sv_state_before" "$(ext_snapshot "$SV" | md5)$(dump_schema "$SV" | md5)"
+else
+    check "stale view: the update succeeds" "" "$sv_err"
+    check "stale view: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$SV")"
+    check "stale view: the managed view exposes the added column" "id,name,valid_range,valid_from,valid_until,note" "$(q "$SV" "$SV_COLS_SQL")"
+    check "stale view: the managed view keeps its OID, grants and comment" "$sv_view_before" "$(q "$SV" "$SV_VIEW_SQL")"
+    check "stale view: the user view keeps its OID, definition and grants" "$sv_user_before" "$(q "$SV" "$SV_USER_SQL")"
+    check "stale view: neither view (nor its row type) is an extension member, no pg_init_privs rows" "0|0" "$(q "$SV" "$SV_MEMBER_SQL")"
+    check "stale view: check_integrity passes after the update" "" "$(q "$SV" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+    check "stale view: no pending rebuild row is left" "0" \
+        "$(q "$SV" "SELECT CASE WHEN to_regclass('sql_saga.__internal_updatable_view_pending') IS NULL THEN 'missing' ELSE (SELECT count(*)::text FROM sql_saga.__internal_updatable_view_pending) END")"
+    check "stale view: pg_dump emits both views" "2" \
+        "$(dump_schema "$SV" | grep -cE '^CREATE VIEW public\.(sv_base__for_portion_of_valid|user_names) ')"
+    check "stale view: the viewer reads through the user view" "1" "$(as_role "$SV" ${PREFIX}_viewer "SELECT count(*) FROM user_names")"
+fi
+
+# ---------------------------------------------------------------------------------------------
+section "sql_saga_rename_following state: ALWAYS and REPLICA are kept, DISABLED is refused atomically" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# Plan section 2 step 4 (e). The update disables rename_following for its own duration and must put back the
+# recorded state exactly; a disabled trigger is never enabled behind the user's back: the final integrity gate
+# refuses with check_integrity's repair, and nothing changes.
+for state in ALWAYS REPLICA DISABLE; do
+    case $state in ALWAYS) code=A ;; REPLICA) code=R ;; DISABLE) code=D ;; esac
+    db=${PREFIX}_evt_$code
+    if [ $state = DISABLE ]; then stmt="ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;"; else stmt="ALTER EVENT TRIGGER sql_saga_rename_following ENABLE $state;"; fi
+    v13_db "$db" "CREATE TABLE evt_t (id int NOT NULL, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('evt_t', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('evt_t', ARRAY['id']::name[], 'valid', key_type => 'primary');
+$stmt"
+    EVT_SQL="SELECT evtenabled FROM pg_event_trigger WHERE evtname = 'sql_saga_rename_following'"
+    FAILURE_CLASS=prerequisite
+    check "event trigger $state: the $BASELINE_VERSION fixture holds evtenabled $code" "$code" "$(q "$db" "$EVT_SQL")"
+    FAILURE_CLASS="expected RED"
+    v13_restart "$db"
+    before="$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
+    out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$db" 2>&1)
+    if [ $state = DISABLE ]; then
+        check "event trigger DISABLED: the final gate refuses with check_integrity's repair" \
+            'ERROR:  sql_saga: integrity violation for event trigger "sql_saga_rename_following": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_rename_following ENABLE' \
+            "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+        check "event trigger DISABLED: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(v13_version "$db")"
+        check "event trigger DISABLED: still disabled (never silently enabled)" "D" "$(q "$db" "$EVT_SQL")"
+        check "event trigger DISABLED: refusal is atomic" "$before" "$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
+        q "$db" "ALTER EVENT TRIGGER sql_saga_rename_following ENABLE" >/dev/null
+        check "event trigger DISABLED: the update succeeds after the named repair" "" "$(q "$db" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+        check "event trigger DISABLED: repaired state is O after the update" "O" "$(q "$db" "$EVT_SQL")"
+    else
+        check "event trigger $state: the update succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+        check "event trigger $state: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$db")"
+        check "event trigger $state: evtenabled $code is restored" "$code" "$(q "$db" "$EVT_SQL")"
+        check "event trigger $state: check_integrity passes after the update" "" "$(q "$db" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+    fi
+done
+
+# ---------------------------------------------------------------------------------------------
+section "custom ACL on an unchanged public routine survives; hardened private helpers equal a fresh install" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# No global GRANT replay: a site that revoked PUBLIC from for_portion_of_trigger() (same signature in every
+# release) and granted one role keeps exactly that. And on a hardened database (default privileges revoke
+# PUBLIC) the upgraded routine ACL set, private helpers included, equals a fresh hardened install.
+new_role "${PREFIX}_fpo"
+FPO="sql_saga.for_portion_of_trigger()"
+ROUTINE_ACL_SQL="SELECT string_agg(p.oid::regprocedure::text || '=' || coalesce((SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' WHEN a.grantee = p.proowner THEN 'owner' ELSE a.grantee::regrole::text END || CASE WHEN a.is_grantable THEN '*' ELSE '' END, ',' ORDER BY 1)
+    FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE a.privilege_type = 'EXECUTE'), ''), E'\n' ORDER BY p.oid::regprocedure::text COLLATE \"C\")
+FROM pg_proc AS p JOIN pg_depend AS d ON (d.classid, d.objid, d.deptype) = ('pg_proc'::regclass, p.oid, 'e')
+WHERE d.refobjid = (SELECT oid FROM pg_extension WHERE extname = 'sql_saga')"
+ACL_DB=${PREFIX}_acl_fpo
+v13_db "$ACL_DB" "REVOKE EXECUTE ON FUNCTION $FPO FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION $FPO TO ${PREFIX}_fpo;"
+fpo_before=$(asv_acl "$ACL_DB" "$FPO")
+v13_restart "$ACL_DB"
+check "custom routine ACL: the update succeeds" "" "$(q "$ACL_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "custom routine ACL: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$ACL_DB")"
+check "custom routine ACL: for_portion_of_trigger keeps exactly the site's grants (no PUBLIC replay)" "$fpo_before" "$(asv_acl "$ACL_DB" "$FPO")"
+check "custom routine ACL: pg_dump still repeats the site's change" "1" \
+    "$(dump_schema "$ACL_DB" | grep -c "^REVOKE ALL ON FUNCTION sql_saga.for_portion_of_trigger() FROM PUBLIC;")"
+HARDU=${PREFIX}_hard_up
+new_db "$HARDU" "$EXT_ROOT" "$OLD_LIB"
+out=$(printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$HARDU")
+printf '%s\n' "$out" | grep -q '^ERROR' && die "hardened upgrade fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+v13_restart "$HARDU"
+check "hardened routines: the update succeeds" "" "$(q "$HARDU" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+HARDF=${PREFIX}_hard_fresh
+new_db "$HARDF" "$EXT_ROOT"
+out=$(printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$NEW_VERSION" | sql "$HARDF")
+if printf '%s\n' "$out" | grep -q '^ERROR'; then
+    fail "hardened routines: fresh hardened $NEW_VERSION install failed: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+else
+    q "$HARDF" "$ROUTINE_ACL_SQL" >"$WORK/hard_fresh.acl"; q "$HARDU" "$ROUTINE_ACL_SQL" >"$WORK/hard_up.acl"
+    if diff -u "$WORK/hard_fresh.acl" "$WORK/hard_up.acl" >"$WORK/hard_acl.diff"; then ok "hardened routines: every sql_saga routine's EXECUTE set equals a fresh hardened install"
+    else fail "hardened routines: EXECUTE sets differ from a fresh hardened install ($(grep -c '^[-+][^-+]' "$WORK/hard_acl.diff") lines, $WORK/hard_acl.diff)"; fi
+    # Explicit deny, by name: every private __internal routine executable by PUBLIC after the update is
+    # one a fresh hardened install also opens deliberately (none new), and every private routine new in
+    # $NEW_VERSION (absent from the baseline) is closed to PUBLIC.
+    grep '^sql_saga\.__internal' "$WORK/hard_fresh.acl" | grep -E '=([^=]*,)?PUBLIC\*?(,|$)' | sed 's/=.*//' | LC_ALL=C sort >"$WORK/hard_fresh.public"
+    grep '^sql_saga\.__internal' "$WORK/hard_up.acl" | grep -E '=([^=]*,)?PUBLIC\*?(,|$)' | sed 's/=.*//' | LC_ALL=C sort >"$WORK/hard_up.public"
+    check "hardened routines: PUBLIC-executable private helpers after the update are exactly a fresh install's (by name)" \
+        "$(paste -sd' ' - <"$WORK/hard_fresh.public")" "$(paste -sd' ' - <"$WORK/hard_up.public")"
+    HARDB=${PREFIX}_hard_base
+    new_db "$HARDB" "$EXT_ROOT" "$OLD_LIB"
+    printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$HARDB" >/dev/null
+    q "$HARDB" "$ROUTINE_ACL_SQL" | sed 's/=.*//' | LC_ALL=C sort >"$WORK/hard_base.names"
+    # The listed new 1.3 private pairing helpers: they must exist and be closed to PUBLIC (grant option included).
+    for helper in "sql_saga.__internal_foreign_key_mispairing(name)" "sql_saga.__internal_foreign_key_mispairing_report(name)"; do
+        check "hardened routines: listed private helper $helper exists after the update and denies PUBLIC" "exists|denied" \
+            "$(q "$HARDU" "SELECT CASE WHEN to_regprocedure('$helper') IS NULL THEN 'missing' ELSE 'exists|' || CASE WHEN EXISTS (SELECT FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = to_regprocedure('$helper') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') THEN 'public' ELSE 'denied' END END")"
+    done
+    check "hardened routines: no private helper new in $NEW_VERSION is executable by PUBLIC" "" \
+        "$(grep '^sql_saga\.__internal' "$WORK/hard_up.acl" | grep -E '=([^=]*,)?PUBLIC\*?(,|$)' | sed 's/=.*//' | LC_ALL=C sort | LC_ALL=C comm -23 - "$WORK/hard_base.names" | paste -sd' ' -)"
+fi
+
 # ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2743,7 +3076,7 @@ FAILURE_CLASS="not meaningful (dependent)"
 check "extversion after update" "$NEW_VERSION" "$(q "$OLD" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 
 # ---------------------------------------------------------------------------------------------
-section "1.2 structure after upgrade" "not meaningful (dependent)"
+section "$NEW_VERSION structure after upgrade" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
@@ -2754,7 +3087,8 @@ if [ "$BASELINE_VERSION" = 1.0 ]; then
     if [ "$(acl_digest "$OLD")" != "$OLD_DIGEST" ]; then ok "v1.0 derived ACLs were normalized (ACL digest changed)"
     else fail "v1.0 ACL digest unchanged: mirrored and direct derived grants survive"; fi
 else
-    check "pristine v1.1 ACL digest is preserved by the 1.2 update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
+    # Source handling: only the 1.0 path normalizes derived grants; 1.1 and 1.2 sources keep every ACL.
+    check "pristine v$BASELINE_VERSION ACL digest is preserved by the $NEW_VERSION update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
 fi
 check "direct derived grants to saga_up_none were removed" "f|f|f" \
     "$(q "$OLD" "SELECT EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'sv_with_history'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'sv_with_history'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT proacl FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure), acldefault('f', (SELECT proowner FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'EXECUTE')" | sed 's/true/t/g; s/false/f/g')"
@@ -2767,7 +3101,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------
-section "1.2 behaviour after upgrade" "not meaningful (dependent)"
+section "$NEW_VERSION behaviour after upgrade" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 behaviour "$OLD"
 

@@ -43,8 +43,8 @@
 # `parallel_known_failure` case still runs `-j 4` restores and reports their outcome, but does not
 # fail the run; if they all succeed (PostgreSQL fixed), the summary says so.
 #
-# Old-dump cases (old_dump_10, old_dump_11; tmp/v13_olddump_design.md): a database made by the RELEASED
-# v1.0 / v1.1 build (tag built in a scratch dir, with its own C and native libraries, selected per
+# Old-dump cases (old_dump_10, old_dump_11, old_dump_12; tmp/v13_olddump_design.md): a database made by the RELEASED
+# v1.0 / v1.1 / v1.2 build (tag built in a scratch dir, with its own C and native libraries, selected per
 # database through extension_control_path / dynamic_library_path) is dumped and restored into the
 # candidate package with the procedure documented in doc/upgrade.md between "<!-- BEGIN old-dump-restore -->"
 # and "<!-- END old-dump-restore -->": the ```bash block there is extracted at run time and executed in
@@ -52,7 +52,10 @@
 # the destination must be at the candidate's default version, check_integrity() must pass, every user
 # row and history row must equal the source, and the restored database must equal an in-place
 # `ALTER EXTENSION sql_saga UPDATE` of the source (schema dump, history policy tokens normalized).
-# OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, <dir>/v1.1) instead of building.
+# With a 1.3+ candidate, a plain pg_restore of an old dump (no preinstalled old version) must fail at the era
+# data with the exact catalog_format CHECK ("restore old sql_saga dumps per doc/upgrade.md"), not a later
+# incidental error, and a --single-transaction attempt must leave no extension and no rows behind.
+# OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, <dir>/v1.1, <dir>/v1.2) instead of building.
 #
 # Usage:   devops/restore_roundtrip.sh [case ...]      (default: all cases)
 #          make test-restore
@@ -73,7 +76,7 @@ KNOWN=()
 SKIPPED=()
 SPLIT_RESULTS=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure old_dump_10 old_dump_11)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure old_dump_10 old_dump_11 old_dump_12)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -578,7 +581,7 @@ SQL
 # ---------------------------------------------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OLD_DUMP_DOC_PATH=${OLD_DUMP_DOC_PATH:-$REPO_ROOT/doc/upgrade.md}
-OLD_DUMP_TAGS="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66"
+OLD_DUMP_TAGS="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e"
 
 # The doc's old-dump procedure: the ```bash block between the old-dump-restore markers, fences excluded.
 old_dump_block() {
@@ -686,9 +689,12 @@ old_dump_normalized_dump() {
         | sed -E 's/sql_saga_[0-9a-f]{16}/sql_saga_<hash>/g; s/sql_saga_history_(reader|base_select)_[0-9a-zA-Z]+/sql_saga_history_\1_<token>/g'
 }
 
+# old_dump_strict <candidate version>: 1.3 and later refuse an old dump loaded without its own version.
+old_dump_strict() { case "$1" in 1.0|1.1|1.2|'') return 1 ;; *) return 0 ;; esac; }
+
 run_old_dump_case() {
     local case=$1 spec tag version commit rest root src ref dst dump block dir out ok=1 v want=''
-    case "$case" in old_dump_10) want=1.0 ;; old_dump_11) want=1.1 ;; esac
+    case "$case" in old_dump_10) want=1.0 ;; old_dump_11) want=1.1 ;; old_dump_12) want=1.2 ;; esac
     for spec in $OLD_DUMP_TAGS; do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         [ "$version" = "$want" ] && break
@@ -720,10 +726,38 @@ run_old_dump_case() {
     fi
     local candidate_version; candidate_version=$(psql -X -At -d "$ref" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")
 
-    # Informational: a plain pg_restore (what doc/upgrade.md 1.2 implies) into the candidate package.
+    # A plain pg_restore (no preinstalled old version) into the candidate package. Up to a 1.2 candidate this
+    # is informational. From 1.3 the dump's era rows (no catalog_format) must be refused by the named
+    # catalog_format CHECK, first and exactly, and the single transaction leaves nothing behind.
     new_db "$dst" || { FAILED+=("$case (createdb)"); return; }
     if pg_restore --exit-on-error --single-transaction -d "$dst" "$dump" >"$WORK/$case.plain.log" 2>&1; then
-        KNOWN+=("$case: plain pg_restore succeeded as sql_saga $(psql -X -At -d "$dst" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'") without running any update script")
+        if old_dump_strict "$candidate_version"; then
+            echo "    FAIL: plain pg_restore of a $version dump into the $candidate_version package succeeded (must be refused by catalog_format)"; ok=0
+        else
+            KNOWN+=("$case: plain pg_restore succeeded as sql_saga $(psql -X -At -d "$dst" -c "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'") without running any update script")
+        fi
+    elif old_dump_strict "$candidate_version"; then
+        local first_err; first_err=$(grep -m1 -E 'ERROR' "$WORK/$case.plain.log" | sed 's/^.*ERROR: *//')
+        case "$first_err" in
+            'new row for relation "era" violates check constraint "restore old sql_saga dumps per doc/upgrade.md"'*)
+                echo "    plain restore refused first by the catalog_format constraint: ok" ;;
+            *) echo "    FAIL: plain restore refused, but the first error is not the catalog_format constraint: $first_err"; ok=0 ;;
+        esac
+        out=$(psql -X -At -d "$dst" -c "SELECT (SELECT count(*) FROM pg_extension WHERE extname = 'sql_saga') || '|' || (SELECT count(*) FROM pg_namespace WHERE nspname = 'app')" 2>&1)
+        if [ "$out" = "0|0" ]; then echo "    refused single-transaction restore left no extension, schema or rows: ok"
+        else echo "    FAIL: refused single-transaction restore left state behind (extension|app schema: $out)"; ok=0; fi
+        # Serial restore: the same named refusal comes first (no transaction to roll back, version state named only).
+        dropdb --if-exists "$dst" >>"$LOG" 2>&1; new_db "$dst" || { FAILED+=("$case (createdb)"); return; }
+        pg_restore --exit-on-error -d "$dst" "$dump" >"$WORK/$case.plain_serial.log" 2>&1
+        first_err=$(grep -m1 -E 'ERROR' "$WORK/$case.plain_serial.log" | sed 's/^.*ERROR: *//')
+        case "$first_err" in
+            'new row for relation "era" violates check constraint "restore old sql_saga dumps per doc/upgrade.md"'*)
+                echo "    serial plain restore refused first by the catalog_format constraint: ok" ;;
+            *) echo "    FAIL: serial plain restore: first error is not the catalog_format constraint: $first_err"; ok=0 ;;
+        esac
+        out=$(psql -X -At -d "$dst" -c "SELECT (SELECT extversion FROM pg_extension WHERE extname = 'sql_saga') || '|' || (SELECT count(*) FROM sql_saga.era)" 2>&1)
+        if [ "$out" = "$candidate_version|0" ]; then echo "    serial refusal: candidate version, no era row loaded: ok"
+        else echo "    FAIL: serial refusal state (extversion|era rows) is '$out', expected '$candidate_version|0'"; ok=0; fi
     else
         KNOWN+=("$case: plain pg_restore into the candidate package fails: $(grep -m1 -E 'ERROR' "$WORK/$case.plain.log" | cut -c1-140)")
     fi
