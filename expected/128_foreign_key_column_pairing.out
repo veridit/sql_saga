@@ -185,3 +185,30 @@ regular: crossed key refused: refused
 temporal: intended key accepted: accepted
 temporal: crossed key refused: refused
 integrity at the end: ok
+--- part 5: plain key, healthy foreign keys
+integrity: ok
+--- part 5a: a differently paired user native foreign key under the managed name is not sql_saga's
+integrity: message: sql_saga: integrity violation for foreign key on table "fkp.t5": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+drop_foreign_key_by_name: applied
+after drop_foreign_key_by_name: 1 constraint t5_fkey: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5(a, b, z, PERIOD valid_range) DEFERRABLE
+drop_foreign_key: applied
+after drop_foreign_key: 1 constraint t5_fkey: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5(a, b, z, PERIOD valid_range) DEFERRABLE
+--- part 5b: the referenced-side trigger arguments pair the columns differently (CHECK and helper canonical)
+trigger arguments as stored: r5_fkey|fkp|r5|{x,y,v}||||fkp|p5|{a,b,z}|valid|null|null|SIMPLE|NO ACTION|NO ACTION|regular_to_temporal|
+integrity: message: sql_saga: integrity violation for foreign key r5_fkey: pairs child column x with referenced column a, but unique key p5_key pairs it with referenced column z; repair with SELECT sql_saga.drop_foreign_key_by_name('fkp.r5', 'r5_fkey'); SELECT sql_saga.add_foreign_key('fkp.r5', ARRAY['x', 'y', 'v'], 'fkp.p5', ARRAY['z', 'a', 'b'], foreign_key_name => 'r5_fkey')
+hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with SELECT fk.* FROM fkp.r5 AS fk WHERE fk.x IS NOT NULL AND fk.y IS NOT NULL AND fk.v IS NOT NULL AND NOT EXISTS (SELECT FROM fkp.p5 AS uk WHERE uk.z = fk.x AND uk.a = fk.y AND uk.b = fk.v)
+--- part 5c: the released sql_saga 1.0 helper body, with the CHECK passing the child columns in another order
+helper body: SELECT EXISTS (SELECT 1 FROM fkp.p5 AS uk WHERE uk.z = $1 AND uk.a = $2 AND uk.b = $3);
+integrity: message: sql_saga: integrity violation for foreign key r5_fkey: pairs child column x with referenced column b, but unique key p5_key pairs it with referenced column z; repair with SELECT sql_saga.drop_foreign_key_by_name('fkp.r5', 'r5_fkey'); SELECT sql_saga.add_foreign_key('fkp.r5', ARRAY['x', 'y', 'v'], 'fkp.p5', ARRAY['z', 'a', 'b'], foreign_key_name => 'r5_fkey')
+hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with SELECT fk.* FROM fkp.r5 AS fk WHERE fk.x IS NOT NULL AND fk.y IS NOT NULL AND fk.v IS NOT NULL AND NOT EXISTS (SELECT FROM fkp.p5 AS uk WHERE uk.z = fk.x AND uk.a = fk.y AND uk.b = fk.v)
+--- part 5d: two foreign keys on the same child columns, the mispaired one created with non-default options
+integrity: message: sql_saga: integrity violation for foreign key t5_other_fkey: pairs child column x with referenced column a, but unique key p5_other_key pairs it with referenced column z; repair with SELECT sql_saga.drop_foreign_key_by_name('fkp.t5', 't5_other_fkey'); SELECT sql_saga.add_foreign_key('fkp.t5', ARRAY['x', 'y', 'v'], 'fkp.p5_other', ARRAY['z', 'a', 'b'], fk_era_name => 'valid', match_type => 'FULL', foreign_key_name => 't5_other_fkey', create_index => false)
+hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key; add_foreign_key creates and validates the replacement native foreign key and refuses while they exist.
+reported exactly as expected (repair by name, options kept)
+repair t5_other_fkey: ok
+integrity after the repair: ok
+options kept: true
+repaired native foreign key: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5_other(z, a, b, PERIOD valid_range) MATCH FULL DEFERRABLE
+the other foreign key on the same columns is untouched: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5(z, a, b, PERIOD valid_range) DEFERRABLE
+intended key accepted: accepted
+crossed key refused: refused

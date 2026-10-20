@@ -368,6 +368,7 @@ BEGIN
     SELECT uk.column_names INTO original FROM sql_saga.unique_keys AS uk WHERE uk.unique_key_name = uk_name;
     UPDATE sql_saga.unique_keys AS uk SET column_names = sorted_columns WHERE uk.unique_key_name = uk_name;
 
+    IF regular_fk IS NOT NULL THEN
     PERFORM sql_saga.__internal_regenerate_regular_fk_helper(regular_fk);
     PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(regular_fk);
     FOR r IN
@@ -380,13 +381,17 @@ BEGIN
     LOOP
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, ADD CONSTRAINT %I CHECK (%s(%s))', r.child, r.conname, r.conname, r.helper, r.args);
     END LOOP;
+    END IF;
 
+    IF temporal_fk IS NOT NULL THEN
     SELECT format('%I.%I', fk.table_schema, fk.table_name)::regclass AS child,
            (SELECT string_agg(quote_ident(n), ', ' ORDER BY o) FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)) AS child_columns,
            fe.range_column_name AS child_range,
            format('%I.%I', uk.table_schema, uk.table_name)::regclass AS parent,
            (SELECT string_agg(quote_ident(n), ', ' ORDER BY o) FROM unnest(sorted_columns) WITH ORDINALITY AS u (n, o)) AS parent_columns,
-           ue.range_column_name AS parent_range
+           ue.range_column_name AS parent_range,
+           CASE fk.match_type WHEN 'FULL' THEN 'FULL' ELSE 'SIMPLE' END AS match_type,
+           fk.update_action::text AS update_action, fk.delete_action::text AS delete_action
     INTO r
     FROM sql_saga.foreign_keys AS fk
     JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
@@ -394,8 +399,10 @@ BEGIN
     JOIN sql_saga.era AS ue ON (ue.table_schema, ue.table_name, ue.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
     WHERE fk.foreign_key_name = temporal_fk;
     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', r.child, temporal_fk);
-    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%s, PERIOD %I) REFERENCES %s (%s, PERIOD %I) DEFERRABLE',
-                   r.child, temporal_fk, r.child_columns, r.child_range, r.parent, r.parent_columns, r.parent_range);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%s, PERIOD %I) REFERENCES %s (%s, PERIOD %I) MATCH %s ON UPDATE %s ON DELETE %s DEFERRABLE',
+                   r.child, temporal_fk, r.child_columns, r.child_range, r.parent, r.parent_columns, r.parent_range,
+                   r.match_type, r.update_action, r.delete_action);
+    END IF;
 
     UPDATE sql_saga.unique_keys AS uk SET column_names = original WHERE uk.unique_key_name = uk_name;
     PERFORM set_config('session_replication_role', 'origin', true);
@@ -448,9 +455,9 @@ SELECT 'regular: crossed key accepted and kept: ' || fkp.run($$INSERT INTO fkp.p
 SELECT 'temporal: crossed key accepted and kept: ' || fkp.run($$INSERT INTO fkp.person_tref VALUES (9, 40, 30, 10, 20, '[2021-01-01,2022-01-01)')$$);
 
 \o /dev/null
-\set ref_repair 'SELECT sql_saga.drop_foreign_key(''fkp.person_ref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id'']); SELECT sql_saga.add_foreign_key(''fkp.person_ref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_for_unit'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], foreign_key_name => ''person_ref_fkey'')'
+\set ref_repair 'SELECT sql_saga.drop_foreign_key_by_name(''fkp.person_ref'', ''person_ref_fkey''); SELECT sql_saga.add_foreign_key(''fkp.person_ref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_for_unit'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], foreign_key_name => ''person_ref_fkey'')'
 \set ref_scan 'SELECT fk.* FROM fkp.person_ref AS fk WHERE fk.person_id IS NOT NULL AND fk.person_role_id IS NOT NULL AND fk.legal_unit_id IS NOT NULL AND fk.establishment_id IS NOT NULL AND NOT EXISTS (SELECT FROM fkp.person_for_unit AS uk WHERE uk.person_id = fk.person_id AND uk.person_role_id = fk.person_role_id AND uk.legal_unit_id = fk.legal_unit_id AND uk.establishment_id = fk.establishment_id)'
-\set tref_repair 'SELECT sql_saga.drop_foreign_key(''fkp.person_tref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id'']); SELECT sql_saga.add_foreign_key(''fkp.person_tref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_for_unit'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], foreign_key_name => ''person_tref_fkey'')'
+\set tref_repair 'SELECT sql_saga.drop_foreign_key_by_name(''fkp.person_tref'', ''person_tref_fkey''); SELECT sql_saga.add_foreign_key(''fkp.person_tref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_for_unit'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], fk_era_name => ''valid'', foreign_key_name => ''person_tref_fkey'')'
 \set confirm 'The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding.'
 INSERT INTO fkp.expected_report VALUES
 ('person_ref_fkey',
@@ -540,14 +547,14 @@ BEGIN;
 SELECT fkp.mispair('uk "odd" ''k''', ARRAY['Pers"on', 'ro''le'], 'fk "odd" ''r''', 'fk "odd" ''t''');
 INSERT INTO fkp.expected_report VALUES
 ('fk "odd" ''r''',
- $report$message: sql_saga: integrity violation for foreign key "fk ""odd"" 'r'": pairs child column "my ""role""" with referenced column "Pers""on", but unique key "uk ""odd"" 'k'" pairs it with referenced column "ro'le"; repair with SELECT sql_saga.drop_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person''']); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''r''')
+ $report$message: sql_saga: integrity violation for foreign key "fk ""odd"" 'r'": pairs child column "my ""role""" with referenced column "Pers""on", but unique key "uk ""odd"" 'k'" pairs it with referenced column "ro'le"; repair with SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""R"""', 'fk "odd" ''r'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''r''')
 hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with SELECT fk.* FROM "odd ""s'ch"."Chi'ld ""R""" AS fk WHERE fk."my ""role""" IS NOT NULL AND fk."my 'person'" IS NOT NULL AND NOT EXISTS (SELECT FROM "odd ""s'ch"."Par'ent ""T""" AS uk WHERE uk."ro'le" = fk."my ""role""" AND uk."Pers""on" = fk."my 'person'")$report$,
- $repair$SELECT sql_saga.drop_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person''']); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''r''')$repair$,
+ $repair$SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""R"""', 'fk "odd" ''r'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""R"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''r''')$repair$,
  $scan$SELECT fk.* FROM "odd ""s'ch"."Chi'ld ""R""" AS fk WHERE fk."my ""role""" IS NOT NULL AND fk."my 'person'" IS NOT NULL AND NOT EXISTS (SELECT FROM "odd ""s'ch"."Par'ent ""T""" AS uk WHERE uk."ro'le" = fk."my ""role""" AND uk."Pers""on" = fk."my 'person'")$scan$),
 ('fk "odd" ''t''',
- $report$message: sql_saga: integrity violation for foreign key "fk ""odd"" 't'": pairs child column "my ""role""" with referenced column "Pers""on", but unique key "uk ""odd"" 'k'" pairs it with referenced column "ro'le"; repair with SELECT sql_saga.drop_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person''']); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''t''')
+ $report$message: sql_saga: integrity violation for foreign key "fk ""odd"" 't'": pairs child column "my ""role""" with referenced column "Pers""on", but unique key "uk ""odd"" 'k'" pairs it with referenced column "ro'le"; repair with SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""T"""', 'fk "odd" ''t'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], fk_era_name => 'valid', foreign_key_name => 'fk "odd" ''t''')
 hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key; add_foreign_key creates and validates the replacement native foreign key and refuses while they exist.$report$,
- $repair$SELECT sql_saga.drop_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person''']); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], foreign_key_name => 'fk "odd" ''t''')$repair$,
+ $repair$SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""T"""', 'fk "odd" ''t'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], fk_era_name => 'valid', foreign_key_name => 'fk "odd" ''t''')$repair$,
  NULL);
 \o
 \echo '--- part 4: the mispaired foreign keys with quoted names enforce the wrong pairing'
@@ -579,6 +586,142 @@ SELECT 'regular: crossed key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch".
 SELECT 'temporal: intended key accepted: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, 1, 2, '[2021-01-01,2022-01-01)')$$);
 SELECT 'temporal: crossed key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, 2, 1, '[2021-01-01,2022-01-01)')$$);
 SELECT 'integrity at the end: ' || fkp.integrity();
+ROLLBACK;
+
+/* ---------------------------------------------------------------------------------------------------------
+ * Part 5 (G4 review findings 1-4). Each case runs in a transaction that is rolled back.
+ *   5a ownership: a same-name, same-column-set, differently paired native foreign key on a plain (non-XOR) key
+ *      is not a shape sql_saga ever created; drop_foreign_key_by_name and drop_foreign_key leave it in place.
+ *   5b trigger-only damage: the regular foreign key's referenced-side trigger arguments pair the columns
+ *      differently (real pg_trigger.tgargs), CHECK and helper canonical: check_integrity names the mispairing.
+ *   5c the helper body of released sql_saga 1.0 (plain "uk.col = $i", no OPERATOR, not SECURITY DEFINER) with the
+ *      CHECK passing the child columns in another order: check_integrity names the mispairing.
+ *   5d two foreign keys on the same child columns, one mispaired and created with non-default options: the
+ *      repair, run verbatim, recreates that foreign key with its options and the correct pairing.
+ * The plain key here is (z, a, b) on fkp.p5 with child columns (x, y, v): x pairs with z, y with a, v with b.
+ * --------------------------------------------------------------------------------------------------------- */
+\o /dev/null
+CREATE TABLE fkp.p5 (id int NOT NULL, z int NOT NULL, a int NOT NULL, b int NOT NULL, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkp.p5', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('fkp.p5', ARRAY['z', 'a', 'b'], key_type => 'natural', unique_key_name => 'p5_key');
+CREATE TABLE fkp.p5_other (id int NOT NULL, z int NOT NULL, a int, b int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkp.p5_other', 'valid_range', 'valid');
+-- An XOR key (a, b mutually exclusive) in the order (z, a, b): sql_saga 1.0/1.1 sorted its catalog to (a, b, z).
+SELECT sql_saga.add_unique_key(table_oid => 'fkp.p5_other'::regclass, key_type => 'natural', column_names => ARRAY['z', 'a', 'b'],
+    mutually_exclusive_columns => ARRAY['a', 'b'], unique_key_name => 'p5_other_key');
+-- Key row 1 = (z 1, a 2, b 3), in both parents.
+INSERT INTO fkp.p5 VALUES (1, 1, 2, 3, '[2020-01-01,infinity)');
+INSERT INTO fkp.p5_other VALUES (1, 1, 2, 3, '[2020-01-01,infinity)');
+CREATE TABLE fkp.t5 (id int, x int, y int, v int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkp.t5', 'valid_range', 'valid');
+CREATE TABLE fkp.r5 (id int PRIMARY KEY, x int, y int, v int);
+SELECT sql_saga.add_foreign_key('fkp.t5', ARRAY['x', 'y', 'v'], 'fkp.p5', ARRAY['z', 'a', 'b'], foreign_key_name => 't5_fkey');
+SELECT sql_saga.add_foreign_key('fkp.r5', ARRAY['x', 'y', 'v'], 'fkp.p5', ARRAY['z', 'a', 'b'], foreign_key_name => 'r5_fkey');
+\o
+\echo '--- part 5: plain key, healthy foreign keys'
+SELECT 'integrity: ' || fkp.integrity();
+
+\echo '--- part 5a: a differently paired user native foreign key under the managed name is not sql_saga''s'
+\o /dev/null
+-- The replacement: (x, y, v) REFERENCES (a, b, z). Not a pairing sql_saga 1.0/1.1 ever generated: p5_key is not an
+-- XOR key, so its catalog list was never sorted (even though (a, b, z) is its columns sorted by name).
+CREATE FUNCTION fkp.replace_t5_fkey() RETURNS void LANGUAGE plpgsql AS $replace_t5_fkey$
+BEGIN
+    PERFORM set_config('session_replication_role', 'replica', true);
+    ALTER TABLE fkp.t5 DROP CONSTRAINT t5_fkey;
+    ALTER TABLE fkp.t5 ADD CONSTRAINT t5_fkey FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES fkp.p5 (a, b, z, PERIOD valid_range) DEFERRABLE;
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$replace_t5_fkey$;
+CREATE FUNCTION fkp.t5_fkey_constraints() RETURNS text LANGUAGE sql AS $t5_fkey_constraints$
+    SELECT count(*) || ' constraint t5_fkey: ' || coalesce(string_agg(pg_catalog.pg_get_constraintdef(c.oid), '; '), '-')
+    FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = 'fkp.t5'::regclass AND c.conname = 't5_fkey';
+$t5_fkey_constraints$;
+\o
+BEGIN;
+\o /dev/null
+SELECT fkp.replace_t5_fkey();
+\o
+-- Reported as a noncanonical constraint (as before 1.3), not as a mispairing with a drop/add repair.
+SELECT 'integrity: ' || fkp.integrity();
+SELECT 'drop_foreign_key_by_name: ' || fkp.run_or_refuse($$SELECT sql_saga.drop_foreign_key_by_name('fkp.t5', 't5_fkey')$$);
+SELECT 'after drop_foreign_key_by_name: ' || fkp.t5_fkey_constraints();
+ROLLBACK;
+BEGIN;
+\o /dev/null
+SELECT fkp.replace_t5_fkey();
+\o
+SELECT 'drop_foreign_key: ' || fkp.run_or_refuse($$SELECT sql_saga.drop_foreign_key('fkp.t5', ARRAY['x', 'y', 'v'])$$);
+SELECT 'after drop_foreign_key: ' || fkp.t5_fkey_constraints();
+ROLLBACK;
+
+\echo '--- part 5b: the referenced-side trigger arguments pair the columns differently (CHECK and helper canonical)'
+BEGIN;
+\o /dev/null
+SET LOCAL session_replication_role = replica;
+SELECT format('DROP TRIGGER %1$I ON fkp.p5; CREATE CONSTRAINT TRIGGER %1$I AFTER UPDATE OF z, a, b ON fkp.p5 FROM fkp.r5 DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check_c(%2$L, %3$L, %4$L, %5$L, %6$L, %6$L, %6$L, %7$L, %8$L, %9$L, %10$L, %11$L, %11$L, %12$L, %13$L, %14$L, %15$L)',
+              fk.uk_update_trigger, fk.foreign_key_name, fk.table_schema, fk.table_name, '{x,y,v}', '', 'fkp', 'p5', '{a,b,z}', 'valid', 'null',
+              fk.match_type, fk.update_action, fk.delete_action, 'regular_to_temporal')
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'r5_fkey' \gexec
+SET LOCAL session_replication_role = origin;
+\o
+SELECT 'trigger arguments as stored: ' || pg_catalog.replace(pg_catalog.encode(t.tgargs, 'escape'), '\000', '|')
+FROM pg_catalog.pg_trigger AS t JOIN sql_saga.foreign_keys AS fk ON fk.uk_update_trigger = t.tgname
+WHERE fk.foreign_key_name = 'r5_fkey' AND t.tgrelid = 'fkp.p5'::regclass;
+SELECT 'integrity: ' || fkp.integrity();
+ROLLBACK;
+
+\echo '--- part 5c: the released sql_saga 1.0 helper body, with the CHECK passing the child columns in another order'
+BEGIN;
+\o /dev/null
+SET LOCAL session_replication_role = replica;
+-- The exact body versions/sql_saga--1.0.sql generates: "uk.%I = $%s" joined with AND, no OPERATOR, no
+-- SECURITY DEFINER, no search_path (1.0 add_regular_foreign_key).
+SELECT format($ddl$CREATE OR REPLACE FUNCTION %s RETURNS boolean LANGUAGE sql STABLE STRICT AS $body$
+                SELECT EXISTS (SELECT 1 FROM fkp.p5 AS uk WHERE uk.z = $1 AND uk.a = $2 AND uk.b = $3);
+            $body$; ALTER FUNCTION %1$s SECURITY INVOKER RESET search_path$ddl$, fk.fk_helper_function)
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'r5_fkey' \gexec
+-- The CHECK passes (y, v, x): the helper's $1 (z) gets y, $2 (a) gets v, $3 (b) gets x.
+SELECT format('ALTER TABLE fkp.r5 DROP CONSTRAINT %1$I, ADD CONSTRAINT %1$I CHECK (%2$s(y, v, x))',
+              fk.fk_check_constraint, pg_catalog.to_regprocedure(fk.fk_helper_function)::regproc)
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'r5_fkey' \gexec
+SET LOCAL session_replication_role = origin;
+\o
+SELECT 'helper body: ' || pg_catalog.btrim(p.prosrc, E' \n') FROM pg_catalog.pg_proc AS p
+JOIN sql_saga.foreign_keys AS fk ON p.oid = pg_catalog.to_regprocedure(fk.fk_helper_function) WHERE fk.foreign_key_name = 'r5_fkey';
+SELECT 'integrity: ' || fkp.integrity();
+ROLLBACK;
+
+\echo '--- part 5d: two foreign keys on the same child columns, the mispaired one created with non-default options'
+BEGIN;
+\o /dev/null
+-- A second temporal foreign key on (x, y, v) to another parent, with MATCH FULL and no index.
+SELECT sql_saga.add_foreign_key('fkp.t5', ARRAY['x', 'y', 'v'], 'fkp.p5_other', ARRAY['z', 'a', 'b'],
+    match_type => 'FULL', foreign_key_name => 't5_other_fkey', create_index => false);
+-- t5_other_fkey as sql_saga 1.0/1.1 built it against the sorted catalog (a, b, z) of the XOR key p5_other_key.
+SELECT fkp.mispair('p5_other_key', ARRAY['a', 'b', 'z'], NULL, 't5_other_fkey');
+CREATE TEMP TABLE options_before AS
+SELECT fk.match_type, fk.update_action, fk.delete_action, fk.fk_era_name, fk.fk_index_name
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 't5_other_fkey';
+\o
+SELECT 'integrity: ' || fkp.integrity();
+\o /dev/null
+\set p5_repair 'SELECT sql_saga.drop_foreign_key_by_name(''fkp.t5'', ''t5_other_fkey''); SELECT sql_saga.add_foreign_key(''fkp.t5'', ARRAY[''x'', ''y'', ''v''], ''fkp.p5_other'', ARRAY[''z'', ''a'', ''b''], fk_era_name => ''valid'', match_type => ''FULL'', foreign_key_name => ''t5_other_fkey'', create_index => false)'
+\o
+SELECT CASE WHEN fkp.integrity() = 'message: sql_saga: integrity violation for foreign key t5_other_fkey: pairs child column x with referenced column a, but unique key p5_other_key pairs it with referenced column z; repair with ' || :'p5_repair' || E'\n'
+    || 'hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key; add_foreign_key creates and validates the replacement native foreign key and refuses while they exist.'
+            THEN 'reported exactly as expected (repair by name, options kept)' ELSE 'unexpected report' END;
+SELECT 'repair t5_other_fkey: ' || fkp.run(:'p5_repair');
+SELECT 'integrity after the repair: ' || fkp.integrity();
+SELECT 'options kept: ' || ((o.match_type, o.update_action, o.delete_action, o.fk_era_name, o.fk_index_name)
+                         IS NOT DISTINCT FROM (fk.match_type, fk.update_action, fk.delete_action, fk.fk_era_name, fk.fk_index_name))::text
+FROM pg_temp.options_before AS o, sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 't5_other_fkey';
+SELECT 'repaired native foreign key: ' || pg_catalog.pg_get_constraintdef(c.oid)
+FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = 'fkp.t5'::regclass AND c.conname = 't5_other_fkey';
+SELECT 'the other foreign key on the same columns is untouched: ' || pg_catalog.pg_get_constraintdef(c.oid)
+FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = 'fkp.t5'::regclass AND c.conname = 't5_fkey';
+SELECT 'intended key accepted: ' || fkp.probe($$INSERT INTO fkp.t5 VALUES (1, 1, 2, 3, '[2021-01-01,2022-01-01)')$$);
+SELECT 'crossed key refused: ' || fkp.probe($$INSERT INTO fkp.t5 VALUES (1, 2, 3, 1, '[2021-01-01,2022-01-01)')$$);
 ROLLBACK;
 
 \o /dev/null
