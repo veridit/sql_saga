@@ -62,6 +62,8 @@ view update after rename | ok
 temporal_merge after rename | ok
 1 | one | 2024-07-01 | [2024-01-01,infinity)
 2 | two | 2024-01-01 | [2024-01-01,infinity)
+Ta'ble|{"Edited \"At\"","Edited \"At\""}
+after rename of a repeated ephemeral column | check_integrity ok
 --- 2b: unique_keys.pk_consistency_constraint_names follows RENAME CONSTRAINT ---
 nat_code|{nat_code_pk_consistency_excl}
 nat_code|{"Nat \"Code\" Excl"}

@@ -140,8 +140,12 @@ SELECT public.q131_integrity('after non-ephemeral column rename and back');
 /*
  * Behaviour unchanged: the renamed column is still ephemeral. Making ID 1 'one' on [2024-06-01,infinity) with a
  * different edit time coalesces with the adjacent 'one' segment into a single row, through the view (era-level
- * ephemeral columns) and through temporal_merge directly (auto-discovered from the era).
+ * ephemeral columns) and through temporal_merge directly (auto-discovered from the era). Coalescing deletes a row
+ * of entity 1 while "Re g" references entity 1. Up to 1.2 the regular foreign key's parent-side check refuses that
+ * even though the key still exists; test 129 covers that defect. This test is about names, so the reference is
+ * removed first. TODO(1.3 design B): remove this DELETE once 129 passes.
  */
+DELETE FROM "Re g";
 SAVEPOINT through_view;
 SELECT public.q131_attempt('view update after rename',
     $$UPDATE "Odd ""Schema"""."Ta'ble__for_portion_of_valid" SET "Na me" = 'one', "Edited ""At""" = '2024-07-01', valid_from = '2024-06-01', valid_until = 'infinity' WHERE "ID" = 1$$);
@@ -158,6 +162,17 @@ ROLLBACK TO SAVEPOINT through_merge;
 RELEASE SAVEPOINT through_merge;
 ROLLBACK TO SAVEPOINT ephemeral_rename;
 RELEASE SAVEPOINT ephemeral_rename;
+
+/* A listed name may repeat (add_era and set_era_ephemeral_columns accept it): every occurrence follows the rename. */
+SAVEPOINT ephemeral_duplicate;
+\o /dev/null
+SELECT sql_saga.set_era_ephemeral_columns('"Odd ""Schema"""."Ta''ble"', 'valid', ARRAY['Edit At', 'Edit At']::name[]);
+\o
+ALTER TABLE "Odd ""Schema"""."Ta'ble" RENAME COLUMN "Edit At" TO "Edited ""At""";
+SELECT e.table_name, e.ephemeral_columns FROM sql_saga.era AS e WHERE e.table_name = 'Ta''ble';
+SELECT public.q131_integrity('after rename of a repeated ephemeral column');
+ROLLBACK TO SAVEPOINT ephemeral_duplicate;
+RELEASE SAVEPOINT ephemeral_duplicate;
 
 /* ---------------------------------------------------------------------------------------------------------------- */
 \echo '--- 2b: unique_keys.pk_consistency_constraint_names follows RENAME CONSTRAINT ---'
