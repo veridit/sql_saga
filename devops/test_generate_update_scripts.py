@@ -297,11 +297,10 @@ class AclAndSignatures(unittest.TestCase):
         self.assertEqual(len(self.g.new_routine_acl(routines, acl, self.frozen())), 1)
 
     def test_real_new_routines_have_acl_policy(self):
-        """Policy: a routine new in 1.3 with no GRANT/REVOKE in src keeps the database default privileges, exactly
-        as in a fresh install (CREATE inside the extension script, so ordinary DBs give PUBLIC EXECUTE and hardened
-        default privileges take it away). The generator emits no GRANT for it, but only when it is listed in
-        DEFAULT_ACL_NEW_ROUTINES; any other new routine without a source ACL fails."""
-        self.assertIn("sql_saga.regular_fk_check_c()", self.g.DEFAULT_ACL_NEW_ROUTINES)
+        """Policy: every routine new in 1.3 needs an explicit GRANT/REVOKE in src, or must be listed in
+        DEFAULT_ACL_NEW_ROUTINES (then no ACL is emitted and creation-time defaults apply, like a fresh install).
+        Source GRANT/REVOKE for new routines are emitted verbatim; nothing is invented (no blind PUBLIC grant).
+        Real src: regular_fk_check_c() carries an explicit, authorized GRANT EXECUTE TO PUBLIC (restore needs it)."""
         routines, acl = [], []
         for code in self.g.ROUTINE_MANIFEST:
             for fname in os.listdir(os.path.join(ROOT, "src")):
@@ -311,12 +310,14 @@ class AclAndSignatures(unittest.TestCase):
                         (routines if k == "routine" else acl if k in ("grant", "revoke") else []).append(s)
         out = self.g.new_routine_acl(routines, acl, self.frozen())
         joined = "".join(out)
-        self.assertNotIn("regular_fk_check_c", joined)  # no blind PUBLIC grant
-        self.assertNotIn("TO PUBLIC", joined.replace("__internal", ""))  # only real source grants could
+        self.assertIn("GRANT EXECUTE ON FUNCTION sql_saga.regular_fk_check_c() TO PUBLIC;", joined)
+        self.assertEqual(joined.count("TO PUBLIC"), sum(1 for s in acl if "TO PUBLIC" in s.text
+                                                        and self.g.routine_acl_statements([s], self.frozen())))
         self.assertIn("REVOKE ALL ON FUNCTION sql_saga.__internal_foreign_key_mispairing_report(name) FROM PUBLIC", joined)
-        listed = set(self.g.DEFAULT_ACL_NEW_ROUTINES)
+        # without its source GRANT and not listed, a new routine is refused
+        no_grant = [s for s in acl if "regular_fk_check_c" not in s.text]
         with self.assertRaises(self.g.GeneratorError):
-            self.g.new_routine_acl(routines, acl, self.frozen(), default_acl=listed - {"sql_saga.regular_fk_check_c()"})
+            self.g.new_routine_acl(routines, no_grant, self.frozen(), default_acl=set())
 
     def test_changed_return_fails_fast(self):
         changed = self.g.split_sql("CREATE FUNCTION sql_saga.check_integrity() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;")
@@ -396,6 +397,19 @@ class Assembly(unittest.TestCase):
             self.assertNotIn(P_1K_MARKER, out)
             self.assertEqual(out.count(GATE), 1)
             self.assertTrue(out.rstrip().endswith(GATE))
+
+    def test_trusted_source_version_set_before_preamble(self):
+        # PG18 sets extversion to the TARGET before running the script, so fragments cannot read the source
+        # from the catalog. The generator knows it and emits it as a transaction-local literal right after H.
+        for frm in ["1.0", "1.1", "1.2"]:
+            hist = None if frm == "1.2" else "-- H\n"
+            out = self.g.assemble(frm, "1.3", historical=hist, **self.kw)
+            line = "SELECT pg_catalog.set_config('sql_saga.upgrade_from', '%s', true);" % frm
+            self.assertEqual(out.split("\n")[1], line)
+            self.assertEqual(out.count("sql_saga.upgrade_from"), 1)
+            self.assertLess(out.index(line), out.index("-- P"))
+        with self.assertRaises(self.g.GeneratorError):
+            self.g.assemble("0.9", "1.3", historical="-- H\n", **self.kw)
 
     def test_marker_required_exactly_once(self):
         for p in ["-- P\n", "-- P\n" + P_1K_MARKER + "\n" + P_1K_MARKER + "\n"]:
