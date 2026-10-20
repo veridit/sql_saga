@@ -287,6 +287,99 @@ SELECT 'deferred: change the natural key of legal unit 3 and change it back, the
     || rft.probe($$SET CONSTRAINTS ALL DEFERRED; UPDATE rft.legal_unit SET ident = '301' WHERE id = 3;
                    UPDATE rft.legal_unit SET ident = '300' WHERE id = 3$$);
 
+\echo '--- part 1: temporal_merge defers only sql_saga''s own constraint triggers'
+/*
+ * SET CONSTRAINTS schema.name selects every constraint of that name in the schema. A constraint sql_saga does not
+ * manage, in the same schema and with the same name as a constraint temporal_merge defers, would be deferred (and
+ * later forced immediate) too. temporal_merge must refuse instead, before any DML, naming the conflicting
+ * constraint. Changes made by a refused CALL are rolled back, so whether DML ran is observed through a sequence
+ * (nextval is not transactional): a BEFORE INSERT/UPDATE/DELETE trigger on the merge target advances it.
+ * Controls: the same unrelated constraint in another schema does not conflict; a direct DELETE is unaffected.
+ */
+SAVEPOINT deferral_collision;
+\o /dev/null
+CREATE SEQUENCE rft.target_dml_seen;
+CREATE FUNCTION rft.note_target_dml() RETURNS trigger LANGUAGE plpgsql AS $note_target_dml$
+BEGIN
+    PERFORM nextval('rft.target_dml_seen');
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$note_target_dml$;
+CREATE TRIGGER note_target_dml BEFORE INSERT OR UPDATE OR DELETE ON rft.legal_unit
+    FOR EACH ROW EXECUTE FUNCTION rft.note_target_dml();
+-- The number of legal_unit rows DML has touched so far (a sequence never goes back, also not on rollback).
+CREATE FUNCTION rft.target_dml_count() RETURNS bigint LANGUAGE sql AS $target_dml_count$
+    SELECT CASE WHEN s.is_called THEN s.last_value ELSE 0 END FROM rft.target_dml_seen AS s;
+$target_dml_count$;
+CREATE FUNCTION rft.unrelated_noop() RETURNS trigger LANGUAGE plpgsql AS $unrelated_noop$
+BEGIN
+    RETURN NULL;
+END;
+$unrelated_noop$;
+CREATE TABLE rft.unrelated (id int);
+TRUNCATE pg_temp.merge_source;
+INSERT INTO pg_temp.merge_source VALUES (1, 1, 'tax', '100', 'c', '2020-01-01', 'infinity');
+\o
+-- Control: an unrelated constraint of that name in another schema does not conflict.
+SAVEPOINT other_schema;
+\o /dev/null
+CREATE SCHEMA rft_other;
+CREATE TABLE rft_other.unrelated (id int);
+SELECT format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON rft_other.unrelated DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION rft.unrelated_noop()',
+              fk.uk_delete_trigger)
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'activity_legal_unit_id_fkey' \gexec
+\o
+SELECT 'same-named constraint in another schema, temporal_merge | '
+    || rft.run($$CALL sql_saga.temporal_merge('rft.legal_unit', 'pg_temp.merge_source', ARRAY['id'],
+                 mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE')$$);
+ROLLBACK TO SAVEPOINT other_schema;
+-- The same unrelated constraint in the schema of the managed one.
+\o /dev/null
+SELECT format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON rft.unrelated DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION rft.unrelated_noop()',
+              fk.uk_delete_trigger)
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'activity_legal_unit_id_fkey' \gexec
+\o
+SELECT 'same-named unrelated constraint, direct DELETE of a segment | '
+    || rft.outcome($$DELETE FROM rft.legal_unit WHERE id = 1 AND valid_from = '2022-01-01'$$);
+SELECT 'same-named unrelated constraint, DML seen before temporal_merge | ' || (rft.target_dml_count() > 0);
+\o /dev/null
+SELECT setval('rft.target_dml_seen', 1, false);
+\o
+SELECT 'same-named unrelated constraint, temporal_merge | '
+    || rft.error_of($$CALL sql_saga.temporal_merge('rft.legal_unit', 'pg_temp.merge_source', ARRAY['id'],
+                 mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE')$$);
+SELECT 'same-named unrelated constraint, DML rows seen in the refused temporal_merge | ' || rft.target_dml_count();
+ROLLBACK TO SAVEPOINT deferral_collision;
+
+-- The same with names that need quoting: the refusal quotes them as identifiers.
+SAVEPOINT deferral_collision_quoted;
+\o /dev/null
+CREATE SCHEMA "q ""s'ch";
+CREATE FUNCTION "q ""s'ch".unrelated_noop() RETURNS trigger LANGUAGE plpgsql AS $unrelated_noop$
+BEGIN
+    RETURN NULL;
+END;
+$unrelated_noop$;
+CREATE TABLE "q ""s'ch"."Par'ent ""T""" (id int NOT NULL, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('"q ""s''ch"."Par''ent ""T"""', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('"q ""s''ch"."Par''ent ""T"""', ARRAY['id'], key_type => 'primary', unique_key_name => 'q par "k"');
+CREATE TABLE "q ""s'ch"."Chi'ld" (id int PRIMARY KEY, par_id int);
+SELECT sql_saga.add_foreign_key('"q ""s''ch"."Chi''ld"', ARRAY['par_id'], '"q ""s''ch"."Par''ent ""T"""', ARRAY['id'],
+    foreign_key_name => 'q fk "r"');
+INSERT INTO "q ""s'ch"."Par'ent ""T""" VALUES (1, '[2020-01-01,2022-01-01)'), (1, '[2022-01-01,infinity)');
+INSERT INTO "q ""s'ch"."Chi'ld" VALUES (1, 1);
+CREATE TABLE "q ""s'ch"."Un'related ""U""" (id int);
+SELECT format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON "q ""s''ch"."Un''related ""U""" DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION "q ""s''ch".unrelated_noop()',
+              fk.uk_delete_trigger)
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'q fk "r"' \gexec
+CREATE TEMP TABLE quoted_source (row_id int, id int, valid_range daterange);
+INSERT INTO pg_temp.quoted_source VALUES (1, 1, '[2020-01-01,infinity)');
+\o
+SELECT 'quoted names, temporal_merge | '
+    || rft.error_of($$CALL sql_saga.temporal_merge('"q ""s''ch"."Par''ent ""T"""', 'pg_temp.quoted_source', ARRAY['id'],
+                 mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE')$$);
+ROLLBACK TO SAVEPOINT deferral_collision_quoted;
+
 SELECT 'legal_unit unchanged after the rolled back merges | '
     || string_agg(format('%s %s [%s,%s)', lu.id, lu.name, lu.valid_from, lu.valid_until), ', ' ORDER BY lu.id, lu.valid_from)
 FROM rft.legal_unit AS lu;
@@ -320,6 +413,14 @@ SELECT 'deferred child: invalid insert then SIMPLE null | ' || rft.outcome(
     $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET legal_unit_id = NULL WHERE id = 90$$);
 SELECT 'deferred child: FULL partial null then correct | ' || rft.outcome(
     $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.contact VALUES (90, 'tax', NULL); UPDATE rft.contact SET ident = '300' WHERE id = 90$$);
+-- An UPDATE that does not touch the key columns makes the orphaning version obsolete without firing a new check
+-- (the trigger is UPDATE OF the key columns): the surviving row still references a missing key and must be refused.
+SELECT 'deferred child: invalid insert then payload-only update survives | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET note = 'second' WHERE id = 90$$);
+SELECT 'deferred child: invalid key update then payload-only update survives | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; UPDATE rft.activity SET legal_unit_id = 999 WHERE id = 1; UPDATE rft.activity SET note = 'second' WHERE id = 1$$);
+SELECT 'deferred child: FULL partial null then payload-only update survives | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.contact VALUES (90, 'tax', NULL); UPDATE rft.contact SET id = 91 WHERE id = 90$$);
 
 \echo '--- part 2: drop protection'
 SELECT 'DROP TRIGGER on the child-side trigger | ' || rft.error_of('DROP TRIGGER activity_legal_unit_id_check ON rft.activity');
@@ -510,6 +611,63 @@ SELECT 'PARTIAL leaves no catalog row, trigger or constraint | '
         WHERE (c.conrelid = 'rft.contact_partial'::regclass AND c.contype IN ('c', 't'))
            OR (c.conrelid = 'rft.stat_partial'::regclass AND c.contype = 'f'));
 ROLLBACK TO SAVEPOINT match_partial;
+
+\echo '--- part 5: lifecycle attribution (an unrelated CHECK, a noncanonical child-side trigger)'
+-- Own fixture: parent rft.p5 (key "B", "A"), child rft.c5 with the child columns ("Y", "X") paired by position.
+SAVEPOINT part5;
+CREATE TABLE rft.p5 (id int NOT NULL, "A" int NOT NULL, "B" int NOT NULL, valid_range daterange NOT NULL);
+SELECT 'part 5: era | ' || rft.run($$SELECT sql_saga.add_era('rft.p5', 'valid_range', 'valid')$$);
+SELECT 'part 5: key | ' || rft.run($$SELECT sql_saga.add_unique_key('rft.p5', ARRAY['B', 'A'], key_type => 'natural', unique_key_name => 'p5_key')$$);
+CREATE TABLE rft.c5 (id int PRIMARY KEY, "X" int, "Y" int);
+SELECT 'part 5: foreign key | ' || rft.run($$SELECT sql_saga.add_regular_foreign_key('rft.c5', ARRAY['Y', 'X'], 'p5_key', foreign_key_name => 'c5_fkey', fk_check_constraint => 'c5_child')$$);
+INSERT INTO rft.p5 VALUES (1, 10, 20, '[2020-01-01,infinity)');
+INSERT INTO rft.c5 VALUES (1, 10, 20);
+
+-- 5a: the child-side trigger is gone and a user CHECK has the same name: it is the user's, not sql_saga's.
+SAVEPOINT user_check;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER c5_child ON rft.c5;
+ALTER TABLE rft.c5 ADD CONSTRAINT c5_child CHECK ("X" >= 0);
+SET LOCAL session_replication_role = origin;
+SELECT 'part 5a: drop_foreign_key_by_name with an unrelated same-name CHECK | ' || rft.run($$SELECT sql_saga.drop_foreign_key_by_name('rft.c5', 'c5_fkey')$$);
+SELECT 'part 5a: the unrelated CHECK is kept | ' || count(*)
+FROM pg_catalog.pg_constraint WHERE conrelid = 'rft.c5'::regclass AND conname = 'c5_child' AND contype = 'c';
+ROLLBACK TO SAVEPOINT user_check;
+
+-- 5b: the same, then the parent table is dropped: the surviving-child cleanup keeps the user CHECK too.
+SAVEPOINT user_check_parent_drop;
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER c5_child ON rft.c5;
+ALTER TABLE rft.c5 ADD CONSTRAINT c5_child CHECK ("X" >= 0);
+SET LOCAL session_replication_role = origin;
+SELECT 'part 5b: DROP TABLE of the parent with an unrelated same-name CHECK on the child | ' || rft.run('DROP TABLE rft.p5 CASCADE');
+SELECT 'part 5b: the unrelated CHECK is kept | ' || count(*)
+FROM pg_catalog.pg_constraint WHERE conrelid = 'rft.c5'::regclass AND conname = 'c5_child' AND contype = 'c';
+ROLLBACK TO SAVEPOINT user_check_parent_drop;
+
+-- 5c: the child-side trigger was replaced by the same definition with a WHEN (false) predicate (noncanonical).
+-- A rename of a referenced key column refuses it; a rename of a child key column must refuse it too and leave
+-- trigger, catalog and column unchanged, not silently replace it with the canonical trigger.
+SAVEPOINT user_when;
+CREATE TEMP TABLE part5_ddl AS
+SELECT replace(pg_catalog.pg_get_triggerdef(t.oid), 'FOR EACH ROW EXECUTE', 'FOR EACH ROW WHEN (false) EXECUTE') AS ddl
+FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'rft.c5'::regclass AND t.tgname = 'c5_child';
+SET LOCAL session_replication_role = replica;
+DROP TRIGGER c5_child ON rft.c5;
+SELECT ddl FROM pg_temp.part5_ddl \gexec
+SET LOCAL session_replication_role = origin;
+SELECT 'part 5c: the replacement has a predicate | ' || (t.tgqual IS NOT NULL)::text
+FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'rft.c5'::regclass AND t.tgname = 'c5_child';
+SELECT 'part 5c: rename of a referenced key column | ' || rft.outcome('ALTER TABLE rft.p5 RENAME COLUMN "A" TO "A2"');
+-- rft.run keeps the effect of an accepted rename, so the state lines below observe it.
+SELECT 'part 5c: rename of a child key column | ' || rft.run('ALTER TABLE rft.c5 RENAME COLUMN "X" TO "X2"');
+SELECT 'part 5c: predicate kept | ' || (t.tgqual IS NOT NULL)::text
+FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'rft.c5'::regclass AND t.tgname = 'c5_child';
+SELECT 'part 5c: catalog columns | ' || fk.column_names::text FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'c5_fkey';
+SELECT 'part 5c: child column "X" kept | ' || count(*)::text
+FROM pg_catalog.pg_attribute WHERE attrelid = 'rft.c5'::regclass AND attname = 'X' AND NOT attisdropped;
+ROLLBACK TO SAVEPOINT user_when;
+ROLLBACK TO SAVEPOINT part5;
 
 \echo '--- final'
 SELECT rft.integrity();
