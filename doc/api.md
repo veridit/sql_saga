@@ -476,7 +476,7 @@ SECURITY DEFINER
 
 ### disable_temporal_triggers
 
-> Disables all sql_saga-managed temporal foreign key triggers for the specified tables. This is a targeted alternative to `ALTER TABLE ... DISABLE TRIGGER USER`, intended for complex ETL batches where transient, inconsistent states are expected. It does not affect non-FK triggers, such as those for synchronized columns.
+> Disables all sql_saga-managed temporal foreign key triggers for the specified tables. This is a targeted alternative to `ALTER TABLE ... DISABLE TRIGGER USER`, intended for complex ETL batches where transient, inconsistent states are expected. It does not affect non-FK triggers, such as those for synchronized columns. Only regular-to-temporal foreign keys (add_regular_foreign_key) have such triggers. A temporal-to-temporal foreign key (add_foreign_key) is a native temporal foreign key constraint (FOREIGN KEY ... PERIOD) with no sql_saga triggers, and this procedure leaves it unchanged; it is DEFERRABLE, so defer it in the transaction with SET CONSTRAINTS <schema>.<foreign key name> DEFERRED (or SET CONSTRAINTS ALL DEFERRED). A NOTICE names every native temporal foreign key referencing or referenced by the specified tables, with that statement.
 
 ```sql
 PROCEDURE disable_temporal_triggers(

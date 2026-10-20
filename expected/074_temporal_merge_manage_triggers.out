@@ -138,6 +138,7 @@ SELECT * FROM mtt.get_trigger_status('mtt.parent');
 \echo '--- Disabling triggers for both tables ---'
 --- Disabling triggers for both tables ---
 CALL sql_saga.disable_temporal_triggers('mtt.parent', 'mtt.child');
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS mtt.child_parent_id_valid DEFERRED
 \echo '--- Trigger status AFTER disabling (FK triggers disabled, sync triggers enabled) ---'
 --- Trigger status AFTER disabling (FK triggers disabled, sync triggers enabled) ---
 \echo '-- Triggers on child table --'

@@ -1082,6 +1082,104 @@ $__internal_era_column_rename_follow$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_era_column_rename_follow(oid[]) FROM PUBLIC;
 
+-- ---- 1.3 small2: era.ephemeral_columns and unique_keys.pk_consistency_constraint_names follow renames ----
+/*
+ * Called by rename_following (ddl_command_end of ALTER TABLE) with nothing but the event's commands:
+ *   - ALTER TABLE ... RENAME COLUMN (a pg_class command with objsubid > 0): the new name is the column at
+ *     that attnum. On the table and its inheritance descendants (PostgreSQL renames there too), an era whose
+ *     ephemeral_columns lists exactly one name that no longer exists, while the new name exists and is not
+ *     listed yet, gets that name replaced in place (order kept).
+ *   - ALTER TABLE ... RENAME CONSTRAINT (a pg_constraint command): when the renamed constraint is an
+ *     exclusion constraint of a table whose natural key lists exactly one pk consistency constraint name
+ *     that no longer exists on the table, that name is replaced by the new one.
+ * Only names are compared, nothing is deparsed (no locks beyond the catalog reads).
+ */
+CREATE FUNCTION sql_saga.__internal_era_ephemeral_and_pk_consistency_rename_follow()
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_era_ephemeral_and_pk_consistency_rename_follow$
+#variable_conflict use_variable
+DECLARE
+    renamed record;
+    target record;
+BEGIN
+    /* RENAME COLUMN: era.ephemeral_columns. */
+    FOR renamed IN
+        SELECT DISTINCT ev.objid AS table_oid, a.attname AS new_name
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (ev.objid, ev.objsubid)
+        WHERE ev.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND ev.objsubid > 0
+          AND NOT a.attisdropped
+    LOOP
+        FOR target IN
+            WITH RECURSIVE tables(table_oid) AS (
+                SELECT renamed.table_oid
+                UNION
+                SELECT i.inhrelid FROM tables AS t JOIN pg_catalog.pg_inherits AS i ON i.inhparent = t.table_oid
+            )
+            SELECT e.table_schema, e.table_name, e.era_name, missing.names[1] AS old_name
+            FROM tables AS t
+            JOIN pg_catalog.pg_class AS c ON c.oid = t.table_oid
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            JOIN sql_saga.era AS e ON (e.table_schema, e.table_name) = (n.nspname, c.relname)
+            CROSS JOIN LATERAL (
+                -- DISTINCT: a listed name may repeat; array_replace below replaces every occurrence.
+                SELECT pg_catalog.array_agg(DISTINCT u.name) AS names
+                FROM pg_catalog.unnest(e.ephemeral_columns) AS u(name)
+                WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                                  WHERE (a.attrelid, a.attname) = (c.oid, u.name) AND a.attnum > 0 AND NOT a.attisdropped)
+            ) AS missing
+            WHERE pg_catalog.cardinality(missing.names) = 1
+              AND NOT renamed.new_name = ANY (e.ephemeral_columns)
+              AND EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE (a.attrelid, a.attname) = (c.oid, renamed.new_name) AND a.attnum > 0 AND NOT a.attisdropped)
+        LOOP
+            UPDATE sql_saga.era AS e
+            SET ephemeral_columns = pg_catalog.array_replace(e.ephemeral_columns, target.old_name, renamed.new_name)
+            WHERE (e.table_schema, e.table_name, e.era_name) = (target.table_schema, target.table_name, target.era_name);
+            RAISE DEBUG 'sql_saga: era "%" on %.% follows the rename of ephemeral column "%" to "%"',
+                target.era_name, target.table_schema, target.table_name, target.old_name, renamed.new_name;
+        END LOOP;
+    END LOOP;
+
+    /* RENAME CONSTRAINT: unique_keys.pk_consistency_constraint_names. */
+    FOR renamed IN
+        SELECT DISTINCT con.conrelid AS table_oid, con.conname AS new_name
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_constraint AS con ON con.oid = ev.objid
+        WHERE ev.classid = 'pg_catalog.pg_constraint'::pg_catalog.regclass
+          AND con.contype = 'x'
+    LOOP
+        FOR target IN
+            SELECT uk.unique_key_name, missing.names[1] AS old_name
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            JOIN sql_saga.unique_keys AS uk ON (uk.table_schema, uk.table_name) = (n.nspname, c.relname)
+            CROSS JOIN LATERAL (
+                SELECT pg_catalog.array_agg(u.name) AS names
+                FROM pg_catalog.unnest(uk.pk_consistency_constraint_names) AS u(name)
+                WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS x WHERE (x.conrelid, x.conname) = (c.oid, u.name))
+            ) AS missing
+            WHERE c.oid = renamed.table_oid
+              AND uk.key_type = 'natural'
+              AND pg_catalog.cardinality(missing.names) = 1
+              AND NOT renamed.new_name = ANY (uk.pk_consistency_constraint_names)
+        LOOP
+            UPDATE sql_saga.unique_keys AS uk
+            SET pk_consistency_constraint_names = pg_catalog.array_replace(uk.pk_consistency_constraint_names, target.old_name, renamed.new_name)
+            WHERE uk.unique_key_name = target.unique_key_name;
+            RAISE DEBUG 'sql_saga: unique key "%" follows the rename of pk consistency constraint "%" to "%"',
+                target.unique_key_name, target.old_name, renamed.new_name;
+        END LOOP;
+    END LOOP;
+END;
+$__internal_era_ephemeral_and_pk_consistency_rename_follow$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_era_ephemeral_and_pk_consistency_rename_follow() FROM PUBLIC;
+-- ---- end 1.3 small2 ----
+
 CREATE FUNCTION sql_saga.rename_following()
  RETURNS event_trigger
  LANGUAGE plpgsql
@@ -1244,6 +1342,12 @@ BEGIN
             FROM pg_catalog.pg_event_trigger_ddl_commands() AS c
             WHERE c.command_tag = 'ALTER TABLE' AND c.classid = 'pg_catalog.pg_class'::regclass));
     END IF;
+
+    -- ---- 1.3 small2: era.ephemeral_columns follow RENAME COLUMN, pk consistency names follow RENAME CONSTRAINT ----
+    IF is_alter_table THEN
+        PERFORM sql_saga.__internal_era_ephemeral_and_pk_consistency_rename_follow();
+    END IF;
+    -- ---- end 1.3 small2 ----
 
     -- Follow renames of the bounds check constraint (NOT isempty(range)).
     FOR sql IN

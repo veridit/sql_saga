@@ -659,6 +659,8 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   COMMIT;
   ```
 
+  **Native temporal foreign keys are not triggers.** Only regular-to-temporal foreign keys (`add_regular_foreign_key`) have `sql_saga` triggers that `disable_temporal_triggers` disables. A temporal-to-temporal foreign key (`add_foreign_key`) is a native PostgreSQL constraint (`FOREIGN KEY ... PERIOD`) with no `sql_saga` triggers, so `disable_temporal_triggers` leaves it unchanged. Native temporal foreign keys are created `DEFERRABLE`, so defer them in the same transaction instead, for example `SET CONSTRAINTS etl.location_legal_unit_id_valid DEFERRED;` (or `SET CONSTRAINTS ALL DEFERRED;`). They are then checked at commit, or at `SET CONSTRAINTS ... IMMEDIATE`. When the tables passed to `disable_temporal_triggers` reference or are referenced by native temporal foreign keys, it raises a NOTICE that names them and gives the `SET CONSTRAINTS ... DEFERRED` statement to run.
+
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 

@@ -884,22 +884,26 @@ BEGIN
 END;
 $do$;
 NOTICE:  --- Processing Batch 1 ---
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS etl.activity_legal_unit_id_valid, etl.location_legal_unit_id_valid, etl.stat_for_unit_legal_unit_id_valid DEFERRED
 NOTICE:  Processing statistic: employees for batch 1
 NOTICE:  Processing statistic: turnover for batch 1
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: manufacturing for batch 1
 NOTICE:  Processing activity type: retail for batch 1
 NOTICE:  --- Processing Batch 2 ---
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS etl.activity_legal_unit_id_valid, etl.location_legal_unit_id_valid, etl.stat_for_unit_legal_unit_id_valid DEFERRED
 NOTICE:  Processing statistic: employees for batch 2
 NOTICE:  Processing statistic: turnover for batch 2
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: retail for batch 2
 NOTICE:  --- Processing Batch 3 ---
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS etl.activity_legal_unit_id_valid, etl.location_legal_unit_id_valid, etl.stat_for_unit_legal_unit_id_valid DEFERRED
 NOTICE:  Processing statistic: employees for batch 3
 NOTICE:  Processing statistic: turnover for batch 3
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: retail for batch 3
 NOTICE:  --- Processing Batch 4 ---
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS etl.activity_legal_unit_id_valid, etl.location_legal_unit_id_valid, etl.stat_for_unit_legal_unit_id_valid DEFERRED
 NOTICE:  Processing statistic: employees for batch 4
 NOTICE:  Processing statistic: turnover for batch 4
 NOTICE:  Processing identifier type: tax (column: tax_ident)

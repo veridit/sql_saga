@@ -16,7 +16,8 @@ BEGIN
 
     -- Get metadata about the view's underlying table.
     -- Resolution order for ephemeral_columns: view-level override takes precedence over era-level default.
-    SELECT v.table_schema, v.table_name, v.era_name, v.generated_columns,
+    -- table_oid quotes each part: schema and table names may need quoting ("Odd ""Schema"""."Ta'ble").
+    SELECT v.table_schema, v.table_name, v.era_name, v.generated_columns, pg_catalog.format('%I.%I', v.table_schema, v.table_name)::regclass AS table_oid,
            COALESCE(v.ephemeral_columns, e.ephemeral_columns) AS ephemeral_columns,
            e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
            e.range_subtype_category, e.range_subtype, e.range_type
@@ -105,7 +106,7 @@ BEGIN
             )
             INTO v_cols_def
             FROM pg_attribute pa
-            WHERE pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
+            WHERE pa.attrelid = info.table_oid
               AND pa.attname <> ALL(info.generated_columns)
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
@@ -229,7 +230,7 @@ BEGIN
                 string_agg(format('($1->>%L)::%s', key, format_type(pa.atttypid, pa.atttypmod)), ', ')
             INTO v_insert_cols, v_insert_vals
             FROM jsonb_object_keys(jnew) AS key
-            JOIN pg_attribute pa ON pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
+            JOIN pg_attribute pa ON pa.attrelid = info.table_oid
                                 AND pa.attname = key
             WHERE pa.attnum > 0 AND NOT pa.attisdropped;
 
@@ -241,7 +242,7 @@ BEGIN
 
     -- Use temporal_merge to apply the change.
     CALL sql_saga.temporal_merge(
-        target_table => (info.table_schema || '.' || info.table_name)::regclass,
+        target_table => info.table_oid,
         source_table => temp_source_table_name::regclass,
         primary_identity_columns => identifier_columns,
         -- Use UPDATE mode with filtered source (only changed columns).
