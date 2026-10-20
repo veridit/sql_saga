@@ -37,6 +37,15 @@
 #
 set -u
 
+# md5 of stdin as a bare hex digest, on macOS (md5) and Linux (md5sum) alike. Without it, a missing
+# command would turn every fingerprint into the same empty string and make comparisons meaningless.
+if ! command -v md5 >/dev/null 2>&1; then
+    md5() {
+        if [ "${1:-}" = -q ]; then md5sum "$2" | cut -d' ' -f1; else md5sum | cut -d' ' -f1; fi
+    }
+fi
+[ -n "$(printf x | md5)" ] || { echo "HARNESS ERROR: no working md5/md5sum" >&2; exit 2; }
+
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
