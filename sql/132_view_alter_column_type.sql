@@ -520,6 +520,26 @@ FROM pg_catalog.pg_attribute AS a JOIN pg_catalog.pg_class AS c ON c.oid = a.att
 WHERE c.oid IN ('vat.inh_parent'::regclass, 'vat.inh_child'::regclass) AND a.attname = 'valid_range' ORDER BY c.relname;
 SELECT vat.integrity('at the end');
 
+\echo '--- 8. A type change whose ddl_command_end did not run leaves a pending view: check_integrity reports it'
+-- Disabling only sql_saga_rename_following lets the start hook drop the view without the end hook recreating it.
+-- The diagnostic names a column change in general (not only DROP COLUMN) and gives the statements that repair it.
+-- Rolled back: nothing pending or orphaned is left.
+BEGIN;
+CREATE TABLE vat.pending_type (id integer NOT NULL, payload integer, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('vat.pending_type', 'valid_range') \g /dev/null
+SELECT sql_saga.add_unique_key('vat.pending_type', ARRAY['id'], key_type => 'primary') \g /dev/null
+SELECT sql_saga.add_for_portion_of_view('vat.pending_type') \g /dev/null
+ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
+ALTER TABLE vat.pending_type ALTER COLUMN payload TYPE bigint;
+ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
+SELECT to_regclass('vat.pending_type__for_portion_of_valid') AS pending_type_view,
+       (SELECT count(*) FROM sql_saga.__internal_updatable_view_pending) AS pending_rows;
+SELECT vat.integrity('with the pending TYPE view left behind');
+ROLLBACK;
+SELECT to_regclass('vat.pending_type') AS pending_type_table,
+       (SELECT count(*) FROM sql_saga.__internal_updatable_view_pending) AS pending_rows;
+SELECT vat.integrity('after ROLLBACK of the pending TYPE view');
+
 SET client_min_messages = warning;
 ALTER EXTENSION btree_gist DROP VIEW vat.unit_stat__for_portion_of_valid;
 RESET search_path;
