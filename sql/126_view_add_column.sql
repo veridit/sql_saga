@@ -242,18 +242,51 @@ SELECT id, label, value_int, doubled, region_id, valid_from, valid_until FROM va
 SELECT id, label FROM vac.unit_loc__current_valid;
 SELECT vac.integrity('after updates through the views after RENAME COLUMN');
 
-\echo '--- 8. RENAME COLUMN of a column sql_saga manages: accepted, and the catalogs follow (as in 1.2)'
+\echo '--- 8. RENAME COLUMN of a column sql_saga manages: accepted, the catalogs and both views follow'
+-- The view columns of both tables, in attnum order.
+CREATE VIEW vac.view_column_names AS
+SELECT uv.view_name,
+       (SELECT array_agg(a.attname ORDER BY a.attnum)
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = format('%I.%I', uv.view_schema, uv.view_name)::regclass
+          AND a.attnum > 0 AND NOT a.attisdropped) AS view_columns
+FROM sql_saga.updatable_view AS uv
+WHERE uv.table_schema = 'vac'
+ORDER BY uv.view_name;
+
+-- The identifier of the for_portion_of view.
 BEGIN;
 ALTER TABLE vac.unit_stat RENAME COLUMN id TO unit_id;
 SELECT uk.unique_key_name, uk.column_names FROM sql_saga.unique_keys AS uk WHERE (uk.table_schema, uk.table_name) = ('vac', 'unit_stat');
+TABLE vac.view_column_names;
+SELECT vac.integrity('after RENAME COLUMN id TO unit_id');
+UPDATE vac.unit_stat__for_portion_of_valid SET value_int = 9, valid_from = '2024-11-01', valid_until = 'infinity' WHERE unit_id = 1;
+SELECT unit_id, label, value_int, valid_from, valid_until FROM vac.unit_stat WHERE valid_from >= '2024-10-01' ORDER BY unit_id, valid_from;
+SELECT vac.integrity('after an update through the view on unit_id');
 ROLLBACK;
+
+-- The era's valid_from column of the for_portion_of view.
 BEGIN;
 ALTER TABLE vac.unit_stat RENAME COLUMN valid_from TO starts_on;
 SELECT e.era_name, e.valid_from_column_name, e.valid_until_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('vac', 'unit_stat');
+TABLE vac.view_column_names;
+SELECT vac.integrity('after RENAME COLUMN valid_from TO starts_on');
+UPDATE vac.unit_stat__for_portion_of_valid SET value_int = 9, starts_on = '2024-11-01', valid_until = 'infinity' WHERE id = 1;
+SELECT id, label, value_int, starts_on, valid_until FROM vac.unit_stat WHERE starts_on >= '2024-10-01' ORDER BY id, starts_on;
+SELECT vac.integrity('after an update through the view on starts_on');
 ROLLBACK;
+
+-- The era's range column of the current view.
 BEGIN;
 ALTER TABLE vac.unit_loc RENAME COLUMN valid_range TO validity;
 SELECT e.era_name, e.range_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('vac', 'unit_loc');
+TABLE vac.view_column_names;
+SELECT vac.integrity('after RENAME COLUMN valid_range TO validity');
+SET LOCAL vac.today = '2024-11-01';
+UPDATE vac.unit_loc__current_valid SET value_int = 9 WHERE id = 1;
+SELECT id, label, value_int, validity FROM vac.unit_loc WHERE valid_from >= '2024-10-01' ORDER BY id, valid_from;
+SELECT id, value_int, validity FROM vac.unit_loc__current_valid;
+SELECT vac.integrity('after an update through the view on validity');
 ROLLBACK;
 SELECT vac.integrity('at the end');
 
