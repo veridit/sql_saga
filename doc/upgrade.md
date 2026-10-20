@@ -38,7 +38,7 @@ The released standalone `sql_saga--1.0--1.1.sql` is frozen and keeps the defect.
    - `sql_saga_upgrade_preflight.sql`
 
    and the libraries in `$(pg_config --pkglibdir)`: `$libdir/sql_saga` and `$libdir/sql_saga_native`.
-2. Restart PostgreSQL after replacing either library. The loaded native library must be the 1.2 build.
+2. Restart PostgreSQL after replacing either library. The loaded native library must be the 1.2 build. **Stop application writers before this restart, not only before the update**, and keep them stopped until the update and `check_integrity()` have passed (see [Upgrade](#upgrade)). Between the restart and `ALTER EXTENSION sql_saga UPDATE`, the 1.2 libraries run against the old 1.0 or 1.1 schema. For example, the 1.2 history trigger on a system-versioned table calls a helper function that 1.0 does not have, so a write in that interval can fail. The restart therefore belongs inside the maintenance window, together with the update.
 3. Run the read-only preflight in every database:
 
 ```bash
@@ -82,7 +82,7 @@ To read the privileges the replacement will get under the current default privil
 
 ## Upgrade
 
-Stop application writers, confirm the starting version is 1.0 or 1.1, then update directly to 1.2:
+Application writers must already be stopped: they stop before the restart into the 1.2 libraries, not just before this step. Confirm the starting version is 1.0 or 1.1, then update directly to 1.2:
 
 ```sql
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
@@ -205,11 +205,23 @@ psql -X -v ON_ERROR_STOP=1 --single-transaction -d mydb -c "CREATE EXTENSION IF 
 <!-- END old-dump-restore -->
 
 The whole restore, the update and the integrity check are one transaction: if any step fails, `mydb` is left
-exactly as it was (empty). `mydb` must be a new, empty database. Equivalent with `pg_restore` itself, for
-example in a split restore: run `CREATE EXTENSION sql_saga VERSION '<old>' CASCADE` in the new database
-before the first `pg_restore` invocation, and `ALTER EXTENSION sql_saga UPDATE` plus
-`SELECT sql_saga.check_integrity()` after the last one (that is not atomic across invocations). Do not use
-`pg_restore --clean` for an old dump: it drops the extension you installed and recreates the default version.
+exactly as it was (empty). `mydb` must be a new, empty database. The same works with `pg_restore` itself, for
+example in a split restore. Run the steps in this order (this is not atomic across invocations):
+
+1. `CREATE EXTENSION sql_saga VERSION '<old>' CASCADE` in the new database.
+2. Every `pg_restore` invocation for schema and data.
+3. If those invocations used `--no-acl` (or `-x`), the archive's ACL entries, for example
+   `pg_restore -l backup.dump | grep ' ACL ' > acl.list` and then `pg_restore -L acl.list -d mydb backup.dump`.
+4. `ALTER EXTENSION sql_saga UPDATE`.
+5. `SELECT sql_saga.check_integrity()`.
+
+The ACL entries must be restored before the update, not only before the explicit check: the update itself ends
+with `check_integrity()`. The access gate on a system-versioned table's history view is part of its canonical
+shape, so without its grants the update and the check can refuse with `history family definition is noncanonical`
+(the 1.1 path preserves existing family privileges rather than recreating them). Restore the ACL entries before the
+check for a dump of any version.
+
+Do not use `pg_restore --clean` for an old dump: it drops the extension you installed and recreates the default version.
 
 If you install the wrong old version, the procedure usually fails and rolls back (a 1.1 dump with system
 versioning or managed views restored as 1.0; a 1.0 dump with regular foreign keys or system versioning restored
