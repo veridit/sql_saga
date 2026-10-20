@@ -822,6 +822,94 @@ prepare_updatable_view_drop_column(FunctionCallInfo fcinfo, AlterTableStmt *stmt
 }
 /* ---- end 1.3 A3 ---- */
 
+/* ---- 1.3 TYPE: managed updatable views follow ALTER COLUMN ... TYPE (see src/2o_updatable_view_column_follow.sql) ---- */
+/*
+ * ddl_command_start of ALTER TABLE ... ALTER COLUMN ... TYPE: hand the table, the retyped column names
+ * and the column names the same statement drops to sql_saga.__internal_updatable_view_prepare_alter_type.
+ * It refuses type changes of era-bound and foreign key columns, and records and drops the managed views
+ * that show a retyped column (recreated at ddl_command_end), so that PostgreSQL lets the type change.
+ * Does nothing when the installed SQL version has no such function. Returns true when the statement
+ * has a type change (then the DROP COLUMN preparation is part of it and must not run separately).
+ */
+static bool
+prepare_updatable_view_alter_column_type(FunctionCallInfo fcinfo, AlterTableStmt *stmt)
+{
+	ListCell   *cell;
+	List	   *type_names = NIL;
+	List	   *drop_names = NIL;
+	Oid			relation_oid;
+	Datum	   *elems;
+	ArrayType  *type_array;
+	ArrayType  *drop_array;
+	Oid			argtypes[] = {OIDOID, TEXTARRAYOID, TEXTARRAYOID, BOOLOID};
+	Datum		values[4];
+	char		nulls[] = {' ', ' ', ' ', ' '};
+	int			n;
+	int			i;
+	int			ret;
+
+	if (stmt->objtype != OBJECT_TABLE || stmt->relation == NULL)
+		return false;
+
+	foreach(cell, stmt->cmds)
+	{
+		AlterTableCmd *alter_cmd = lfirst_node(AlterTableCmd, cell);
+
+		if (alter_cmd->subtype == AT_AlterColumnType && alter_cmd->name != NULL)
+			type_names = lappend(type_names, alter_cmd->name);
+		else if (alter_cmd->subtype == AT_DropColumn && alter_cmd->name != NULL)
+			drop_names = lappend(drop_names, alter_cmd->name);
+	}
+	if (type_names == NIL)
+		return false;
+
+	relation_oid = RangeVarGetRelid(stmt->relation, NoLock, true);
+	if (!OidIsValid(relation_oid))
+		return true;
+
+	/* As for DROP COLUMN: leave a caller who may not alter the table to PostgreSQL's own check. */
+	if (!object_ownercheck(RelationRelationId, relation_oid, GetUserId()))
+		return true;
+
+	if (!OidIsValid(LookupFuncName(list_make2(makeString("sql_saga"),
+											  makeString("__internal_updatable_view_prepare_alter_type")),
+								   4, argtypes, true)))
+		return false;
+
+	n = list_length(type_names);
+	elems = (Datum *) palloc(sizeof(Datum) * n);
+	i = 0;
+	foreach(cell, type_names)
+		elems[i++] = CStringGetTextDatum((char *) lfirst(cell));
+	type_array = construct_array(elems, n, TEXTOID, -1, false, TYPALIGN_INT);
+
+	n = list_length(drop_names);
+	elems = (Datum *) palloc(sizeof(Datum) * (n > 0 ? n : 1));
+	i = 0;
+	foreach(cell, drop_names)
+		elems[i++] = CStringGetTextDatum((char *) lfirst(cell));
+	drop_array = construct_array(elems, n, TEXTOID, -1, false, TYPALIGN_INT);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	values[0] = ObjectIdGetDatum(relation_oid);
+	values[1] = PointerGetDatum(type_array);
+	values[2] = PointerGetDatum(drop_array);
+	/* A type change recurses to the descendants unless ONLY was given (PostgreSQL then refuses it). */
+	values[3] = BoolGetDatum(stmt->relation->inh);
+	ret = spi_execute_as_function_owner(fcinfo,
+		"SELECT sql_saga.__internal_updatable_view_prepare_alter_type($1, $2, $3, $4)",
+		4, argtypes, values, nulls, false);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+	return true;
+}
+/* ---- end 1.3 TYPE ---- */
+
 Datum
 refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 {
@@ -870,7 +958,8 @@ refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 	}
 	else if (IsA(trigdata->parsetree, AlterTableStmt))
 	{
-		prepare_updatable_view_drop_column(fcinfo, castNode(AlterTableStmt, trigdata->parsetree));
+		if (!prepare_updatable_view_alter_column_type(fcinfo, castNode(AlterTableStmt, trigdata->parsetree)))	/* 1.3 TYPE */
+			prepare_updatable_view_drop_column(fcinfo, castNode(AlterTableStmt, trigdata->parsetree));
 		PG_RETURN_NULL();
 	}
 	else

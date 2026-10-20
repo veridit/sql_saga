@@ -27,7 +27,21 @@
  *                 it makes PostgreSQL (or, with CASCADE, drop_protection) refuse it as before.
  *   RENAME COLUMN the view columns are renamed in place, the identifier arguments of the INSTEAD OF
  *                 trigger and updatable_view.ephemeral_columns follow.
- *   ALTER COLUMN TYPE of a column a view shows is refused by PostgreSQL as before (not followed).
+ *   ALTER COLUMN TYPE (ddl_command_start, C hook, __internal_updatable_view_prepare_alter_type): first the
+ *                 refusals, before anything changes and whether or not a view exists. The type of an era's
+ *                 range column or of its boundary columns (valid_from, valid_until, valid_to) is bound into
+ *                 the era catalog, the synchronization trigger and the bounds constraints, so it is refused,
+ *                 with the public migration as HINT. A column a sql_saga foreign key uses, on either side,
+ *                 is refused, naming the foreign keys: the other table would have to change with it, and
+ *                 sql_saga never alters it. Then the managed views that show a changed column (on the
+ *                 table and the inheritance descendants the change recurses to) are recorded and dropped as
+ *                 for DROP COLUMN and recreated at ddl_command_end with the new types. A user object on such
+ *                 a view refuses the statement, as for DROP COLUMN. Any other column, including an
+ *                 identifier no foreign key uses, simply follows. When the same statement also drops a
+ *                 column sql_saga manages, the views are left in place so that PostgreSQL refuses it.
+ *
+ * The NOTICE of a recreated view names exactly what changed: the columns it no longer shows, the columns
+ * that have a new type and the columns that are new.
  *
  * All paths recompute sql_saga.updatable_view.generated_columns from the base table.
  *
@@ -60,6 +74,7 @@ CREATE TABLE sql_saga.__internal_updatable_view_pending (
     view_comment text,
     view_reloptions text[],
     view_columns name[] NOT NULL,      -- The view's columns before the drop, in order.
+    view_column_types text[] NOT NULL, -- Their types (format_type), in the same order, for the NOTICE.
     view_extension name,               -- The extension the view was a member of (NULL: none).
     view_delete_mode name,             -- A current view's delete mode (first trigger argument), for repair hints.
     column_facts jsonb NOT NULL,       -- [{name, acl (aclitem[] as text[]), comment, default (pg_get_expr)}]
@@ -248,12 +263,14 @@ BEGIN
 
     INSERT INTO sql_saga.__internal_updatable_view_pending
         (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func,
-         ephemeral_columns, view_acl, view_comment, view_reloptions, view_columns, view_extension, view_delete_mode,
+         ephemeral_columns, view_acl, view_comment, view_reloptions, view_columns, view_column_types, view_extension, view_delete_mode,
          column_facts, trigger_facts)
     SELECT uv.view_schema, uv.view_name, uv.view_type, uv.table_schema, uv.table_name, uv.era_name,
            uv.trigger_name, uv.current_func, uv.ephemeral_columns,
            c.relacl, pg_catalog.obj_description(v_view_oid, 'pg_class'), c.reloptions,
            ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute AS a
+                 WHERE a.attrelid = v_view_oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum),
+           ARRAY(SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_catalog.pg_attribute AS a
                  WHERE a.attrelid = v_view_oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum),
            sql_saga.__internal_updatable_view_extension(v_view_oid),
            CASE WHEN uv.view_type = 'current' THEN
@@ -306,6 +323,9 @@ DECLARE
     v_column jsonb;
     v_trigger jsonb;
     v_removed text;
+    v_retyped text;
+    v_added text;
+    v_changes text[];
     v_extension name;
 BEGIN
     v_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', pending.table_schema, pending.table_name));
@@ -392,7 +412,8 @@ BEGIN
     -- The catalog row comes last: until then, the nested event triggers see an unmanaged view.
     INSERT INTO sql_saga.updatable_view SELECT v_row.*;
 
-    -- The columns the view showed before and no longer shows.
+    -- What changed, from the view's columns and types before (pending) and after: the columns it no longer
+    -- shows, the columns with a new type, and the new columns, each in column order.
     SELECT pg_catalog.string_agg(pg_catalog.quote_ident(old_column.name), ', ' ORDER BY old_column.n)
     INTO v_removed
     FROM pg_catalog.unnest(pending.view_columns) WITH ORDINALITY AS old_column(name, n)
@@ -400,11 +421,41 @@ BEGIN
         SELECT FROM pg_catalog.pg_attribute AS a
         WHERE (a.attrelid, a.attname) = (v_view_oid, old_column.name) AND a.attnum > 0 AND NOT a.attisdropped);
 
+    SELECT pg_catalog.string_agg(pg_catalog.quote_ident(a.attname), ', ' ORDER BY a.attnum)
+    INTO v_retyped
+    FROM pg_catalog.pg_attribute AS a
+    JOIN ROWS FROM (pg_catalog.unnest(pending.view_columns), pg_catalog.unnest(pending.view_column_types)) AS old_column(name, type_name)
+      ON old_column.name = a.attname
+    WHERE a.attrelid = v_view_oid AND a.attnum > 0 AND NOT a.attisdropped
+      AND pg_catalog.format_type(a.atttypid, a.atttypmod) IS DISTINCT FROM old_column.type_name;
+
+    SELECT pg_catalog.string_agg(pg_catalog.quote_ident(a.attname), ', ' ORDER BY a.attnum)
+    INTO v_added
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = v_view_oid AND a.attnum > 0 AND NOT a.attisdropped
+      AND NOT a.attname = ANY (pending.view_columns);
+
+    v_changes := ARRAY[]::text[];
+    IF v_removed IS NOT NULL THEN
+        v_changes := v_changes || pg_catalog.format('without column(s) %s', v_removed);
+    END IF;
+    IF v_retyped IS NOT NULL THEN
+        v_changes := v_changes || pg_catalog.format('with the new type of column(s) %s', v_retyped);
+    END IF;
+    IF v_added IS NOT NULL THEN
+        v_changes := v_changes || pg_catalog.format('with new column(s) %s', v_added);
+    END IF;
+
     RAISE NOTICE 'sql_saga: Dropped and recreated % view "%"%, owned by the table owner, restoring its grants, comments, column defaults, triggers and view options',
         v_row.view_type, sql_saga.__internal_display_name(v_view_oid::pg_catalog.regclass),
-        CASE WHEN v_removed IS NULL
+        CASE WHEN pg_catalog.cardinality(v_changes) = 0
              THEN pg_catalog.format(' to match the columns of table "%s"', sql_saga.__internal_display_name(v_table_oid::pg_catalog.regclass))
-             ELSE pg_catalog.format(' without column(s) %s of table "%s"', v_removed, sql_saga.__internal_display_name(v_table_oid::pg_catalog.regclass)) END;
+             ELSE pg_catalog.format(' %s of table "%s"',
+                      -- "A", "A and B", "A, B and C"
+                      CASE WHEN pg_catalog.cardinality(v_changes) = 1 THEN v_changes[1]
+                           ELSE pg_catalog.array_to_string(v_changes[1:pg_catalog.cardinality(v_changes) - 1], ', ')
+                                || ' and ' || v_changes[pg_catalog.cardinality(v_changes)] END,
+                      sql_saga.__internal_display_name(v_table_oid::pg_catalog.regclass)) END;
 END;
 $__internal_updatable_view_restore$;
 
@@ -479,6 +530,47 @@ AS $__internal_updatable_view_showing_columns$
 $__internal_updatable_view_showing_columns$;
 
 /*
+ * Whether a DROP COLUMN of these columns drops one that sql_saga manages for a managed view of the table
+ * (or of a descendant losing the column with it): an era, key, foreign key, view identifier, ephemeral or
+ * excluded column. Such a drop is not ours to accommodate: the views stay in place, so that their
+ * dependency makes PostgreSQL (or, with CASCADE, drop_protection) refuse it.
+ */
+CREATE FUNCTION sql_saga.__internal_updatable_view_drop_is_managed(table_oid oid, column_names text[], recurse boolean)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog, pg_temp
+AS $__internal_updatable_view_drop_is_managed$
+    SELECT EXISTS (
+        SELECT
+        FROM sql_saga.__internal_updatable_view_showing_columns(table_oid, column_names, recurse) AS v
+        CROSS JOIN pg_catalog.unnest(column_names) AS d(column_name)
+        WHERE EXISTS (
+                  SELECT FROM sql_saga.era AS e
+                  WHERE (e.table_schema, e.table_name) = ((v.uv_row).table_schema, (v.uv_row).table_name)
+                    AND (d.column_name IN (e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name)
+                         OR d.column_name = ANY (e.ephemeral_columns)))
+           OR EXISTS (
+                  SELECT FROM sql_saga.unique_keys AS uk
+                  WHERE (uk.table_schema, uk.table_name) = ((v.uv_row).table_schema, (v.uv_row).table_name)
+                    AND (d.column_name = ANY (uk.column_names) OR d.column_name = ANY (uk.mutually_exclusive_columns)))
+           OR EXISTS (
+                  SELECT FROM sql_saga.foreign_keys AS fk
+                  WHERE (fk.table_schema, fk.table_name) = ((v.uv_row).table_schema, (v.uv_row).table_name)
+                    AND d.column_name = ANY (fk.column_names))
+           OR EXISTS (
+                  SELECT FROM sql_saga.system_time_era AS ste
+                  WHERE (ste.table_schema, ste.table_name) = ((v.uv_row).table_schema, (v.uv_row).table_name)
+                    AND d.column_name = ANY (ste.excluded_column_names))
+           OR d.column_name = ANY ((v.uv_row).ephemeral_columns)
+           OR EXISTS (
+                  SELECT FROM pg_catalog.pg_trigger AS t
+                  WHERE (t.tgrelid, t.tgname) = (v.view_oid, (v.uv_row).trigger_name)
+                    AND d.column_name = ANY (pg_catalog.string_to_array(
+                        pg_catalog.rtrim(pg_catalog.encode(t.tgargs, 'escape'), E'\\000'), E'\\000'))));
+$__internal_updatable_view_drop_is_managed$;
+
+/*
  * ddl_command_start of ALTER TABLE ... DROP COLUMN (called from the C event trigger, as the extension
  * owner, with the dropped column names): record and drop every managed view of the table (and, unless
  * ONLY, of the inheritance descendants that lose the column with it) that shows one of the dropped
@@ -510,40 +602,9 @@ BEGIN
      * the DROP COLUMN fail as before (or, with CASCADE, drop_protection refuses it). The catalogs follow
      * renames (rename_following, __internal_updatable_view_follow_shape), so the current names match.
      */
-    FOR v_view IN
-        SELECT (d.uv_row).table_schema AS table_schema, (d.uv_row).table_name AS table_name,
-               d.view_oid, (d.uv_row).trigger_name AS trigger_name, (d.uv_row).ephemeral_columns AS ephemeral_columns
-        FROM sql_saga.__internal_updatable_view_showing_columns(table_oid, column_names, recurse) AS d
-    LOOP
-        IF EXISTS (
-            SELECT FROM pg_catalog.unnest(column_names) AS d(column_name)
-            WHERE EXISTS (
-                      SELECT FROM sql_saga.era AS e
-                      WHERE (e.table_schema, e.table_name) = (v_view.table_schema, v_view.table_name)
-                        AND (d.column_name IN (e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name)
-                             OR d.column_name = ANY (e.ephemeral_columns)))
-               OR EXISTS (
-                      SELECT FROM sql_saga.unique_keys AS uk
-                      WHERE (uk.table_schema, uk.table_name) = (v_view.table_schema, v_view.table_name)
-                        AND (d.column_name = ANY (uk.column_names) OR d.column_name = ANY (uk.mutually_exclusive_columns)))
-               OR EXISTS (
-                      SELECT FROM sql_saga.foreign_keys AS fk
-                      WHERE (fk.table_schema, fk.table_name) = (v_view.table_schema, v_view.table_name)
-                        AND d.column_name = ANY (fk.column_names))
-               OR EXISTS (
-                      SELECT FROM sql_saga.system_time_era AS ste
-                      WHERE (ste.table_schema, ste.table_name) = (v_view.table_schema, v_view.table_name)
-                        AND d.column_name = ANY (ste.excluded_column_names))
-               OR d.column_name = ANY (v_view.ephemeral_columns)
-               OR EXISTS (
-                      SELECT FROM pg_catalog.pg_trigger AS t
-                      WHERE (t.tgrelid, t.tgname) = (v_view.view_oid, v_view.trigger_name)
-                        AND d.column_name = ANY (pg_catalog.string_to_array(
-                            pg_catalog.rtrim(pg_catalog.encode(t.tgargs, 'escape'), E'\\000'), E'\\000'))))
-        THEN
-            RETURN;
-        END IF;
-    END LOOP;
+    IF sql_saga.__internal_updatable_view_drop_is_managed(table_oid, column_names, recurse) THEN
+        RETURN;
+    END IF;
 
     /* Refuse before any change when the rebuild would take a user object (view, rule, ...) with it. */
     FOR v_view IN
@@ -571,6 +632,168 @@ BEGIN
     END LOOP;
 END;
 $__internal_updatable_view_prepare_drop_column$;
+
+/*
+ * ddl_command_start of ALTER TABLE ... ALTER COLUMN ... TYPE (called from the C event trigger, as the
+ * extension owner, with the retyped columns and the columns the same statement drops). A type change
+ * recurses to every inheritance descendant (PostgreSQL requires it), so all of them are considered.
+ *
+ * 1. Refused, whether or not a view exists:
+ *    - an era's range column or boundary column (valid_from, valid_until, valid_to): its type is bound into
+ *      the era catalog (range_type, range_subtype), the synchronization trigger and the bounds constraints;
+ *    - a column a sql_saga foreign key uses, on either side: the referencing column, or a column of the
+ *      unique key it references. The other side would have to change with it, and sql_saga never alters
+ *      another table on the caller's behalf.
+ * 2. When the statement also drops a column sql_saga manages, nothing is done: the views stay in place and
+ *    PostgreSQL refuses the drop as before.
+ * 3. The managed views that show a retyped (or dropped) column are recorded and dropped, to be recreated by
+ *    __internal_updatable_view_follow_shape at ddl_command_end. A user object depending on one of them
+ *    would be lost with it, so the statement is refused before any change.
+ */
+CREATE FUNCTION sql_saga.__internal_updatable_view_prepare_alter_type(table_oid oid, type_column_names text[], drop_column_names text[], recurse boolean)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $__internal_updatable_view_prepare_alter_type$
+#variable_conflict use_variable
+DECLARE
+    v_bound record;
+    v_fk record;
+    v_views sql_saga.updatable_view[];
+    v_row sql_saga.updatable_view;
+    v_view_oid oid;
+    v_dependent text;
+    v_tables oid[];
+BEGIN
+    IF table_oid IS NULL OR type_column_names IS NULL OR pg_catalog.cardinality(type_column_names) = 0 THEN
+        RETURN;
+    END IF;
+    drop_column_names := COALESCE(drop_column_names, '{}');
+
+    -- The table and the descendants the type change recurses to, parents first.
+    WITH RECURSIVE tables(relation_oid, depth) AS (
+        SELECT table_oid, 0
+        UNION
+        SELECT i.inhrelid, t.depth + 1 FROM tables AS t JOIN pg_catalog.pg_inherits AS i ON i.inhparent = t.relation_oid
+        WHERE recurse
+    )
+    SELECT pg_catalog.array_agg(t.relation_oid ORDER BY t.depth, t.relation_oid)
+    INTO v_tables
+    FROM (SELECT tt.relation_oid, pg_catalog.min(tt.depth) AS depth FROM tables AS tt GROUP BY tt.relation_oid) AS t;
+
+    /* 1a. Era range and boundary columns. */
+    FOR v_bound IN
+        SELECT tab.relation_oid, e.era_name, d.column_name,
+               CASE d.column_name
+                   WHEN e.range_column_name THEN 'range column'
+                   WHEN e.valid_from_column_name THEN 'valid_from column'
+                   WHEN e.valid_until_column_name THEN 'valid_until column'
+                   ELSE 'valid_to column' END AS role
+        FROM pg_catalog.unnest(v_tables) WITH ORDINALITY AS tab(relation_oid, n)
+        JOIN pg_catalog.pg_class AS c ON c.oid = tab.relation_oid
+        JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+        JOIN sql_saga.era AS e ON (e.table_schema, e.table_name) = (ns.nspname, c.relname)
+        CROSS JOIN pg_catalog.unnest(type_column_names) WITH ORDINALITY AS d(column_name, m)
+        WHERE d.column_name IN (e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name)
+        ORDER BY tab.n, d.m, e.era_name COLLATE "C"
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'cannot alter type of column "%" of table "%" because it is the % of era "%" managed by sql_saga',
+            v_bound.column_name, sql_saga.__internal_display_name(v_bound.relation_oid::pg_catalog.regclass),
+            v_bound.role, v_bound.era_name
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Save and drop the era''s dependants with their drop functions (foreign keys with sql_saga.drop_foreign_key_by_name, unique keys with sql_saga.drop_unique_key, updatable views with sql_saga.drop_for_portion_of_view or sql_saga.drop_current_view), drop the era with sql_saga.drop_era(..., cleanup => false), change the range column and its boundary columns together, then add the era again with sql_saga.add_era and recreate the dependants.';
+    END LOOP;
+
+    /* 1b. Columns a sql_saga foreign key uses, as referencing column or as a column of the referenced key. */
+    FOR v_fk IN
+        SELECT tab.relation_oid, d.column_name,
+               pg_catalog.string_agg(pg_catalog.format('"%s" on table "%s"', fk.foreign_key_name,
+                   sql_saga.__internal_display_name(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name)::pg_catalog.regclass)),
+                   ', ' ORDER BY fk.foreign_key_name COLLATE "C") AS foreign_keys,
+               pg_catalog.min(tab.n) AS n, pg_catalog.min(d.m) AS m
+        FROM pg_catalog.unnest(v_tables) WITH ORDINALITY AS tab(relation_oid, n)
+        JOIN pg_catalog.pg_class AS c ON c.oid = tab.relation_oid
+        JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+        CROSS JOIN pg_catalog.unnest(type_column_names) WITH ORDINALITY AS d(column_name, m)
+        JOIN sql_saga.foreign_keys AS fk
+          ON ((fk.table_schema, fk.table_name) = (ns.nspname, c.relname) AND d.column_name = ANY (fk.column_names))
+          OR EXISTS (SELECT FROM sql_saga.unique_keys AS uk
+                     WHERE uk.unique_key_name = fk.unique_key_name
+                       AND (uk.table_schema, uk.table_name) = (ns.nspname, c.relname)
+                       AND d.column_name = ANY (uk.column_names))
+        GROUP BY tab.relation_oid, d.column_name
+        ORDER BY pg_catalog.min(tab.n), pg_catalog.min(d.m)
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'cannot alter type of column "%" of table "%" because sql_saga foreign key(s) % use it',
+            v_fk.column_name, sql_saga.__internal_display_name(v_fk.relation_oid::pg_catalog.regclass), v_fk.foreign_keys
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Drop the foreign key(s) with sql_saga.drop_foreign_key_by_name, change the type of the columns on both sides, then add the foreign key(s) again.';
+    END LOOP;
+
+    /* Fast exit: no managed view at all. */
+    IF NOT EXISTS (SELECT FROM sql_saga.updatable_view) THEN
+        RETURN;
+    END IF;
+
+    /* 2. A drop of a column sql_saga manages in the same statement: leave it to PostgreSQL to refuse. */
+    IF pg_catalog.cardinality(drop_column_names) > 0
+       AND sql_saga.__internal_updatable_view_drop_is_managed(table_oid, drop_column_names, recurse) THEN
+        RETURN;
+    END IF;
+
+    /* 3. The managed views to rebuild: on any of the tables, showing a retyped column, or a dropped one. */
+    SELECT pg_catalog.array_agg(v.uv_row ORDER BY (v.uv_row).view_schema COLLATE "C", (v.uv_row).view_name COLLATE "C")
+    INTO v_views
+    FROM (
+        SELECT m.uv_row
+        FROM (
+            SELECT uv AS uv_row,
+                   pg_catalog.to_regclass(pg_catalog.format('%I.%I', uv.view_schema, uv.view_name))::oid AS view_oid
+            FROM pg_catalog.unnest(v_tables) AS tab(relation_oid)
+            JOIN pg_catalog.pg_class AS c ON c.oid = tab.relation_oid
+            JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+            JOIN sql_saga.updatable_view AS uv ON (uv.table_schema, uv.table_name) = (ns.nspname, c.relname)
+        ) AS m
+        WHERE m.view_oid IS NOT NULL
+          AND EXISTS (SELECT FROM pg_catalog.pg_attribute AS va
+                      WHERE va.attrelid = m.view_oid AND va.attnum > 0 AND NOT va.attisdropped
+                        AND va.attname = ANY (type_column_names))
+        UNION
+        SELECT s.uv_row
+        FROM sql_saga.__internal_updatable_view_showing_columns(table_oid, drop_column_names, recurse) AS s
+        WHERE pg_catalog.cardinality(drop_column_names) > 0
+    ) AS v;
+    IF v_views IS NULL THEN
+        RETURN;
+    END IF;
+
+    /* Refuse before any change when the rebuild would take a user object (view, rule, ...) with it. */
+    FOREACH v_row IN ARRAY v_views
+    LOOP
+        v_view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', v_row.view_schema, v_row.view_name));
+        v_dependent := sql_saga.__internal_updatable_view_foreign_dependent(v_view_oid);
+        IF v_dependent IS NOT NULL THEN
+            RAISE EXCEPTION 'cannot alter type of column(s) % of table "%" because sql_saga must rebuild its managed % view "%" with the new type, and % depends on that view',
+                (SELECT pg_catalog.string_agg(pg_catalog.format('"%s"', d.c), ', ' ORDER BY d.n)
+                 FROM pg_catalog.unnest(type_column_names) WITH ORDINALITY AS d(c, n)),
+                sql_saga.__internal_display_name(pg_catalog.format('%I.%I', v_row.table_schema, v_row.table_name)::pg_catalog.regclass),
+                v_row.view_type,
+                sql_saga.__internal_display_name(v_view_oid::pg_catalog.regclass),
+                v_dependent
+                USING ERRCODE = 'dependent_objects_still_exist',
+                      HINT = 'Drop the dependent object, run the ALTER TABLE, then recreate the dependent object.';
+        END IF;
+    END LOOP;
+
+    FOREACH v_row IN ARRAY v_views
+    LOOP
+        PERFORM sql_saga.__internal_updatable_view_record_and_drop(v_row);
+    END LOOP;
+END;
+$__internal_updatable_view_prepare_alter_type$;
 
 /*
  * ddl_command_end of ALTER TABLE (rename_following): recreate the views that
@@ -769,4 +992,6 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_restore(sql_saga.__int
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_restore_pending() FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_showing_columns(oid, text[], boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_prepare_drop_column(oid, text[], boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_drop_is_managed(oid, text[], boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_prepare_alter_type(oid, text[], text[], boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_follow_shape(oid[]) FROM PUBLIC;
