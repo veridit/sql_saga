@@ -27,6 +27,14 @@ activity_legal_unit_id_fkey | activity_legal_unit_id_check | catalogued true | c
 contact_ident_type_ident_fkey | contact_ident_type_ident_check | catalogued true | constraint trigger | deferrable initially immediate | after insert or update of ident_type, ident | for each row | enabled
 CHECK constraints calling a function on activity, contact | 0, 0
 SET CONSTRAINTS <fk_check_constraint> DEFERRED, child before parent | accepted
+--- part 2: deferred child checks validate surviving row versions only
+deferred child: invalid insert then delete | accepted
+deferred child: invalid insert then correct | accepted
+deferred child: invalid update then correct | accepted
+deferred child: invalid insert survives | refused 23503
+deferred child: valid insert then invalid update survives | refused 23503
+deferred child: invalid insert then SIMPLE null | accepted
+deferred child: FULL partial null then correct | accepted
 --- part 2: drop protection
 DROP TRIGGER on the child-side trigger | P0001: cannot drop trigger "activity_legal_unit_id_check" on table "rft.activity" because it is used in era foreign key "activity_legal_unit_id_fkey"
 ALTER TABLE DROP CONSTRAINT on the child-side trigger | refused

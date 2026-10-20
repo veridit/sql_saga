@@ -303,6 +303,24 @@ SELECT 'SET CONSTRAINTS <fk_check_constraint> DEFERRED, child before parent | ' 
     (SELECT fk.fk_check_constraint FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'activity_legal_unit_id_fkey')));
 ROLLBACK TO SAVEPOINT set_constraints;
 
+\echo '--- part 2: deferred child checks validate surviving row versions only'
+-- Like a native deferred FK, an obsolete INSERT/UPDATE event must not reject a row that was deleted
+-- or corrected before the constraint is checked. Each outcome rolls its entire probe back.
+SELECT 'deferred child: invalid insert then delete | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); DELETE FROM rft.activity WHERE id = 90$$);
+SELECT 'deferred child: invalid insert then correct | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET legal_unit_id = 1 WHERE id = 90$$);
+SELECT 'deferred child: invalid update then correct | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; UPDATE rft.activity SET legal_unit_id = 999 WHERE id = 1; UPDATE rft.activity SET legal_unit_id = 1 WHERE id = 1$$);
+SELECT 'deferred child: invalid insert survives | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL)$$);
+SELECT 'deferred child: valid insert then invalid update survives | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 1, NULL); UPDATE rft.activity SET legal_unit_id = 999 WHERE id = 90$$);
+SELECT 'deferred child: invalid insert then SIMPLE null | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET legal_unit_id = NULL WHERE id = 90$$);
+SELECT 'deferred child: FULL partial null then correct | ' || rft.outcome(
+    $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.contact VALUES (90, 'tax', NULL); UPDATE rft.contact SET ident = '300' WHERE id = 90$$);
+
 \echo '--- part 2: drop protection'
 SELECT 'DROP TRIGGER on the child-side trigger | ' || rft.error_of('DROP TRIGGER activity_legal_unit_id_check ON rft.activity');
 SELECT 'ALTER TABLE DROP CONSTRAINT on the child-side trigger | '
