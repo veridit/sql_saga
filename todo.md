@@ -11,8 +11,27 @@ A living document of upcoming tasks.
 
 ## Future Work & New Features
 - [ ] Package with pgxman for easier distribution
+- [ ] Report the pg_dump load-order gaps upstream (extension configuration tables, and regular-FK CHECK helpers that
+      read other tables), owner approves the text first
+- [ ] Optional: fail closed on direct history-table reads between a parallel restore and its final
+      `sync_all_history_policies()` (restrictive pending policy); not built, owner judged it likely unnecessary
 
 # Done
+
+## 2026-10-20: Version 1.2
+- Drop protection judged per statement (no statement-scoped race); unforgeable policy-sync guard
+- `check_integrity()`, attribution-based tolerant drops; final integrity gate in the 1.1/1.0 to 1.2 update
+- Column snapshot for system-time families (restore column order compared as a set)
+- Managed relation rename/move refused with the safe move sequence; `history_table_must_exist`
+- Every system versioning create/drop announced with a NOTICE
+- Renames followed: FK child columns, referenced key columns (helper regenerated), era range/boundary columns
+- Shared regular-FK helpers upgrade cleanly (1.0 and 1.1); quoted helper names can be shared
+- Security: history policy/RLS protection no longer bypassable via `sql_saga.managing_history_policies` (1.1 bug)
+- Parallel restore without deadlocks (`sql_saga.parallel_restore`, `sync_all_history_policies()`); regular FKs to
+  temporal tables need a serial or single-transaction restore (documented)
+- Upgrade refuses customised `add_system_versioning` privileges with a whole-set hint; exact pre-upgrade check is a
+  rolled-back `ALTER EXTENSION UPDATE` (`doc/upgrade.md`)
+- Drop API timing harness (15 ms ceiling), upgrade/restore harnesses extended
 
 ## 2026-10-15: Privileges, RLS on history, restore, manual schema changes
 - ACL health check replaced by access-time privileges (STATBUS-481/482 REVOKE incident fixed; GRANT/REVOKE need
