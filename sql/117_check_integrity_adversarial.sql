@@ -189,7 +189,8 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- This exact name+identity-argument list was derived from a fresh v1.1 installation.
 -- New 1.2 inspection and formatting helpers are private.
 -- One intentional 1.2 change: add_system_versioning gained a trailing history_table_must_exist boolean
--- (DEFAULT false, so every 1.1 call form still works); its identity below is the 1.2 one. Everything
+-- (DEFAULT false, so every 1.1 call form still works); its identity below is the 1.2 one. One intentional
+-- 1.2 addition: sync_all_history_policies(), the final command of a parallel restore (README). Everything
 -- else must match 1.1 exactly.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
@@ -254,6 +255,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('rebuild_system_versioning_views(table_oid regclass, without_columns name[])'),
 ('set_era_ephemeral_columns(table_class regclass, era_name name, ephemeral_columns name[])'),
 ('set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[])'),
+('sync_all_history_policies()'),
 ('sync_history_policies(table_oid regclass)'),
 ('temporal_merge(IN target_table regclass, IN source_table regclass, IN primary_identity_columns text[], IN mode sql_saga.temporal_merge_mode, IN era_name name, IN row_id_column name, IN founding_id_column name, IN update_source_with_identity boolean, IN natural_identity_columns text[], IN delete_mode sql_saga.temporal_merge_delete_mode, IN update_source_with_feedback boolean, IN feedback_status_column name, IN feedback_status_key name, IN feedback_error_column name, IN feedback_error_key name, IN ephemeral_columns text[], IN delay_constraints boolean)'),
 ('temporal_merge_drop_cache()'),

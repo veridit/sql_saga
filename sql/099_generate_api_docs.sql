@@ -83,7 +83,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 3
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 4
             WHEN p.proname IN ('temporal_merge', 'disable_temporal_triggers', 'enable_temporal_triggers', 'manage_temporal_fk_triggers') THEN 5
-            WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era', 'sync_history_policies', 'rebuild_system_versioning_views') THEN 6
+            WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era', 'sync_history_policies', 'sync_all_history_policies', 'rebuild_system_versioning_views') THEN 6
             WHEN p.prokind = 'a' THEN 7
             WHEN p.proname LIKE 'health_check%' OR p.proname = 'check_integrity' THEN 8
             WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following', 'add_synchronize_temporal_columns_trigger', 'drop_synchronize_temporal_columns_trigger') THEN 9
@@ -94,7 +94,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 'Foreign Keys'
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 'Updatable Views'
             WHEN p.proname IN ('temporal_merge', 'disable_temporal_triggers', 'enable_temporal_triggers', 'manage_temporal_fk_triggers') THEN 'Bulk Data Loading'
-            WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era', 'sync_history_policies', 'rebuild_system_versioning_views') THEN 'System Versioning'
+            WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era', 'sync_history_policies', 'sync_all_history_policies', 'rebuild_system_versioning_views') THEN 'System Versioning'
             WHEN p.prokind = 'a' THEN 'Aggregates'
             WHEN p.proname LIKE 'health_check%' OR p.proname = 'check_integrity' THEN 'Health Checks'
             WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following', 'add_synchronize_temporal_columns_trigger', 'drop_synchronize_temporal_columns_trigger') THEN 'Internal and Helper Functions'

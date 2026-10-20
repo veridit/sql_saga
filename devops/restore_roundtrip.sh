@@ -21,7 +21,7 @@
 #                     the same without the opt-in: sql_saga's drop protection must refuse it
 #
 # The split variant (split_1 .. split_20, for the cases in SPLIT_CASES) runs the README's three-invocation
-# split restore EXACTLY as documented: the lines between "# BEGIN split-restore" and "# END split-restore"
+# split restore and its final history policy synchronization EXACTLY as documented: the lines between "# BEGIN split-restore" and "# END split-restore"
 # in README.md are extracted at run time and executed with backup.dump and mydb bound to this run's dump
 # and destination database. The block runs as a script in a fresh `bash -eu` process, so the first
 # failing line stops it and fails the run whatever the caller's errexit context. SPLIT_RUNS (default 20,
@@ -785,9 +785,9 @@ run_cases() {
 # self_test: shell-only checks of the harness's own control flow; no server, nothing outside a scratch
 # directory. pg_restore, grep, createdb, dropdb, pg_dump and psql are mocks on PATH (grep delegates to
 # the real grep except for the README's two list-filtering lines).
-#   A. Each of the README's six lines, made to fail in turn, fails the split variant, and no later
+#   A. Each of the README's seven lines, made to fail in turn, fails the split variant, and no later
 #      line runs; this is checked through restore_variant itself (the `cmd || rc=1` context inside
-#      `if ! out=$(...)` that switched errexit off in the old eval). Without a failure all six run,
+#      `if ! out=$(...)` that switched errexit off in the old eval). Without a failure all seven run,
 #      with -d bound to the run's destination. A failing mkdir or cp fails the variant before any line.
 #   B. SPLIT_ONLY=1 is split-only: the default selection builds and restores only SPLIT_CASES, runs no
 #      other variant and no parallel restore, and reports the other cases as skipped, not passed; an
@@ -821,8 +821,11 @@ case "$me" in
             *) exec "$REAL_GREP" "$@" ;;
         esac ;;
     psql)
-        case "$args" in *check_integrity*) echo t ;; esac
-        exit 0 ;;
+        case "$args" in
+            *' -c SELECT sql_saga.sync_all_history_policies() -c SELECT sql_saga.check_integrity() '*) id=line7 ;;
+            *) case "$args" in *check_integrity*) echo t ;; esac
+               exit 0 ;;
+        esac ;;
     *) exit 0 ;;
 esac
 echo "$id${dst:+ dst=$dst}" >>"$MOCK_LOG"
@@ -841,9 +844,9 @@ MOCK
     }
 
     echo "self-test A: README split block failure propagation (README_PATH=$README_PATH)"
-    if [ "$(split_block | grep -c .)" != 6 ]; then echo "  FAIL: README block is not six lines"; return 1; fi
+    if [ "$(split_block | grep -c .)" != 7 ]; then echo "  FAIL: README block is not seven lines"; return 1; fi
     : >"$st/dump"
-    for k in 0 1 2 3 4 5 6; do
+    for k in 0 1 2 3 4 5 6 7; do
         : >"$st/calls"
         rc=0
         # The harness's own calling context: if ! x=$(restore_variant ...) with `|| rc=1` inside.
@@ -854,11 +857,11 @@ MOCK
         fi
         got=$(sed 's/ dst=.*//' "$st/calls" | tr '\n' ' ')
         if [ $k = 0 ]; then
-            expect="line1 line2 line3 line4 line5 line6 "
+            expect="line1 line2 line3 line4 line5 line6 line7 "
             # Without a failure the mocks return nothing for the comparisons, so restore_variant fails
-            # afterwards (ACL digest); here only the six invocations and the binding matter.
-            st_check "no failure: all six lines run in order" "$expect" "$got"
-            st_check "no failure: -d bound to the run's destination on lines 4-6" "3" "$(grep -c " dst=${PREFIX}_selftest_dst\$" "$st/calls")"
+            # afterwards (ACL digest); here only the seven invocations and the binding matter.
+            st_check "no failure: all seven lines run in order" "$expect" "$got"
+            st_check "no failure: -d bound to the run's destination on lines 4-7" "4" "$(grep -c " dst=${PREFIX}_selftest_dst\$" "$st/calls")"
         else
             expect=$(seq 1 "$k" | sed 's/^/line/' | tr '\n' ' ')
             st_check "line $k fails: variant fails" "1" "$rc"
@@ -952,8 +955,9 @@ fi
 trap cleanup EXIT
 cleanup
 SPLIT_BLOCK=$(split_block)
-if [ "$(printf '%s\n' "$SPLIT_BLOCK" | grep -c .)" != 6 ] || ! printf '%s\n' "$SPLIT_BLOCK" | grep -q -- '-j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump$'; then
-    echo "README.md split-restore block not found or not the documented six lines (see README_PATH=$README_PATH)" >&2
+if [ "$(printf '%s\n' "$SPLIT_BLOCK" | grep -c .)" != 7 ] || ! printf '%s\n' "$SPLIT_BLOCK" | grep -q -- '-j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump$' \
+   || ! printf '%s\n' "$SPLIT_BLOCK" | grep -q -- 'sql_saga.sync_all_history_policies()'; then
+    echo "README.md split-restore block not found or not the documented seven lines (see README_PATH=$README_PATH)" >&2
     exit 2
 fi
 printf '%s\n' "$SPLIT_BLOCK" >"$WORK/split_block.sh"
