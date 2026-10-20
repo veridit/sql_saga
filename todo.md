@@ -14,13 +14,15 @@ Completed and regression-tested on the development branch:
 - [x] Remove both managed view types on cascading era removal, preserve user synchronization-function dependants and give ordered teardown guidance (134, independent G4)
 
 Release gates still open:
-- [ ] Replace regular-FK child CHECKs with deferred constraint triggers and validate lifecycle/merge/restore behavior
-  - [ ] Queue checks for surviving rows after a deferred key check followed by a payload-only UPDATE
-  - [ ] Prevent concurrent parent deletion from leaving an orphan under REPEATABLE READ
-  - [ ] Avoid deferring unrelated constraint triggers with the same schema-qualified name
-  - [ ] Refuse noncanonical child-trigger replacements and preserve unrelated same-name constraints
-  - [ ] Adapt historical helper/CHECK fixtures without weakening pairing or enforcement assertions
-- [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
+- [x] Replace regular-FK child CHECKs with deferred constraint triggers and validate lifecycle/merge/restore behavior (efd2aed, independent core/lifecycle G4, exact staged fast suite119/119)
+  - [x] Queue checks for surviving rows after a deferred key check followed by a payload-only UPDATE
+  - [x] Prevent concurrent parent deletion from leaving an orphan under REPEATABLE READ
+  - [x] Refuse ambiguous constraint-name deferral before merge DML
+  - [x] Refuse noncanonical child-trigger replacements and preserve unrelated same-name constraints
+  - [x] Adapt historical helper/CHECK fixtures without weakening pairing or enforcement assertions
+  - [x] Reuse one private child-trigger creator and report automatic rebuilds with retained firing modes
+- [x] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants (5052c5f, 132, independent G4)
+  - [x] Report pending views truthfully after DROP or TYPE and prove rollback leaves no pending rows
 - [x] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL (133, independent G4)
   - [x] Use structured fingerprints so quoted names cannot collide with encoded column lists
 - [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
@@ -31,7 +33,8 @@ Release gates still open:
 - [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
-- [ ] Finish 1.3 API/runbook documentation, full regression/native tests and performance checks
+- [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
+- [ ] Finish 1.3 API/runbook documentation and full assembled-package regression/native tests
   - [ ] Run the deterministic two-session FK concurrency harness in the Makefile and CI on an explicitly identified disposable cluster
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
 - [ ] Obtain owner approval before pushing or tagging the release and before sending external notices
