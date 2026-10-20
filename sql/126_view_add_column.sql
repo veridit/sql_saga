@@ -209,6 +209,52 @@ SELECT vac.integrity('after updates through the views after DROP COLUMN');
 
 \echo '--- 6. DROP COLUMN of the identifier stays refused'
 SELECT vac.probe($$ALTER TABLE vac.unit_stat DROP COLUMN id$$) AS drop_identifier_column;
+SELECT vac.integrity('after the refused identifier drop');
+
+\echo '--- 7. RENAME COLUMN of a column sql_saga does not manage: the view column is renamed with it'
+-- The views were rebuilt in step 5: remember their current OIDs. A rename needs no rebuild, so the
+-- views keep their OIDs, grants (table and column level) and comments.
+TRUNCATE vac.view_identity;
+INSERT INTO vac.view_identity
+SELECT uv.view_name, format('%I.%I', uv.view_schema, uv.view_name)::regclass::oid
+FROM sql_saga.updatable_view AS uv WHERE uv.table_schema = 'vac';
+COMMENT ON COLUMN vac.unit_stat__for_portion_of_valid.name IS 'display name';
+COMMENT ON COLUMN vac.unit_loc__current_valid.name IS 'display name';
+GRANT UPDATE (name) ON vac.unit_stat__for_portion_of_valid, vac.unit_loc__current_valid TO vac_reader;
+ALTER TABLE vac.unit_stat RENAME COLUMN name TO label;
+ALTER TABLE vac.unit_loc RENAME COLUMN name TO label;
+TABLE vac.view_shape;
+TABLE vac.view_identity_check;
+SELECT vi.view_name,
+       col_description(format('vac.%I', vi.view_name)::regclass, a.attnum) AS label_comment,
+       has_column_privilege('vac_reader', format('vac.%I', vi.view_name), 'label', 'UPDATE') AS reader_can_update_label
+FROM vac.view_identity AS vi
+JOIN pg_catalog.pg_attribute AS a ON a.attrelid = format('vac.%I', vi.view_name)::regclass AND a.attname = 'label'
+ORDER BY vi.view_name;
+SELECT vac.integrity('after RENAME COLUMN name TO label');
+
+-- Updates through the views write the renamed column, and preserve it elsewhere.
+UPDATE vac.unit_stat__for_portion_of_valid SET label = 'renamed', valid_from = '2024-10-01', valid_until = 'infinity' WHERE id = 1;
+SELECT id, label, value_int, note, region_id, valid_from, valid_until FROM vac.unit_stat ORDER BY id, valid_from;
+SET vac.today = '2024-10-01';
+UPDATE vac.unit_loc__current_valid SET label = 'renamed' WHERE id = 1;
+SELECT id, label, value_int, doubled, region_id, valid_from, valid_until FROM vac.unit_loc ORDER BY id, valid_from;
+SELECT id, label FROM vac.unit_loc__current_valid;
+SELECT vac.integrity('after updates through the views after RENAME COLUMN');
+
+\echo '--- 8. RENAME COLUMN of a column sql_saga manages: accepted, and the catalogs follow (as in 1.2)'
+BEGIN;
+ALTER TABLE vac.unit_stat RENAME COLUMN id TO unit_id;
+SELECT uk.unique_key_name, uk.column_names FROM sql_saga.unique_keys AS uk WHERE (uk.table_schema, uk.table_name) = ('vac', 'unit_stat');
+ROLLBACK;
+BEGIN;
+ALTER TABLE vac.unit_stat RENAME COLUMN valid_from TO starts_on;
+SELECT e.era_name, e.valid_from_column_name, e.valid_until_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('vac', 'unit_stat');
+ROLLBACK;
+BEGIN;
+ALTER TABLE vac.unit_loc RENAME COLUMN valid_range TO validity;
+SELECT e.era_name, e.range_column_name FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = ('vac', 'unit_loc');
+ROLLBACK;
 SELECT vac.integrity('at the end');
 
 SET client_min_messages = warning;
