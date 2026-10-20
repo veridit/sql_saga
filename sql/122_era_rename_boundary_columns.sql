@@ -166,7 +166,8 @@ SELECT t.tgrelid::regclass AS table_name, t.tgname, t.tgfoid::regprocedure AS fu
        (string_to_array(encode(t.tgargs, 'escape'), '\000'))[11] AS arg_uk_era,
        (string_to_array(encode(t.tgargs, 'escape'), '\000'))[12] AS arg_uk_from,
        (string_to_array(encode(t.tgargs, 'escape'), '\000'))[13] AS arg_uk_until,
-       pg_catalog.pg_get_triggerdef(t.oid) LIKE '%AFTER INSERT OR UPDATE OF par_id ON%' AS fires_on_key
+       -- Fires on every UPDATE (TRIGGER_TYPE_UPDATE bit, no column list), so key updates are checked too.
+       (t.tgtype & 16) <> 0 AND cardinality(t.tgattr::int2[]) = 0 AS fires_on_all_updates
 FROM pg_catalog.pg_trigger AS t
 WHERE t.tgrelid IN ('e5.rchild'::regclass, 'e5.rchild2'::regclass) AND NOT t.tgisinternal
 ORDER BY 1, 2;

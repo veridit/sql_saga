@@ -359,7 +359,7 @@ SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name 
 Indexes:
     "child_r_parent_id_idx" btree (parent_id)
 Triggers:
-    child_r_parent_id_check AFTER INSERT OR UPDATE OF parent_id ON child_r FROM parent_r DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION regular_fk_check_c('child_parent_r_fk_1', 'fk_idx', 'child_r', '{parent_id}', '', '', '', 'fk_idx', 'parent_r', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
+    child_r_parent_id_check AFTER INSERT OR UPDATE ON child_r FROM parent_r DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION regular_fk_check_c('child_parent_r_fk_1', 'fk_idx', 'child_r', '{parent_id}', '', '', '', 'fk_idx', 'parent_r', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
 
 \echo '-> Dropping FK should also drop the auto-created index'
 -> Dropping FK should also drop the auto-created index
@@ -421,7 +421,7 @@ SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name 
  id        | integer |           |          | 
  parent_id | integer |           |          | 
 Triggers:
-    child_r_parent_id_check AFTER INSERT OR UPDATE OF parent_id ON child_r FROM parent_r DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION regular_fk_check_c('child_parent_r_fk_2', 'fk_idx', 'child_r', '{parent_id}', '', '', '', 'fk_idx', 'parent_r', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
+    child_r_parent_id_check AFTER INSERT OR UPDATE ON child_r FROM parent_r DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION regular_fk_check_c('child_parent_r_fk_2', 'fk_idx', 'child_r', '{parent_id}', '', '', '', 'fk_idx', 'parent_r', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
 
 SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_2');
  drop_foreign_key_by_name 

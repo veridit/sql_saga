@@ -107,7 +107,7 @@ Indexes:
     "regular_fk_pkey" PRIMARY KEY, btree (id)
     "regular_fk_pk_id_idx" btree (pk_id)
 Triggers:
-    regular_fk_pk_id_check AFTER INSERT OR UPDATE OF pk_id ON regular_fk FROM temporal_pk DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.regular_fk_check_c('regular_fk_pk_id_fkey', 'public', 'regular_fk', '{pk_id}', '', '', '', 'public', 'temporal_pk', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
+    regular_fk_pk_id_check AFTER INSERT OR UPDATE ON regular_fk FROM temporal_pk DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.regular_fk_check_c('regular_fk_pk_id_fkey', 'public', 'regular_fk', '{pk_id}', '', '', '', 'public', 'temporal_pk', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
 
 -- 4. Verify that INSERT/UPDATE on the regular table is validated.
 \echo

@@ -57,8 +57,8 @@ HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ROLLBACK TO SAVEPOINT s1;
 SAVEPOINT s2;
 ALTER TABLE dp ALTER COLUMN s TYPE text; -- fails
-ERROR:  cannot alter type of a column used in a trigger definition
-DETAIL:  trigger dp_p_sync_temporal_trg on table dp depends on column "s"
+ERROR:  cannot alter type of column "s" of table "public.dp" because it is the valid_from column of era "p" managed by sql_saga
+HINT:  Save and drop the era's dependants with their drop functions (foreign keys with sql_saga.drop_foreign_key_by_name, unique keys with sql_saga.drop_unique_key, updatable views with sql_saga.drop_for_portion_of_view or sql_saga.drop_current_view), drop the era with sql_saga.drop_era(..., cleanup => false), change the range column and its boundary columns together, then add the era again with sql_saga.add_era and recreate the dependants.
 ROLLBACK TO SAVEPOINT s2;
 SAVEPOINT s3;
 DROP TYPE integerrange; -- fails
