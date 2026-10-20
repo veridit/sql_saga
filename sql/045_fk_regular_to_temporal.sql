@@ -119,10 +119,18 @@ SAVEPOINT before_ddl;
 DROP TABLE temporal_pk;
 ROLLBACK TO SAVEPOINT before_ddl;
 
+-- Since 1.3 the referencing side is enforced by a constraint trigger (no helper function, no CHECK):
+-- no helper exists to drop, and the referencing-side trigger itself cannot be dropped or renamed.
+SELECT fk_check_constraint, fk_helper_function IS NULL AS no_helper FROM sql_saga.foreign_keys WHERE table_name = 'regular_fk' \gset
+SELECT count(*) AS helper_functions FROM pg_proc WHERE proname = 'temporal_pk_id_exists';
+\set SHOW_CONTEXT never
 SAVEPOINT before_ddl2;
--- This should fail because the CHECK constraint depends on the helper function
-DROP FUNCTION public.temporal_pk_id_exists(integer);
+DROP TRIGGER :"fk_check_constraint" ON regular_fk;
 ROLLBACK TO SAVEPOINT before_ddl2;
+SAVEPOINT before_ddl2b;
+ALTER TRIGGER :"fk_check_constraint" ON regular_fk RENAME TO renamed_check_trigger;
+ROLLBACK TO SAVEPOINT before_ddl2b;
+\set SHOW_CONTEXT errors
 
 -- The triggers sql_saga puts on the referenced table cannot be renamed or dropped.
 SELECT uk_update_trigger, uk_delete_trigger FROM sql_saga.foreign_keys WHERE table_name = 'regular_fk' \gset

@@ -91,10 +91,9 @@ SELECT p.proname, pg_catalog.pg_get_function_result(p.oid) AS result_type,
        pg_catalog.pg_get_function_arguments(p.oid) AS arguments, p.provolatile, l.lanname
 FROM pg_proc p JOIN pg_language l ON p.prolang = l.oid
 WHERE p.proname = 'temporal_pk_id_exists' AND p.pronamespace = 'public'::regnamespace;
-        proname        | result_type | arguments | provolatile | lanname 
------------------------+-------------+-----------+-------------+---------
- temporal_pk_id_exists | boolean     | integer   | s           | sql
-(1 row)
+ proname | result_type | arguments | provolatile | lanname 
+---------+-------------+-----------+-------------+---------
+(0 rows)
 
 -- The CHECK constraint should be on the regular_fk table
 \d regular_fk
@@ -107,8 +106,8 @@ WHERE p.proname = 'temporal_pk_id_exists' AND p.pronamespace = 'public'::regname
 Indexes:
     "regular_fk_pkey" PRIMARY KEY, btree (id)
     "regular_fk_pk_id_idx" btree (pk_id)
-Check constraints:
-    "regular_fk_pk_id_check" CHECK (temporal_pk_id_exists(pk_id))
+Triggers:
+    regular_fk_pk_id_check AFTER INSERT OR UPDATE OF pk_id ON regular_fk FROM temporal_pk DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.regular_fk_check_c('regular_fk_pk_id_fkey', 'public', 'regular_fk', '{pk_id}', '', '', '', 'public', 'temporal_pk', '{id}', 'valid', 'null', 'null', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'regular_to_temporal')
 
 -- 4. Verify that INSERT/UPDATE on the regular table is validated.
 \echo
@@ -132,8 +131,8 @@ TABLE regular_fk ORDER BY id;
 -- This should fail because pk_id=2 does not exist in temporal_pk
 SAVEPOINT before_invalid_insert;
 INSERT INTO regular_fk (id, pk_id, name) VALUES (103, 2, 'Link to non-existent');
-ERROR:  new row for relation "regular_fk" violates check constraint "regular_fk_pk_id_check"
-DETAIL:  Failing row contains (103, 2, Link to non-existent).
+ERROR:  insert or update on table "public.regular_fk" violates foreign key constraint "regular_fk_pk_id_fkey"
+DETAIL:  The referenced key is not present in table "public.temporal_pk".
 ROLLBACK TO SAVEPOINT before_invalid_insert;
 -- Test valid UPDATE
 UPDATE regular_fk SET pk_id = 1 WHERE id = 102;
@@ -148,8 +147,8 @@ TABLE regular_fk ORDER BY id;
 -- This should fail because pk_id=2 does not exist in temporal_pk
 SAVEPOINT before_invalid_update;
 UPDATE regular_fk SET pk_id = 2 WHERE id = 101;
-ERROR:  new row for relation "regular_fk" violates check constraint "regular_fk_pk_id_check"
-DETAIL:  Failing row contains (101, 2, Link to Entity One).
+ERROR:  insert or update on table "public.regular_fk" violates foreign key constraint "regular_fk_pk_id_fkey"
+DETAIL:  The referenced key is not present in table "public.temporal_pk".
 ROLLBACK TO SAVEPOINT before_invalid_update;
 TABLE regular_fk ORDER BY id;
  id  | pk_id |        name        
@@ -168,12 +167,14 @@ SAVEPOINT before_uk_delete;
 -- This should fail because regular_fk.pk_id = 1 references this row.
 DELETE FROM temporal_pk WHERE id = 1;
 ERROR:  update or delete on table "public.temporal_pk" violates foreign key constraint "regular_fk_pk_id_fkey" on table "public.regular_fk"
+DETAIL:  The key is still referenced from table "public.regular_fk" and no other row of "public.temporal_pk" has it.
 ROLLBACK TO SAVEPOINT before_uk_delete;
 -- Test that an UPDATE of the referenced key is blocked
 SAVEPOINT before_uk_update;
 -- This should fail because it would orphan the reference from regular_fk.
 UPDATE temporal_pk SET id = 2 WHERE id = 1;
 ERROR:  update or delete on table "public.temporal_pk" violates foreign key constraint "regular_fk_pk_id_fkey" on table "public.regular_fk"
+DETAIL:  The key is still referenced from table "public.regular_fk" and no other row of "public.temporal_pk" has it.
 ROLLBACK TO SAVEPOINT before_uk_update;
 -- Test that an UPDATE of a non-key column is allowed
 UPDATE temporal_pk SET name = 'Entity One Updated' WHERE id = 1;
@@ -200,13 +201,25 @@ SAVEPOINT before_ddl;
 -- This should fail because the FK helper function depends on the table
 DROP TABLE temporal_pk;
 ROLLBACK TO SAVEPOINT before_ddl;
+-- Since 1.3 the referencing side is enforced by a constraint trigger (no helper function, no CHECK):
+-- no helper exists to drop, and the referencing-side trigger itself cannot be dropped or renamed.
+SELECT fk_check_constraint, fk_helper_function IS NULL AS no_helper FROM sql_saga.foreign_keys WHERE table_name = 'regular_fk' \gset
+SELECT count(*) AS helper_functions FROM pg_proc WHERE proname = 'temporal_pk_id_exists';
+ helper_functions 
+------------------
+                0
+(1 row)
+
+\set SHOW_CONTEXT never
 SAVEPOINT before_ddl2;
--- This should fail because the CHECK constraint depends on the helper function
-DROP FUNCTION public.temporal_pk_id_exists(integer);
-ERROR:  cannot drop function temporal_pk_id_exists(integer) because other objects depend on it
-DETAIL:  constraint regular_fk_pk_id_check on table regular_fk depends on function temporal_pk_id_exists(integer)
-HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+DROP TRIGGER :"fk_check_constraint" ON regular_fk;
+ERROR:  cannot drop trigger "regular_fk_pk_id_check" on table "regular_fk" because it is used in era foreign key "regular_fk_pk_id_fkey"
 ROLLBACK TO SAVEPOINT before_ddl2;
+SAVEPOINT before_ddl2b;
+ALTER TRIGGER :"fk_check_constraint" ON regular_fk RENAME TO renamed_check_trigger;
+ERROR:  cannot drop or rename trigger "regular_fk_pk_id_check" on table "regular_fk" because it is used in an era foreign key "regular_fk_pk_id_fkey"
+ROLLBACK TO SAVEPOINT before_ddl2b;
+\set SHOW_CONTEXT errors
 -- The triggers sql_saga puts on the referenced table cannot be renamed or dropped.
 SELECT uk_update_trigger, uk_delete_trigger FROM sql_saga.foreign_keys WHERE table_name = 'regular_fk' \gset
 \set SHOW_CONTEXT never

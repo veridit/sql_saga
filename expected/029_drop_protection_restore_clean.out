@@ -159,7 +159,7 @@ TABLE family_state;
  catalog sql_saga.updatable_view    | 2
  relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
- functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
+ functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
  event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_record_alter_function_resolved=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
@@ -331,7 +331,7 @@ TABLE family_state;
  catalog sql_saga.updatable_view    | 2
  relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
- functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
+ functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
  event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_record_alter_function_resolved=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
@@ -360,6 +360,7 @@ DROP TRIGGER IF EXISTS zbase_system_time_write_history ON public.zbase;
 DROP TRIGGER IF EXISTS zbase_system_time_generated_always ON public.zbase;
 DROP TRIGGER IF EXISTS r_p_id_fkey_uk_update ON public.p;
 DROP TRIGGER IF EXISTS r_p_id_fkey_uk_delete ON public.p;
+DROP TRIGGER IF EXISTS r_p_id_check ON public.r;
 DROP TRIGGER IF EXISTS p_valid_sync_temporal_trg ON public.p;
 DROP TRIGGER IF EXISTS for_portion_of_valid ON public.p__for_portion_of_valid;
 DROP TRIGGER IF EXISTS current_valid ON public.p__current_valid;
@@ -393,7 +394,6 @@ DROP VIEW IF EXISTS public.ab_view;
 DROP VIEW IF EXISTS public.aa_hist_gated;
 DROP TABLE IF EXISTS public.zbase;
 DROP TABLE IF EXISTS public.aa_hist;
-DROP FUNCTION IF EXISTS public.p_id_exists(integer);
 DROP FUNCTION IF EXISTS public.b__from_to(timestamp with time zone, timestamp with time zone);
 DROP FUNCTION IF EXISTS public.b__between_symmetric(timestamp with time zone, timestamp with time zone);
 DROP FUNCTION IF EXISTS public.b__between(timestamp with time zone, timestamp with time zone);
@@ -438,6 +438,7 @@ DROP TRIGGER zbase_system_time_write_history ON public.zbase;
 DROP TRIGGER zbase_system_time_generated_always ON public.zbase;
 DROP TRIGGER r_p_id_fkey_uk_update ON public.p;
 DROP TRIGGER r_p_id_fkey_uk_delete ON public.p;
+DROP TRIGGER r_p_id_check ON public.r;
 DROP TRIGGER p_valid_sync_temporal_trg ON public.p;
 DROP TRIGGER for_portion_of_valid ON public.p__for_portion_of_valid;
 DROP TRIGGER current_valid ON public.p__current_valid;
@@ -471,7 +472,6 @@ DROP VIEW public.ab_view;
 DROP VIEW public.aa_hist_gated;
 DROP TABLE public.zbase;
 DROP TABLE public.aa_hist;
-DROP FUNCTION public.p_id_exists(integer);
 DROP FUNCTION public.b__from_to(timestamp with time zone, timestamp with time zone);
 DROP FUNCTION public.b__between_symmetric(timestamp with time zone, timestamp with time zone);
 DROP FUNCTION public.b__between(timestamp with time zone, timestamp with time zone);
@@ -508,7 +508,7 @@ TABLE family_state;
  catalog sql_saga.updatable_view    | 2
  relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
- functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
+ functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
  event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_record_alter_function_resolved=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
@@ -574,6 +574,7 @@ DROP TRIGGER "Ref ""T"" able_system_time_write_history" ON "my schema"."Ref ""T"
 DROP TRIGGER "Ref ""T"" able_system_time_generated_always" ON "my schema"."Ref ""T"" able";
 DROP TRIGGER "Ref ""T"" able_p_id_fkey_uk_update" ON "my schema"."My Table";
 DROP TRIGGER "Ref ""T"" able_p_id_fkey_uk_delete" ON "my schema"."My Table";
+DROP TRIGGER "Ref ""T"" able_p_id_check" ON "my schema"."Ref ""T"" able";
 DROP INDEX "my schema"."Ref ""T"" able_p_id_idx";
 DROP INDEX "my schema"."My Table_valid_range_gist_idx";
 DROP INDEX "my schema"."My Table_id_valid_range_idx";
@@ -590,7 +591,6 @@ DROP VIEW "my schema"."Ref ""T"" able_with_history";
 DROP VIEW "my schema"."Ref ""T"" able_history_gated";
 DROP TABLE "my schema"."Ref ""T"" able_history";
 DROP TABLE "my schema"."Ref ""T"" able";
-DROP FUNCTION "my schema"."My Table_id_exists"(integer);
 TABLE quoted_family_state;
  eras | versioned | relations | policies 
 ------+-----------+-----------+----------

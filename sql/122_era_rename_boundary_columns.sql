@@ -39,6 +39,58 @@ CREATE TABLE e5.rchild (id int PRIMARY KEY, par_id int);
 SELECT sql_saga.add_regular_foreign_key('e5.rchild', ARRAY['par_id']::name[], 'par_id_valid');
 CREATE TABLE e5.rchild2 (id int PRIMARY KEY, owner_id int);
 SELECT sql_saga.add_regular_foreign_key('e5.rchild2', ARRAY['owner_id']::name[], 'par_id_valid');
+
+/*
+ * Historical fixture: converts a regular foreign key just added by add_regular_foreign_key (1.3 shape: a
+ * referencing-side constraint trigger, no helper) back to the shape released sql_saga 1.0-1.2 built and that a
+ * not yet migrated installation still has: the helper <uk schema>.<uk table>_<key columns>_exists(<child column
+ * types>) with the canonical body, SECURITY DEFINER, search_path = pg_catalog, owned by the referenced table owner,
+ * executable by PUBLIC and shared by every regular FK of the key; the child CHECK <fk_check_constraint> calling it;
+ * the catalog row naming the helper. Same construction as test 128. sql_saga's event triggers are kept out of it.
+ */
+CREATE FUNCTION e5.legacy_regular_fk(fk_name name) RETURNS void LANGUAGE plpgsql AS $legacy_regular_fk$
+DECLARE
+    r record;
+BEGIN
+    PERFORM set_config('session_replication_role', 'replica', true);
+    SELECT format('%I.%I', fk.table_schema, fk.table_name)::regclass AS child,
+           format('%I.%I', uk.table_schema, uk.table_name)::regclass AS parent,
+           fk.fk_check_constraint,
+           format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(ARRAY[uk.table_name] || ARRAY(
+               SELECT c FROM unnest(uk.column_names) WITH ORDINALITY AS u (c, o) WHERE c <> e.range_column_name ORDER BY o)
+               || ARRAY['exists']::name[])) AS helper,
+           (SELECT string_agg(format_type(a.atttypid, a.atttypmod), ', ' ORDER BY u.o)
+            FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)
+            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (format('%I.%I', fk.table_schema, fk.table_name)::regclass, u.n)) AS types,
+           (SELECT string_agg(quote_ident(n), ', ' ORDER BY o) FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)) AS args,
+           (SELECT rl.rolname FROM pg_catalog.pg_class AS pc JOIN pg_catalog.pg_roles AS rl ON rl.oid = pc.relowner
+            WHERE pc.oid = format('%I.%I', uk.table_schema, uk.table_name)::regclass) AS owner
+    INTO r
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    WHERE fk.foreign_key_name = fk_name AND fk.type = 'regular_to_temporal';
+    -- Released 1.0-1.2 shared one helper between all regular FKs referencing the same key.
+    IF to_regprocedure(format('%s(%s)', r.helper, r.types)) IS NULL THEN
+        EXECUTE format('CREATE FUNCTION %s(%s) RETURNS boolean LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path = pg_catalog AS %L',
+                       r.helper, r.types, sql_saga.__internal_regular_fk_helper_body(fk_name));
+        EXECUTE format('ALTER FUNCTION %s(%s) OWNER TO %I', r.helper, r.types, r.owner);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s(%s) TO PUBLIC', r.helper, r.types);
+    END IF;
+    EXECUTE format('DROP TRIGGER %I ON %s', r.fk_check_constraint, r.child);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I CHECK (%s(%s))', r.child, r.fk_check_constraint, r.helper, r.args);
+    UPDATE sql_saga.foreign_keys AS fk
+    -- As released: format('%s(%s)', <schema-qualified %I.%I name>, <child column types>).
+    SET fk_helper_function = format('%s(%s)', r.helper, r.types)
+    WHERE fk.foreign_key_name = fk_name;
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$legacy_regular_fk$;
+
+-- rchild keeps the 1.3 shape (referencing-side constraint trigger, no helper); rchild2 is put in the released
+-- 1.0-1.2 shape (helper + CHECK), so the era renames are covered for both shapes.
+SELECT e5.legacy_regular_fk('rchild2_owner_id_fkey');
+DROP FUNCTION e5.legacy_regular_fk(name);
 ALTER TABLE e5.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
 ALTER TABLE e5.par ENABLE REPLICA TRIGGER rchild2_owner_id_fkey_uk_update;
 
@@ -108,6 +160,17 @@ WHERE c.conrelid IN ('e5.rchild'::regclass, 'e5.rchild2'::regclass, 'e5.tchild':
   AND c.conname NOT IN ('tchild_check', 'tchild_valid_check')
 ORDER BY 1, 2;
 
+CREATE VIEW e5.child_triggers AS
+SELECT t.tgrelid::regclass AS table_name, t.tgname, t.tgfoid::regprocedure AS function,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[10] AS arg_uk_columns,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[11] AS arg_uk_era,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[12] AS arg_uk_from,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[13] AS arg_uk_until,
+       pg_catalog.pg_get_triggerdef(t.oid) LIKE '%AFTER INSERT OR UPDATE OF par_id ON%' AS fires_on_key
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid IN ('e5.rchild'::regclass, 'e5.rchild2'::regclass) AND NOT t.tgisinternal
+ORDER BY 1, 2;
+
 CREATE VIEW e5.helper AS
 SELECT p.oid::regprocedure AS helper, btrim(p.prosrc, E' \t\r\n') AS body
 FROM pg_catalog.pg_proc AS p
@@ -122,6 +185,7 @@ TABLE e5.triggers;
 TABLE e5.sync_functions;
 TABLE e5.child_constraints;
 TABLE e5.helper;
+TABLE e5.child_triggers;
 SELECT sql_saga.check_integrity();
 
 \echo '--- Rename valid_from on the referenced table: the era follows at once'
@@ -148,6 +212,7 @@ TABLE e5.triggers;
 TABLE e5.sync_functions;
 TABLE e5.child_constraints;
 TABLE e5.helper;
+TABLE e5.child_triggers;
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked after the renames' AS done;
 

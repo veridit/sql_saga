@@ -147,9 +147,9 @@ NOTICE:  sql_saga: No compatible index found for foreign key on table regular_ch
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action |      fk_check_constraint      |        fk_helper_function        |           uk_update_trigger            |           uk_delete_trigger            |        fk_index_name        
-------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------------------+----------------------------------+----------------------------------------+----------------------------------------+-----------------------------
- regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | regular_child_parent_id_check | public.parent_id_exists(integer) | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete | regular_child_parent_id_idx
+       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action |      fk_check_constraint      | fk_helper_function |           uk_update_trigger            |           uk_delete_trigger            |        fk_index_name        
+------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------------------+--------------------+----------------------------------------+----------------------------------------+-----------------------------
+ regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | regular_child_parent_id_check |                    | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete | regular_child_parent_id_idx
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);

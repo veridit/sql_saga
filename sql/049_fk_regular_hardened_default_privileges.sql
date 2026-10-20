@@ -26,16 +26,21 @@ ROLLBACK TO SAVEPOINT missing_parent;
 RESET ROLE;
 TABLE chi;
 
--- A second foreign key to the same key shares the helper; it stays usable by the writer.
+-- A second foreign key to the same key stays usable by the writer. Since 1.3 no helper function is
+-- generated at all (the referencing side is a constraint trigger), so there is nothing to share or grant.
 CREATE TABLE chi2 (id int PRIMARY KEY, par_id int);
 SELECT sql_saga.add_regular_foreign_key('chi2', ARRAY['par_id'], 'par_id_valid');
 GRANT INSERT ON chi2 TO hardened_writer;
 SET ROLE hardened_writer;
 INSERT INTO chi2 VALUES (1, 1);
+SAVEPOINT missing_parent2;
+INSERT INTO chi2 VALUES (2, 99); -- refused by the foreign key, not by a missing privilege
+ROLLBACK TO SAVEPOINT missing_parent2;
 RESET ROLE;
 SELECT count(*) AS helpers FROM pg_proc WHERE proname = 'par_id_exists';
 
--- A function that merely has the helper's name and signature is not the helper: it is refused, not taken over.
+-- An explicit fk_helper_function is refused (the option is withdrawn): a user function is never taken over
+-- and is left exactly as it was.
 CREATE TABLE chi3 (id int PRIMARY KEY, par_id int);
 CREATE FUNCTION public.not_the_helper(integer) RETURNS boolean LANGUAGE sql STABLE STRICT AS $$ SELECT true $$;
 SAVEPOINT impostor;
@@ -44,6 +49,24 @@ ROLLBACK TO SAVEPOINT impostor;
 SELECT p.prosecdef,
        EXISTS (SELECT FROM aclexplode(p.proacl) AS a WHERE a.grantee = 0) AS public_can_execute
 FROM pg_proc AS p WHERE p.proname = 'not_the_helper';
+SELECT count(*) AS chi3_foreign_keys FROM sql_saga.foreign_keys WHERE table_name = 'chi3';
+
+-- A custom fk_check_constraint name still works: it names the referencing-side constraint trigger.
+SAVEPOINT custom_check_name;
+SELECT sql_saga.add_regular_foreign_key('chi3', ARRAY['par_id'], 'par_id_valid', fk_check_constraint => 'chi3_custom_check');
+SELECT fk.fk_check_constraint, fk.fk_helper_function IS NULL AS no_helper,
+       t.tgfoid::regprocedure AS trigger_function
+FROM sql_saga.foreign_keys AS fk
+JOIN pg_trigger AS t ON t.tgrelid = 'chi3'::regclass AND t.tgname = fk.fk_check_constraint
+WHERE fk.table_name = 'chi3';
+GRANT INSERT ON chi3 TO hardened_writer;
+SET ROLE hardened_writer;
+INSERT INTO chi3 VALUES (1, 1);
+SAVEPOINT chi3_missing_parent;
+INSERT INTO chi3 VALUES (2, 99);
+ROLLBACK TO SAVEPOINT chi3_missing_parent;
+RESET ROLE;
+ROLLBACK TO SAVEPOINT custom_check_name;
 
 -- A key type whose equality operator lives outside pg_catalog compares with that operator, as a native
 -- foreign key does: citext matches case-insensitively.

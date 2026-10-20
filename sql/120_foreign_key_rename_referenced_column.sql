@@ -35,12 +35,68 @@ SELECT sql_saga.add_regular_foreign_key('fkk.rchild', ARRAY['par_id']::name[], '
 CREATE TABLE fkk.rchild2 (id int PRIMARY KEY, owner_id int);
 SELECT sql_saga.add_regular_foreign_key('fkk.rchild2', ARRAY['owner_id']::name[], 'par_id_valid');
 
+/*
+ * Historical fixture: converts a regular foreign key just added by add_regular_foreign_key (1.3 shape: a
+ * referencing-side constraint trigger, no helper) back to the shape released sql_saga 1.0-1.2 built and that a
+ * not yet migrated installation still has: the helper <uk schema>.<uk table>_<key columns>_exists(<child column
+ * types>) with the canonical body, SECURITY DEFINER, search_path = pg_catalog, owned by the referenced table owner,
+ * executable by PUBLIC and shared by every regular FK of the key; the child CHECK <fk_check_constraint> calling it;
+ * the catalog row naming the helper. Same construction as test 128. sql_saga's event triggers are kept out of it.
+ */
+CREATE FUNCTION fkk.legacy_regular_fk(fk_name name) RETURNS void LANGUAGE plpgsql AS $legacy_regular_fk$
+DECLARE
+    r record;
+BEGIN
+    PERFORM set_config('session_replication_role', 'replica', true);
+    SELECT format('%I.%I', fk.table_schema, fk.table_name)::regclass AS child,
+           format('%I.%I', uk.table_schema, uk.table_name)::regclass AS parent,
+           fk.fk_check_constraint,
+           format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(ARRAY[uk.table_name] || ARRAY(
+               SELECT c FROM unnest(uk.column_names) WITH ORDINALITY AS u (c, o) WHERE c <> e.range_column_name ORDER BY o)
+               || ARRAY['exists']::name[])) AS helper,
+           (SELECT string_agg(format_type(a.atttypid, a.atttypmod), ', ' ORDER BY u.o)
+            FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)
+            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (format('%I.%I', fk.table_schema, fk.table_name)::regclass, u.n)) AS types,
+           (SELECT string_agg(quote_ident(n), ', ' ORDER BY o) FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)) AS args,
+           (SELECT rl.rolname FROM pg_catalog.pg_class AS pc JOIN pg_catalog.pg_roles AS rl ON rl.oid = pc.relowner
+            WHERE pc.oid = format('%I.%I', uk.table_schema, uk.table_name)::regclass) AS owner
+    INTO r
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    WHERE fk.foreign_key_name = fk_name AND fk.type = 'regular_to_temporal';
+    -- Released 1.0-1.2 shared one helper between all regular FKs referencing the same key.
+    IF to_regprocedure(format('%s(%s)', r.helper, r.types)) IS NULL THEN
+        EXECUTE format('CREATE FUNCTION %s(%s) RETURNS boolean LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path = pg_catalog AS %L',
+                       r.helper, r.types, sql_saga.__internal_regular_fk_helper_body(fk_name));
+        EXECUTE format('ALTER FUNCTION %s(%s) OWNER TO %I', r.helper, r.types, r.owner);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s(%s) TO PUBLIC', r.helper, r.types);
+    END IF;
+    EXECUTE format('DROP TRIGGER %I ON %s', r.fk_check_constraint, r.child);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I CHECK (%s(%s))', r.child, r.fk_check_constraint, r.helper, r.args);
+    UPDATE sql_saga.foreign_keys AS fk
+    -- As released: format('%s(%s)', <schema-qualified %I.%I name>, <child column types>).
+    SET fk_helper_function = format('%s(%s)', r.helper, r.types)
+    WHERE fk.foreign_key_name = fk_name;
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$legacy_regular_fk$;
+
+-- rchild and rchild2 are in the released 1.0-1.2 shape (shared helper + CHECK): that is what the helper
+-- regeneration below is about.
+SELECT fkk.legacy_regular_fk('rchild_par_id_fkey');
+SELECT fkk.legacy_regular_fk('rchild2_owner_id_fkey');
+-- rchild3 stays in the 1.3 shape (referencing-side constraint trigger, no helper): its trigger must follow too.
+CREATE TABLE fkk.rchild3 (id int PRIMARY KEY, par_ref int);
+SELECT sql_saga.add_regular_foreign_key('fkk.rchild3', ARRAY['par_ref']::name[], 'par_id_valid');
+
 CREATE TABLE fkk.tchild (id int, par_id int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('fkk.tchild', 'valid_range', 'valid');
 SELECT sql_saga.add_temporal_foreign_key('fkk.tchild', ARRAY['par_id']::name[], 'valid', 'par_id_valid');
 
 INSERT INTO fkk.rchild VALUES (1, 1);
 INSERT INTO fkk.rchild2 VALUES (1, 4);
+INSERT INTO fkk.rchild3 VALUES (1, 4);
 INSERT INTO fkk.tchild VALUES (1, 2, '[2021-01-01,2022-01-01)');
 
 -- Non-default firing modes on rchild's referenced-side triggers must survive.
@@ -86,6 +142,15 @@ SELECT p.oid::regprocedure AS helper,
 FROM pg_catalog.pg_proc AS p
 WHERE p.pronamespace = 'fkk'::regnamespace AND p.proname = 'par_id_exists';
 
+-- The referencing-side constraint trigger of the 1.3-shape FK: its arguments name the referenced columns.
+CREATE VIEW fkk.child_triggers AS
+SELECT t.tgrelid::regclass AS table_name, t.tgname, t.tgfoid::regprocedure AS function,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[4] AS arg_fk_columns,
+       (string_to_array(encode(t.tgargs, 'escape'), '\000'))[10] AS arg_uk_columns
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid IN ('fkk.rchild'::regclass, 'fkk.rchild2'::regclass, 'fkk.rchild3'::regclass) AND NOT t.tgisinternal
+ORDER BY 1, 2;
+
 CREATE VIEW fkk.child_constraints AS
 SELECT c.conrelid::regclass AS table_name, c.conname, pg_catalog.pg_get_constraintdef(c.oid) AS def
 FROM pg_catalog.pg_constraint AS c
@@ -99,6 +164,7 @@ TABLE fkk.fk_state;
 TABLE fkk.par_triggers;
 TABLE fkk.helper;
 TABLE fkk.child_constraints;
+TABLE fkk.child_triggers;
 SELECT sql_saga.check_integrity();
 
 \echo '--- Rename the referenced key column'
@@ -110,6 +176,7 @@ TABLE fkk.fk_state;
 TABLE fkk.par_triggers;
 TABLE fkk.helper;
 TABLE fkk.child_constraints;
+TABLE fkk.child_triggers;
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked after rename' AS done;
 
@@ -123,6 +190,12 @@ INSERT INTO fkk.rchild VALUES (3, 99);
 ROLLBACK;
 BEGIN;
 INSERT INTO fkk.rchild2 VALUES (3, 99);
+ROLLBACK;
+BEGIN;
+INSERT INTO fkk.rchild3 VALUES (2, 3);
+ROLLBACK;
+BEGIN;
+INSERT INTO fkk.rchild3 VALUES (3, 99);
 ROLLBACK;
 
 \echo '--- Regular FKs: referenced side'
@@ -305,6 +378,7 @@ SELECT sql_saga.add_unique_key('fkk.dpar', ARRAY['id$function$']::name[], 'valid
 INSERT INTO fkk.dpar VALUES (1, '[2020-01-01,2030-01-01)'), (2, '[2020-01-01,2030-01-01)');
 CREATE TABLE fkk.dchild (id int PRIMARY KEY, dpar_id int);
 SELECT sql_saga.add_regular_foreign_key('fkk.dchild', ARRAY['dpar_id']::name[], :'dkey');
+SELECT fkk.legacy_regular_fk('dchild_dpar_id_fkey');
 INSERT INTO fkk.dchild VALUES (1, 1);
 CREATE VIEW fkk.dhelper AS
 SELECT p.oid::regprocedure AS helper, p.prosecdef, p.proconfig, btrim(p.prosrc, E' \t\r\n') AS body

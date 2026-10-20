@@ -60,6 +60,14 @@ FROM pg_catalog.pg_constraint AS c
 WHERE c.conrelid IN ('fkr.rchild'::regclass, 'fkr.tchild'::regclass) AND c.contype IN ('c', 'f')
 ORDER BY 1, 2;
 
+-- Referencing-side constraint trigger of the regular FK (sql_saga 1.3 shape: no CHECK, no helper).
+-- Its definition shows the watched column and the column list argument, both of which must follow a rename.
+CREATE VIEW fkr.child_triggers AS
+SELECT t.tgrelid::regclass AS table_name, t.tgname, t.tgfoid::regprocedure AS function, pg_catalog.pg_get_triggerdef(t.oid) AS def
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid IN ('fkr.rchild'::regclass, 'fkr.tchild'::regclass) AND NOT t.tgisinternal
+ORDER BY 1, 2;
+
 -- Catalog names with no real object behind them. Must be empty.
 CREATE VIEW fkr.drift AS
 SELECT fk.foreign_key_name, 'uk_update_trigger' AS what, fk.uk_update_trigger AS catalog_name
@@ -82,9 +90,13 @@ UNION ALL
 SELECT fk.foreign_key_name, 'fk_check_constraint', fk.fk_check_constraint
 FROM sql_saga.foreign_keys AS fk
 WHERE fk.table_schema = 'fkr' AND fk.fk_check_constraint IS NOT NULL
-  AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
-                  WHERE c.conrelid = format('%I.%I', fk.table_schema, fk.table_name)::regclass
-                    AND c.conname = fk.fk_check_constraint AND c.contype = 'c')
+  -- One object: the constraint trigger named fk_check_constraint, with its own contype 't' constraint.
+  AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t
+                  JOIN pg_catalog.pg_constraint AS c ON c.oid = t.tgconstraint
+                  WHERE t.tgrelid = format('%I.%I', fk.table_schema, fk.table_name)::regclass
+                    AND t.tgname = fk.fk_check_constraint
+                    AND t.tgfoid = 'sql_saga.regular_fk_check_c()'::regprocedure
+                    AND c.conrelid = t.tgrelid AND c.conname = t.tgname AND c.contype = 't')
 UNION ALL
 SELECT fk.foreign_key_name, 'fk_index_name', fk.fk_index_name
 FROM sql_saga.foreign_keys AS fk
@@ -96,6 +108,7 @@ ORDER BY 1, 2;
 TABLE fkr.fk_state;
 TABLE fkr.par_triggers;
 TABLE fkr.child_constraints;
+TABLE fkr.child_triggers;
 TABLE fkr.drift;
 SELECT sql_saga.check_integrity();
 
@@ -112,6 +125,7 @@ ALTER TABLE fkr.tchild RENAME COLUMN par_id TO parent_id;
 TABLE fkr.fk_state;
 TABLE fkr.par_triggers;
 TABLE fkr.child_constraints;
+TABLE fkr.child_triggers;
 TABLE fkr.drift;
 
 \echo '--- Regular FK: referencing side still enforced'
@@ -150,7 +164,8 @@ ROLLBACK;
 BEGIN;
 SELECT sql_saga.drop_foreign_key('fkr.rchild', ARRAY['parent_id']::name[]);
 TABLE fkr.par_triggers;
-SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'fkr.rchild'::regclass AND contype = 'c' ORDER BY 1;
+SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'fkr.rchild'::regclass AND contype IN ('c', 't') ORDER BY 1;
+TABLE fkr.child_triggers;
 TABLE fkr.fk_state;
 ROLLBACK;
 
@@ -174,7 +189,10 @@ ALTER TABLE fkr.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
 TABLE fkr.par_trigger_modes;
 ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
 TABLE fkr.par_trigger_modes;
+-- A disabled referenced-side trigger is an integrity violation (reported with its repair); the mode itself survived.
+SAVEPOINT disabled_integrity;
 SELECT sql_saga.check_integrity();
+ROLLBACK TO SAVEPOINT disabled_integrity;
 -- The ALWAYS delete trigger still enforces under replica role.
 SET LOCAL session_replication_role = replica;
 SAVEPOINT replica_delete;
