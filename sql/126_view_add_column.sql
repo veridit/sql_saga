@@ -288,11 +288,134 @@ SELECT id, label, value_int, validity FROM vac.unit_loc WHERE valid_from >= '202
 SELECT id, value_int, validity FROM vac.unit_loc__current_valid;
 SELECT vac.integrity('after an update through the view on validity');
 ROLLBACK;
+
+\echo '--- 9. An unprivileged owner in a hardened database: ADD / DROP / RENAME on its own tables work'
+-- The role owns its tables and has no EXECUTE granted on sql_saga's internal functions, and new functions
+-- are not executable by PUBLIC. The event triggers must not make the role's DDL depend on such grants.
+CREATE ROLE vac_owner NOSUPERUSER;
+CREATE SCHEMA vac_own AUTHORIZATION vac_owner;
+GRANT USAGE ON SCHEMA sql_saga TO vac_owner;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES FOR ROLE vac_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+SET ROLE vac_owner;
+-- A table sql_saga does not manage.
+CREATE TABLE vac_own.plain (a int, b int, c int);
+ALTER TABLE vac_own.plain DROP COLUMN b;
+ALTER TABLE vac_own.plain RENAME TO plain2;
+SELECT array_agg(a.attname ORDER BY a.attnum) AS plain2_columns
+FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = 'vac_own.plain2'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+-- A table with a managed view.
+CREATE TABLE vac_own.owned (id int NOT NULL, name text, extra text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('vac_own.owned', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('vac_own.owned', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_for_portion_of_view('vac_own.owned');
+INSERT INTO vac_own.owned (id, name, extra, valid_from, valid_until) VALUES (1, 'a', 'x', '2024-01-01', 'infinity');
+ALTER TABLE vac_own.owned ADD COLUMN more text;
+ALTER TABLE vac_own.owned DROP COLUMN extra;
+SELECT array_agg(a.attname ORDER BY a.attnum) AS owned_view_columns,
+       (SELECT c.relowner::regrole FROM pg_catalog.pg_class AS c WHERE c.oid = 'vac_own.owned__for_portion_of_valid'::regclass) AS view_owner
+FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'vac_own.owned__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+UPDATE vac_own.owned__for_portion_of_valid SET more = 'm', valid_from = '2024-03-01', valid_until = '2024-05-01' WHERE id = 1;
+SELECT id, name, more, valid_from, valid_until FROM vac_own.owned ORDER BY id, valid_from;
+RESET ROLE;
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+SELECT vac.integrity('after DDL by the unprivileged owner');
+
+\echo '--- 10. The pending rebuild state is not writable by the session user'
+-- The views a DROP COLUMN rebuilds are remembered between ddl_command_start and ddl_command_end in an
+-- internal table that only sql_saga's own functions can read or write: a setting the user controls is
+-- never read, and the table refuses the user.
+SELECT c.relkind,
+       c.relowner = (SELECT e.extowner FROM pg_catalog.pg_extension AS e WHERE e.extname = 'sql_saga') AS owned_by_extension_owner,
+       EXISTS (SELECT FROM pg_catalog.pg_depend AS d
+               WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') AS extension_member,
+       c.oid = ANY ((SELECT e.extconfig FROM pg_catalog.pg_extension AS e WHERE e.extname = 'sql_saga')::oid[]) AS dumped_as_config,
+       has_table_privilege('vac_owner', c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE') AS owner_role_has_any_privilege
+FROM pg_catalog.pg_class AS c WHERE c.oid = 'sql_saga.__internal_updatable_view_pending'::regclass;
+SET ROLE vac_owner;
+-- Asking for the rebuild of a view that does not exist, through a setting: ignored.
+SET sql_saga.updatable_view_rebuild = '[{"row": {"view_schema": "vac_own", "view_name": "sneaky", "view_type": "for_portion_of", "table_schema": "vac_own", "table_name": "owned", "era_name": "valid", "trigger_name": "sneaky", "current_func": null, "generated_columns": [], "ephemeral_columns": null}, "owner": "vac_owner", "acl": null, "comment": null, "columns": [], "triggers": [{"name": "sneaky", "definition": "CREATE TABLE vac_own.f1_injected_marker ()", "enabled": "O", "comment": null}], "dropped_columns": []}]';
+ALTER TABLE vac_own.owned ADD COLUMN another text;
+RESET sql_saga.updatable_view_rebuild;
+-- Writing the internal table directly: refused.
+INSERT INTO sql_saga.__internal_updatable_view_pending DEFAULT VALUES;
+DELETE FROM sql_saga.__internal_updatable_view_pending;
+RESET ROLE;
+SELECT r.rolsuper AS owner_is_superuser FROM pg_catalog.pg_roles AS r WHERE r.rolname = 'vac_owner';
+SELECT to_regclass('vac_own.sneaky') AS sneaky_view,
+       to_regclass('vac_own.f1_injected_marker') AS injected_marker,
+       (SELECT count(*) FROM sql_saga.updatable_view AS uv WHERE uv.view_schema = 'vac_own') AS vac_own_managed_views;
+-- The pending state lives only within the statement, and goes away with a failed ALTER TABLE.
+SELECT vac.probe($$ALTER TABLE vac.unit_stat DROP COLUMN note, ALTER COLUMN label TYPE int USING 1/0$$) AS failing_drop_column;
+SELECT count(*) AS pending_rows FROM sql_saga.__internal_updatable_view_pending;
+ALTER TABLE vac_own.owned DROP COLUMN another;
+SELECT count(*) AS pending_rows FROM sql_saga.__internal_updatable_view_pending;
+TABLE vac.view_shape;
+SELECT vac.integrity('after the pending state checks');
+
+\echo '--- 11. A user rule on a managed view: DROP COLUMN is refused, the view is left intact'
+-- The rebuild would drop the rule with the view, so it is refused up front, like a dependent user view.
+CREATE TABLE vac.rule_log (event text);
+CREATE RULE log_delete AS ON DELETE TO vac.unit_stat__for_portion_of_valid DO ALSO INSERT INTO vac.rule_log VALUES ('deleted');
+TRUNCATE vac.view_identity;
+INSERT INTO vac.view_identity
+SELECT uv.view_name, format('%I.%I', uv.view_schema, uv.view_name)::regclass::oid
+FROM sql_saga.updatable_view AS uv WHERE uv.table_schema = 'vac';
+ALTER TABLE vac.unit_stat DROP COLUMN note;
+TABLE vac.view_shape;
+TABLE vac.view_identity_check;
+SELECT r.rulename FROM pg_catalog.pg_rewrite AS r
+WHERE r.ev_class = 'vac.unit_stat__for_portion_of_valid'::regclass ORDER BY r.rulename;
+DROP RULE log_delete ON vac.unit_stat__for_portion_of_valid;
+DROP TABLE vac.rule_log;
+SELECT vac.integrity('after the refused DROP COLUMN under a rule');
+
+\echo '--- 12. View options set by the user (security_barrier, check_option) survive ADD and DROP COLUMN'
+ALTER VIEW vac.unit_stat__for_portion_of_valid SET (security_barrier = true, check_option = local);
+ALTER VIEW vac.unit_loc__current_valid SET (security_barrier = true, check_option = local);
+CREATE VIEW vac.view_options AS
+SELECT uv.view_name,
+       ARRAY(SELECT o FROM unnest(c.reloptions) AS o ORDER BY o) AS reloptions
+FROM sql_saga.updatable_view AS uv
+JOIN pg_catalog.pg_class AS c ON c.oid = format('%I.%I', uv.view_schema, uv.view_name)::regclass
+WHERE uv.table_schema = 'vac'
+ORDER BY uv.view_name;
+TABLE vac.view_options;
+ALTER TABLE vac.unit_stat ADD COLUMN extra text;
+ALTER TABLE vac.unit_loc ADD COLUMN extra text;
+TABLE vac.view_options;
+ALTER TABLE vac.unit_stat DROP COLUMN extra;
+ALTER TABLE vac.unit_loc DROP COLUMN extra;
+TABLE vac.view_options;
+TABLE vac.view_shape;
+SELECT vac.integrity('after ADD and DROP COLUMN with view options');
+
+\echo '--- 13. A view-level ephemeral column follows a rename, and stays protected from DROP COLUMN'
+CREATE TABLE vac.audited (id int NOT NULL, name text, edit_at text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('vac.audited', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('vac.audited', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_for_portion_of_view('vac.audited', ephemeral_columns => ARRAY['edit_at']::name[]);
+INSERT INTO vac.audited (id, name, edit_at, valid_from, valid_until) VALUES (1, 'a', 'e0', '2024-01-01', 'infinity');
+ALTER TABLE vac.audited RENAME COLUMN edit_at TO edited_at;
+SELECT uv.view_name, uv.ephemeral_columns FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'audited');
+SELECT array_agg(a.attname ORDER BY a.attnum) AS audited_view_columns
+FROM pg_catalog.pg_attribute AS a
+WHERE a.attrelid = 'vac.audited__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
+SELECT vac.integrity('after RENAME COLUMN edit_at TO edited_at');
+UPDATE vac.audited__for_portion_of_valid SET name = 'b', edited_at = 'e1', valid_from = '2024-03-01', valid_until = '2024-05-01' WHERE id = 1;
+SELECT id, name, edited_at, valid_from, valid_until FROM vac.audited ORDER BY id, valid_from;
+SELECT vac.probe($$ALTER TABLE vac.audited DROP COLUMN edited_at$$) AS drop_renamed_ephemeral_column;
+SELECT uv.view_name, uv.ephemeral_columns FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'audited');
+SELECT vac.integrity('after the refused ephemeral DROP COLUMN');
 SELECT vac.integrity('at the end');
 
 SET client_min_messages = warning;
 RESET search_path;
 DROP SCHEMA vac CASCADE;
+DROP SCHEMA vac_own CASCADE;
+DROP OWNED BY vac_owner;
+DROP ROLE vac_owner;
 DROP ROLE vac_reader;
 RESET vac.today;
 \i sql/include/test_teardown.sql
