@@ -253,16 +253,17 @@ The native planner doesn't use the SQL-based L2 cache at all. Instead it uses a 
 
 - Hits across import jobs within the same backend connection (same session)
 - Holds multiple entries simultaneously, so alternating between 4 target tables (the StatBus pattern) doesn't cause thrashing
-- Costs ~0ms on hit (no SPI, no catalog queries, no SQL generation)
-- The cache key is a hash of all configuration parameters; source table OID and column structure are checked separately for invalidation
+- Avoids full introspection and SQL generation on a cache hit
+- Validates cached source and target definitions with a catalog fingerprint on every call in 1.3, including column types, defaults and primary-key columns
+- Excludes source table OID from the configuration key so temporary source tables with equivalent column shapes can reuse cached metadata
 
 **2. Short-circuit empty sources → STILL RELEVANT**
 
 The native planner still reads source rows before discovering they're empty. The early-return optimization in the PL/pgSQL wrapper (`temporal_merge` procedure) should still be added for the no-rows case. However, the cost of a no-op native plan (read 0 source rows, emit 0 plan rows) is now ~2-5ms instead of ~200ms, so the urgency is much lower.
 
-**3. Pre-cache introspection overhead → ELIMINATED**
+**3. Full introspection overhead → CACHED, WITH SCHEMA VALIDATION**
 
-The native planner's introspection runs only on cache miss. On cache hit, zero SPI calls are made before reading source/target rows. The introspection results (era info, PK columns, column layouts, SQL templates) are all cached in the `CachedState`.
+The native planner's full introspection runs only on a cache miss. In 1.3, each planner call and each executor-introspection call first runs one SPI query to fingerprint the source and target catalog definitions. A matching fingerprint avoids further introspection. This validation detects target DDL, rolled-back DDL and changes committed by another session, rather than assuming that cached target casts and column lists remain valid. The benchmark results above predate this validation and are not a measurement of its overhead.
 
 **4. EXECUTE phase overhead → UNCHANGED**
 
