@@ -183,6 +183,37 @@ Then run application smoke tests as every relevant role, especially RLS tenant r
 
 ## Dump and restore
 
+### Catalog-format safeguard introduced in 1.3
+
+The `sql_saga.era` catalog carries `catalog_format = '1.3'`. This is the release that introduced this
+catalog format, not a count of schema changes and not a second extension version. Using a release name
+makes the marker traceable to a released layout. A later release can keep the same value if it remains
+compatible with this format.
+
+The column deliberately has **no default**. An older dump's column list omits it, so restoring those rows
+directly into a fresh 1.3 installation would supply NULL. This named constraint rejects that mistake:
+
+```sql
+CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md"
+CHECK (catalog_format IS NOT NULL AND catalog_format = '1.3')
+```
+
+The explicit NULL test matters: PostgreSQL CHECK constraints accept an unknown result, so equality alone
+would not reject the missing value. Public registration functions write the marker explicitly. The normal
+extension update populates it on existing rows as part of the catalog migration.
+
+This is a restore guard, not automatic conversion or a replacement for `check_integrity()`. It detects an
+incompatible era row when that row is loaded. A database with no era rows has nothing for this constraint
+to check, and a compatible marker does not prove every generated object is intact. Do not add a default,
+disable the constraint, or stamp old rows manually to get a restore past it. Restore the old dump at its
+own extension version, then run the update as described below.
+
+The guard cannot make `pg_dump` include `VERSION` in its `CREATE EXTENSION` statement. sql_saga does not
+control that statement. Keep the source extension version with the backup and explicitly preinstall that
+version when restoring an old archive.
+
+### Restore at the dump's own extension version
+
 `pg_dump` does **not** record the extension version: the archive says `CREATE EXTENSION IF NOT EXISTS sql_saga`,
 which installs the destination's *default* version, and then loads the old catalog rows into it without
 running any update script. With the current package installed, a plain `pg_restore` of an older dump either
