@@ -70,7 +70,8 @@ BEGIN
     END IF;
 
     IF to_regprocedure(format('sql_saga.%I()', v_func_name)) IS NOT NULL THEN
-        EXECUTE format($$DROP FUNCTION sql_saga.%1$I() CASCADE$$,
+        -- A reused synchronization function is a user-owned dependency. Let PostgreSQL name it.
+        EXECUTE format($$DROP FUNCTION sql_saga.%1$I()$$,
             v_func_name /* %1$I */
         );
     END IF;

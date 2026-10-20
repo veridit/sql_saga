@@ -150,6 +150,7 @@ BEGIN
 
     /* We must be in cascading-drop mode now */
 
+    PERFORM sql_saga.drop_current_view(table_oid, era_name, drop_behavior);
     PERFORM sql_saga.drop_for_portion_of_view(table_oid, era_name, drop_behavior, cleanup);
 
     PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)

@@ -413,8 +413,9 @@ BEGIN
              AND (d.address_names[1], d.address_names[2], d.address_names[3]) = (v.view_schema, v.view_name, v.trigger_name)
             UNION ALL
             SELECT 100, d.dropped_ordinality,
-                   format('table "%s" must have a primary key or a single-column temporal unique key to support its updatable view for era "%s"',
-                          sql_saga.__internal_display_name(v.table_schema, v.table_name), v.era_name)
+                   format('table "%s" must have a primary key or a single-column temporal unique key to support its %s view "%s" for era "%s"; drop that view first with sql_saga.drop_%s_view()',
+                          sql_saga.__internal_display_name(v.table_schema, v.table_name), v.view_type,
+                          sql_saga.__internal_display_name(v.view_schema, v.view_name), v.era_name, v.view_type)
             FROM dropped AS d JOIN sql_saga.updatable_view AS v
              ON d.object_type IN ('table column', 'table constraint', 'index')
              AND (d.address_names[1], d.address_names[2]) = (v.table_schema, v.table_name)
@@ -651,7 +652,8 @@ BEGIN
                 -- Drop the function directly (trigger already gone with table)
                 func_name := era_row.sync_temporal_trg_function_name;
                 IF to_regprocedure(format('sql_saga.%I()', func_name)) IS NOT NULL THEN
-                    EXECUTE format($$DROP FUNCTION sql_saga.%I() %s$$, func_name, 'CAS' || 'CADE');
+                    -- Do not silently remove a user trigger that reuses this function.
+                    EXECUTE format($$DROP FUNCTION sql_saga.%I()$$, func_name);
                 END IF;
             END LOOP;
         END;

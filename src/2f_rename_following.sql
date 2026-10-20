@@ -98,8 +98,9 @@ BEGIN
         RAISE EXCEPTION 'cannot rename schema "%" because it contains managed system-versioned table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name, object_display_name
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'era' THEN
-        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed table "%" with era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name, object_display_name, managed.era_name
-            USING ERRCODE = 'object_in_use';
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed table "%" with era "%"', schema_name, object_display_name, managed.era_name
+            USING ERRCODE = 'object_in_use',
+                  HINT = 'Save the definitions first. Drop managed views with sql_saga.drop_current_view() and sql_saga.drop_for_portion_of_view(), then dependent foreign keys with sql_saga.drop_foreign_key_by_name(), then keys with sql_saga.drop_unique_key_by_name(), then the era with sql_saga.drop_era(cleanup => false). Rename the schema and recreate the saved definitions. User-owned dependent objects must be handled explicitly by their owner.';
     ELSIF managed.managed_class = 'foreign_key' THEN
         RAISE EXCEPTION 'cannot rename schema "%" because it contains managed table "%" with foreign key "%"; drop it first with sql_saga.drop_foreign_key_by_name(table_oid regclass, key_name name, drop_index boolean)', schema_name, object_display_name, managed.detail
             USING ERRCODE = 'object_in_use';
@@ -231,8 +232,9 @@ BEGIN
             sql_saga.__internal_system_versioning_move_advice(managed.base_schema, managed.base_table, history_schema, history_name)
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'era' THEN
-        RAISE EXCEPTION 'cannot rename or move table "%" because it has era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, managed.era_name
-            USING ERRCODE = 'object_in_use';
+        RAISE EXCEPTION 'cannot rename or move table "%" because it has era "%"', relation_display_name, managed.era_name
+            USING ERRCODE = 'object_in_use',
+                  HINT = 'Save the definitions first. Drop managed views with sql_saga.drop_current_view() and sql_saga.drop_for_portion_of_view(), then dependent foreign keys with sql_saga.drop_foreign_key_by_name(), then keys with sql_saga.drop_unique_key_by_name(), then the era with sql_saga.drop_era(cleanup => false). Rename or move the table and recreate the saved definitions. User-owned dependent objects must be handled explicitly by their owner.';
     ELSIF managed.managed_class = 'foreign_key' THEN
         RAISE EXCEPTION 'cannot rename or move table "%" because it has foreign key "%"; drop it first with sql_saga.drop_foreign_key_by_name(table_oid regclass, key_name name, drop_index boolean)', relation_display_name, managed.detail
             USING ERRCODE = 'object_in_use';
