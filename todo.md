@@ -22,12 +22,17 @@ Release gates still open:
   - [ ] Adapt historical helper/CHECK fixtures without weakening pairing or enforcement assertions
 - [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
 - [ ] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL
+  - [ ] Use structured fingerprints so quoted names cannot collide with encoded column lists
 - [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
 - [ ] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
+  - [ ] Authenticate frozen inputs and test deterministic generation, SQL splitting and signature checks
+  - [ ] Preserve existing routine ACLs and apply explicit privileges only to new routines
+  - [ ] Preserve managed-view identity, grants and extension membership when repairing stale views during UPDATE
 - [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [ ] Finish 1.3 API/runbook documentation, full regression/native tests and performance checks
+  - [ ] Run the deterministic two-session FK concurrency harness in the Makefile and CI on an explicitly identified disposable cluster
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
 - [ ] Obtain owner approval before pushing or tagging the release and before sending external notices
 
