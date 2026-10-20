@@ -62,7 +62,7 @@ KNOWN=()
 SKIPPED=()
 SPLIT_RESULTS=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names parallel_known_failure)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -446,6 +446,45 @@ INSERT INTO r VALUES (1, 1, 'n1');
 UPDATE r SET note = 'n2';
 GRANT SELECT, UPDATE ON p TO ${PREFIX}_r1;
 GRANT SELECT ON r TO ${PREFIX}_r1;
+SQL
+    } | psql_q -d "$1"
+}
+
+# Regular foreign keys whose child table sorts before its parent ("activity" and "contact" load before
+# "legal_unit"; "stat" after it), StatBus-shaped: a single-column and a composite key, NULL references
+# and a temporal sibling (establishment) with a temporal FK to the same parent. pg_dump loads table
+# data in name order, so a referencing-side check that reads the parent while the child's COPY runs
+# fails even a serial or --single-transaction restore (1.0 to 1.2: a CHECK constraint calling the
+# helper; tmp/fable_audit_v13_brief.md defect B).
+build_regular_fk_order() {
+    { common_header; cat <<SQL
+CREATE TABLE legal_unit (id int NOT NULL, ident_type text NOT NULL, ident text NOT NULL,
+                         valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['ident_type', 'ident'], key_type => 'natural', unique_key_name => 'legal_unit_ident_valid');
+CREATE TABLE activity (id int PRIMARY KEY, legal_unit_id int);
+CREATE TABLE contact (id int PRIMARY KEY, ident_type text, ident text);
+CREATE TABLE stat (id int PRIMARY KEY, legal_unit_id int);
+SELECT sql_saga.add_foreign_key('activity', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id']);
+SELECT sql_saga.add_foreign_key('stat', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id']);
+SELECT sql_saga.add_regular_foreign_key('contact', ARRAY['ident_type', 'ident'], 'legal_unit_ident_valid');
+-- A temporal child (native temporal FK, deferrable) that also sorts before its parent.
+CREATE TABLE establishment (id int NOT NULL, legal_unit_id int,
+                            valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('establishment', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], key_type => 'primary', unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id']);
+INSERT INTO legal_unit (id, ident_type, ident, valid_from, valid_until)
+    SELECT g, 'tax', g::text, '2020-01-01', 'infinity' FROM generate_series(1, 50) AS g;
+INSERT INTO activity SELECT g, 1 + g % 50 FROM generate_series(1, 100) AS g;
+INSERT INTO activity VALUES (101, NULL);
+INSERT INTO stat SELECT g, 1 + g % 50 FROM generate_series(1, 100) AS g;
+INSERT INTO contact SELECT g, 'tax', (1 + g % 50)::text FROM generate_series(1, 100) AS g;
+INSERT INTO contact VALUES (101, NULL, '999');
+INSERT INTO establishment (id, legal_unit_id, valid_from, valid_until)
+    SELECT g, g, '2021-01-01', 'infinity' FROM generate_series(1, 50) AS g;
+GRANT SELECT ON legal_unit, activity, contact, stat TO ${PREFIX}_r1;
 SQL
     } | psql_q -d "$1"
 }

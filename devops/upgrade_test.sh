@@ -2030,6 +2030,148 @@ check "shared helper: unreferenced parents can be deleted after the update" "" \
     "$(q "$SHARED" "BEGIN; DELETE FROM par WHERE id = 3; DELETE FROM par2 WHERE a = 3; ROLLBACK" | grep '^ERROR')"
 
 # ---------------------------------------------------------------------------------------------
+section "StatBus shapes: XOR keys sorted by unrelated DDL, regular FK child sorting before its parent" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# tmp/STATBUS_REPORT_xor_key_order.md and tmp/fable_audit_v13_brief.md (defects A and B). A healthy
+# baseline database shaped like StatBus: XOR unique keys (add_unique_key with mutually_exclusive_columns)
+# whose given column order is not alphabetical, then unrelated DDL, after which the baseline's
+# rename_following has rewritten unique_keys.column_names sorted by name (the constraints are unchanged);
+# and regular foreign keys whose child table sorts before its parent ("activity_note" before
+# "legal_unit"), which the baseline enforces with a CHECK constraint reading the parent. The update must
+# succeed, repair the catalog to the constraint order, pass check_integrity, keep every foreign key
+# enforcing, and leave a database that serial and --single-transaction restores accept.
+STATBUS=${PREFIX}_statbus_shapes
+new_db "$STATBUS" "$EXT_ROOT" "$OLD_LIB"
+out=$(sql "$STATBUS" <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE TABLE legal_unit (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
+CREATE TABLE establishment (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('establishment', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('establishment', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'establishment_id_valid');
+-- XOR keys in the five StatBus shapes (column order as StatBus gives it).
+CREATE TABLE activity (id int NOT NULL, type text NOT NULL, legal_unit_id int, establishment_id int,
+                       valid_range daterange NOT NULL, valid_from date, valid_until date,
+                       CONSTRAINT activity_one_unit CHECK (num_nonnulls(establishment_id, legal_unit_id) = 1));
+SELECT sql_saga.add_era('activity', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('activity', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'activity_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'activity', key_type => 'natural', column_names => ARRAY['type', 'legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'activity_type_establishment_id_valid');
+SELECT sql_saga.add_foreign_key('activity', ARRAY['establishment_id']::name[], 'establishment', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('activity', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+CREATE TABLE location (id int NOT NULL, type text NOT NULL, establishment_id int, legal_unit_id int,
+                       valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('location', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'location', key_type => 'natural', column_names => ARRAY['type', 'establishment_id', 'legal_unit_id'],
+    mutually_exclusive_columns => ARRAY['establishment_id', 'legal_unit_id'], unique_key_name => 'location_type_establishment_id_valid');
+SELECT sql_saga.add_foreign_key('location', ARRAY['establishment_id']::name[], 'establishment', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('location', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+CREATE TABLE contact (id int NOT NULL, legal_unit_id int, establishment_id int, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('contact', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'contact', key_type => 'natural', column_names => ARRAY['legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'contact_natural_key_valid');
+CREATE TABLE person_for_unit (id int NOT NULL, person_id int NOT NULL, person_role_id int, legal_unit_id int, establishment_id int,
+                              valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('person_for_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'person_for_unit', key_type => 'natural',
+    column_names => ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'person_for_unit_natural_key_valid');
+CREATE TABLE stat_for_unit (id int NOT NULL, stat_definition_id int NOT NULL, legal_unit_id int, establishment_id int,
+                            valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('stat_for_unit', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'stat_for_unit', key_type => 'natural',
+    column_names => ARRAY['stat_definition_id', 'legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['establishment_id', 'legal_unit_id'], unique_key_name => 'stat_for_unit_natural_key_valid');
+-- Regular foreign keys: activity_note sorts before legal_unit, unit_note after it.
+CREATE TABLE activity_note (id int PRIMARY KEY, legal_unit_id int);
+CREATE TABLE unit_note (id int PRIMARY KEY, legal_unit_id int);
+SELECT sql_saga.add_foreign_key('activity_note', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+SELECT sql_saga.add_foreign_key('unit_note', ARRAY['legal_unit_id']::name[], 'legal_unit', ARRAY['id']::name[]);
+INSERT INTO legal_unit (id, name, valid_from, valid_until) SELECT g, 'LU ' || g, '2020-01-01', 'infinity' FROM generate_series(1, 20) AS g;
+INSERT INTO establishment (id, name, valid_from, valid_until) SELECT g, 'EST ' || g, '2020-01-01', 'infinity' FROM generate_series(1, 20) AS g;
+INSERT INTO activity (id, type, legal_unit_id, valid_from, valid_until) SELECT g, 'primary', g, '2021-01-01', 'infinity' FROM generate_series(1, 10) AS g;
+INSERT INTO activity (id, type, establishment_id, valid_from, valid_until) SELECT g, 'primary', g, '2021-01-01', 'infinity' FROM generate_series(11, 20) AS g;
+INSERT INTO location (id, type, legal_unit_id, valid_from, valid_until) SELECT g, 'physical', g, '2021-01-01', 'infinity' FROM generate_series(1, 10) AS g;
+INSERT INTO person_for_unit (id, person_id, person_role_id, legal_unit_id, valid_from, valid_until) SELECT g, g, 1, g, '2021-01-01', 'infinity' FROM generate_series(1, 10) AS g;
+INSERT INTO activity_note SELECT g, 1 + g % 20 FROM generate_series(1, 40) AS g;
+INSERT INTO activity_note VALUES (41, NULL);
+INSERT INTO unit_note SELECT g, 1 + g % 20 FROM generate_series(1, 40) AS g;
+-- Unrelated DDL after setup, as StatBus migrations run it.
+ALTER TABLE activity ADD COLUMN note text;
+CREATE INDEX activity_lookup_idx ON activity (establishment_id, legal_unit_id, type);
+COMMENT ON TABLE location IS 'where a unit is';
+ALTER TABLE contact ADD CONSTRAINT contact_one_unit CHECK (num_nonnulls(legal_unit_id, establishment_id) = 1);
+SQL
+)
+printf '%s\n' "$out" | grep -q '^ERROR' && die "StatBus shapes fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+# The catalog order of every XOR key against the order of its native constraint (range column excluded).
+XOR_ORDER_SQL="SELECT string_agg(format('%s=%s', uk.unique_key_name, CASE WHEN uk.column_names = live.cols THEN 'constraint order' WHEN uk.column_names::text[] = (SELECT array_agg(c ORDER BY c COLLATE \"C\") FROM unnest(live.cols::text[]) AS c) THEN 'sorted' ELSE 'other' END), ' ' ORDER BY uk.unique_key_name)
+FROM sql_saga.unique_keys AS uk
+JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+JOIN pg_catalog.pg_constraint AS c ON c.conrelid = format('%I.%I', uk.table_schema, uk.table_name)::regclass AND c.conname = uk.unique_constraint
+CROSS JOIN LATERAL (SELECT array_agg(a.attname ORDER BY u.ord) AS cols FROM unnest(c.conkey) WITH ORDINALITY AS u (attnum, ord)
+                    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (c.conrelid, u.attnum) WHERE a.attname <> e.range_column_name) AS live
+WHERE uk.mutually_exclusive_columns IS NOT NULL"
+XOR_SORTED="activity_type_establishment_id_valid=sorted contact_natural_key_valid=sorted location_type_establishment_id_valid=sorted person_for_unit_natural_key_valid=sorted stat_for_unit_natural_key_valid=sorted"
+XOR_CANONICAL="activity_type_establishment_id_valid=constraint order contact_natural_key_valid=constraint order location_type_establishment_id_valid=constraint order person_for_unit_natural_key_valid=constraint order stat_for_unit_natural_key_valid=constraint order"
+# Child-side CHECK constraints of regular foreign keys that call a function reading the parent table.
+CHILD_CHECKS_SQL="SELECT count(*) FROM sql_saga.foreign_keys AS fk
+JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+JOIN pg_catalog.pg_constraint AS c ON c.conrelid = format('%I.%I', fk.table_schema, fk.table_name)::regclass AND c.contype = 'c'
+JOIN pg_catalog.pg_depend AS d ON (d.classid, d.objid, d.refclassid) = ('pg_catalog.pg_constraint'::regclass, c.oid, 'pg_catalog.pg_proc'::regclass)
+JOIN pg_catalog.pg_proc AS p ON p.oid = d.refobjid
+WHERE fk.type = 'regular_to_temporal' AND p.pronamespace <> 'pg_catalog'::regnamespace AND p.prosrc ~ format('\\m%s\\M', uk.table_name)"
+# The shape this section is about: the baseline sorted the XOR keys and enforces the regular FKs with
+# CHECKs reading the parent. If not, the fixture does not model StatBus and the section proves nothing.
+FAILURE_CLASS=prerequisite
+check "StatBus shapes: the $BASELINE_VERSION baseline sorted every XOR key catalog after unrelated DDL" "$XOR_SORTED" "$(q "$STATBUS" "$XOR_ORDER_SQL")"
+check "StatBus shapes: the $BASELINE_VERSION baseline enforces both regular FK children with a CHECK reading the parent" "2" "$(q "$STATBUS" "$CHILD_CHECKS_SQL")"
+FAILURE_CLASS="expected RED"
+psql -X -q -d postgres -c "ALTER DATABASE $STATBUS RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $STATBUS"
+STATBUS_UPDATE=$(q "$STATBUS" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
+check "StatBus shapes: healthy $BASELINE_VERSION database updates without refusal" "" "$(printf '%s\n' "$STATBUS_UPDATE" | grep '^ERROR')"
+check "StatBus shapes: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$STATBUS" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "StatBus shapes: check_integrity passes after the update" "" "$(q "$STATBUS" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "StatBus shapes: every XOR key catalog is in constraint order after the update" "$XOR_CANONICAL" "$(q "$STATBUS" "$XOR_ORDER_SQL")"
+check "StatBus shapes: no regular FK child is a CHECK reading the parent after the update" "0" "$(q "$STATBUS" "$CHILD_CHECKS_SQL")"
+check "StatBus shapes: unrelated DDL after the update keeps the XOR keys in constraint order" "$XOR_CANONICAL" \
+    "$(q "$STATBUS" "ALTER TABLE person_for_unit ADD COLUMN note text" | grep '^ERROR'; q "$STATBUS" "$XOR_ORDER_SQL")"
+check "StatBus shapes: check_integrity passes after unrelated DDL on the updated database" "" "$(q "$STATBUS" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+# Enforcement after the update (each probe rolled back, all constraints checked immediately).
+statbus_probe() { if q "$STATBUS" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $1; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
+check "StatBus shapes: activity_note (sorts before parent) refuses a missing legal unit" "refused" "$(statbus_probe "INSERT INTO activity_note VALUES (99, 999)")"
+check "StatBus shapes: activity_note accepts an existing legal unit and NULL" "accepted" "$(statbus_probe "INSERT INTO activity_note VALUES (99, 3); INSERT INTO activity_note VALUES (100, NULL)")"
+check "StatBus shapes: unit_note (sorts after parent) refuses a missing legal unit" "refused" "$(statbus_probe "INSERT INTO unit_note VALUES (99, 999)")"
+check "StatBus shapes: deleting a legal unit referenced by activity_note is refused" "refused" "$(statbus_probe "DELETE FROM legal_unit WHERE id = 2")"
+check "StatBus shapes: activity refuses a missing legal unit (temporal FK)" "refused" \
+    "$(statbus_probe "INSERT INTO activity (id, type, legal_unit_id, valid_from, valid_until) VALUES (99, 'primary', 999, '2021-01-01', 'infinity')")"
+check "StatBus shapes: activity XOR key refuses a duplicate (type, legal unit)" "refused" \
+    "$(statbus_probe "INSERT INTO activity (id, type, legal_unit_id, valid_from, valid_until) VALUES (99, 'primary', 1, '2022-01-01', 'infinity')")"
+# The updated database survives serial and --single-transaction restores.
+if pg_dump -Fc -d "$STATBUS" -f "$WORK/statbus.dump" 2>>"$LOG"; then
+    for variant in serial single_txn; do
+        dst=${STATBUS}_${variant}
+        new_db "$dst" "$EXT_ROOT"
+        opts="--exit-on-error"
+        [ $variant = single_txn ] && opts="$opts --single-transaction"
+        if pg_restore $opts -d "$dst" "$WORK/statbus.dump" >"$WORK/statbus.$variant.log" 2>&1; then
+            ok "StatBus shapes: $variant restore of the updated database"
+            check "StatBus shapes: $variant restore: check_integrity passes" "" "$(q "$dst" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+            check "StatBus shapes: $variant restore: XOR keys in constraint order" "$XOR_CANONICAL" "$(q "$dst" "$XOR_ORDER_SQL")"
+            check "StatBus shapes: $variant restore: all rows present" "20|20|20|41|40" \
+                "$(q "$dst" "SELECT (SELECT count(*) FROM legal_unit) || '|' || (SELECT count(*) FROM establishment) || '|' || (SELECT count(*) FROM activity) || '|' || (SELECT count(*) FROM activity_note) || '|' || (SELECT count(*) FROM unit_note)")"
+        else
+            fail "StatBus shapes: $variant restore of the updated database failed: $(grep -m1 -E 'ERROR|error:' "$WORK/statbus.$variant.log")"
+        fi
+    done
+else
+    fail "StatBus shapes: pg_dump of the updated database"
+fi
+
+# ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
