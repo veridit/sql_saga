@@ -359,11 +359,60 @@ ROLLBACK;
  * sql_saga's event triggers are kept out of it (session_replication_role = replica, transaction-local).
  * --------------------------------------------------------------------------------------------------------- */
 \o /dev/null
+/*
+ * A regular foreign key in the shape released sql_saga 1.0-1.2 built (versions/sql_saga--1.2.sql
+ * add_regular_foreign_key): the helper function <uk schema>.<uk table>_<key columns>_exists(<child column types>)
+ * with the canonical body, LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path = pg_catalog, owned by the
+ * referenced table owner and executable by PUBLIC; the child CHECK <fk_check_constraint> calling it with the child
+ * columns in catalog order; and the catalog row naming the helper. Since 1.3 add_foreign_key creates a constraint
+ * trigger instead, so the historical fixtures below convert the new foreign key back to the released shape first
+ * (as a not yet updated installation has it). sql_saga's event triggers are kept out of it.
+ */
+CREATE FUNCTION fkp.legacy_regular_fk(fk_name name) RETURNS void LANGUAGE plpgsql AS $legacy_regular_fk$
+DECLARE
+    r record;
+BEGIN
+    PERFORM set_config('session_replication_role', 'replica', true);
+    SELECT format('%I.%I', fk.table_schema, fk.table_name)::regclass AS child,
+           format('%I.%I', uk.table_schema, uk.table_name)::regclass AS parent,
+           fk.fk_check_constraint,
+           format('%I.%I', uk.table_schema, sql_saga.__internal_make_name(ARRAY[uk.table_name] || ARRAY(
+               SELECT c FROM unnest(uk.column_names) WITH ORDINALITY AS u (c, o) WHERE c <> e.range_column_name ORDER BY o)
+               || ARRAY['exists']::name[])) AS helper,
+           (SELECT string_agg(format_type(a.atttypid, a.atttypmod), ', ' ORDER BY u.o)
+            FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)
+            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (format('%I.%I', fk.table_schema, fk.table_name)::regclass, u.n)) AS types,
+           (SELECT string_agg(quote_ident(n), ', ' ORDER BY o) FROM unnest(fk.column_names) WITH ORDINALITY AS u (n, o)) AS args,
+           (SELECT rl.rolname FROM pg_catalog.pg_class AS pc JOIN pg_catalog.pg_roles AS rl ON rl.oid = pc.relowner
+            WHERE pc.oid = format('%I.%I', uk.table_schema, uk.table_name)::regclass) AS owner
+    INTO r
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    WHERE fk.foreign_key_name = fk_name AND fk.type = 'regular_to_temporal';
+    EXECUTE format('CREATE FUNCTION %s(%s) RETURNS boolean LANGUAGE sql STABLE STRICT SECURITY DEFINER SET search_path = pg_catalog AS %L',
+                   r.helper, r.types, sql_saga.__internal_regular_fk_helper_body(fk_name));
+    EXECUTE format('ALTER FUNCTION %s(%s) OWNER TO %I', r.helper, r.types, r.owner);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s(%s) TO PUBLIC', r.helper, r.types);
+    EXECUTE format('DROP TRIGGER %I ON %s', r.fk_check_constraint, r.child);
+    EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I CHECK (%s(%s))', r.child, r.fk_check_constraint, r.helper, r.args);
+    UPDATE sql_saga.foreign_keys AS fk
+    -- As released: format('%s(%s)', <schema-qualified %I.%I name>, <child column types>).
+    SET fk_helper_function = format('%s(%s)', r.helper, r.types)
+    WHERE fk.foreign_key_name = fk_name;
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$legacy_regular_fk$;
+
 CREATE FUNCTION fkp.mispair(uk_name name, sorted_columns name[], regular_fk name, temporal_fk name) RETURNS void LANGUAGE plpgsql AS $mispair$
 DECLARE
     original name[];
     r record;
 BEGIN
+    -- The 1.0/1.1 state includes the released referencing side (CHECK and helper).
+    IF regular_fk IS NOT NULL THEN
+        PERFORM fkp.legacy_regular_fk(regular_fk);
+    END IF;
     PERFORM set_config('session_replication_role', 'replica', true);
     SELECT uk.column_names INTO original FROM sql_saga.unique_keys AS uk WHERE uk.unique_key_name = uk_name;
     UPDATE sql_saga.unique_keys AS uk SET column_names = sorted_columns WHERE uk.unique_key_name = uk_name;
@@ -658,6 +707,8 @@ ROLLBACK;
 \echo '--- part 5b: the referenced-side trigger arguments pair the columns differently (CHECK and helper canonical)'
 BEGIN;
 \o /dev/null
+-- The released referencing side (CHECK and helper), as an installation before the update to 1.3 has it.
+SELECT fkp.legacy_regular_fk('r5_fkey');
 SET LOCAL session_replication_role = replica;
 SELECT format('DROP TRIGGER %1$I ON fkp.p5; CREATE CONSTRAINT TRIGGER %1$I AFTER UPDATE OF z, a, b ON fkp.p5 FROM fkp.r5 DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check_c(%2$L, %3$L, %4$L, %5$L, %6$L, %6$L, %6$L, %7$L, %8$L, %9$L, %10$L, %11$L, %11$L, %12$L, %13$L, %14$L, %15$L)',
               fk.uk_update_trigger, fk.foreign_key_name, fk.table_schema, fk.table_name, '{x,y,v}', '', 'fkp', 'p5', '{a,b,z}', 'valid', 'null',
@@ -674,6 +725,8 @@ ROLLBACK;
 \echo '--- part 5c: the released sql_saga 1.0 helper body, with the CHECK passing the child columns in another order'
 BEGIN;
 \o /dev/null
+-- The released referencing side (CHECK and helper), as an installation before the update to 1.3 has it.
+SELECT fkp.legacy_regular_fk('r5_fkey');
 SET LOCAL session_replication_role = replica;
 -- The exact body versions/sql_saga--1.0.sql generates: "uk.%I = $%s" joined with AND, no OPERATOR, no
 -- SECURITY DEFINER, no search_path (1.0 add_regular_foreign_key).
