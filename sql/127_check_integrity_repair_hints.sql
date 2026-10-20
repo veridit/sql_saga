@@ -63,6 +63,70 @@ INSERT INTO child (id, parent_id, valid_from, valid_until) VALUES (10, 1, '2024-
 SELECT integrity_hint.valid('fresh family');
 
 /*
+ * The canonical shape of every sql_saga event trigger, read from this fresh install, so it is the definition in the
+ * extension script (src/2j_event_triggers.sql) and not another hand-written copy. Every advertised repair below is
+ * compared against it, which makes a drift between check_integrity's repair text and the extension script visible.
+ */
+CREATE TEMP TABLE canonical_event_trigger ON COMMIT DROP AS
+SELECT e.evtname, e.evtevent, e.evtfoid::regprocedure::text AS evtfunction, e.evtenabled,
+       ARRAY(SELECT t FROM unnest(e.evttags) AS t ORDER BY t COLLATE "C") AS evttags
+FROM pg_catalog.pg_event_trigger AS e
+WHERE e.evtname LIKE 'sql\_saga\_%';
+
+CREATE FUNCTION integrity_hint.shape(trigger_name name)
+RETURNS text LANGUAGE sql AS $shape$
+    SELECT CASE
+        WHEN NOT EXISTS (SELECT 1 FROM pg_catalog.pg_event_trigger AS e WHERE e.evtname = shape.trigger_name)
+            THEN trigger_name || ' | missing'
+        WHEN EXISTS (
+            SELECT e.evtname, e.evtevent, e.evtfoid::regprocedure::text, e.evtenabled,
+                   ARRAY(SELECT t FROM unnest(e.evttags) AS t ORDER BY t COLLATE "C")
+            FROM pg_catalog.pg_event_trigger AS e
+            JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_event_trigger'::regclass AND d.objid = e.oid
+                 AND d.refclassid = 'pg_catalog.pg_extension'::regclass AND d.deptype = 'e'
+            JOIN pg_catalog.pg_extension AS x ON x.oid = d.refobjid AND x.extname = 'sql_saga'
+            WHERE e.evtname = shape.trigger_name
+            INTERSECT
+            SELECT c.evtname, c.evtevent, c.evtfunction, c.evtenabled, c.evttags
+            FROM pg_temp.canonical_event_trigger AS c
+            WHERE c.evtname = shape.trigger_name)
+            THEN trigger_name || ' | canonical shape and member'
+        ELSE trigger_name || ' | differs from the extension script'
+    END;
+$shape$;
+
+/* The repair check_integrity currently advertises (the text after "; repair with "), to be run verbatim by \gexec. */
+CREATE FUNCTION integrity_hint.advertised_repair()
+RETURNS text LANGUAGE plpgsql AS $advertised_repair$
+DECLARE
+    actual_message text;
+BEGIN
+    BEGIN
+        PERFORM sql_saga.check_integrity();
+        RETURN NULL;
+    EXCEPTION WHEN OTHERS THEN
+        GET STACKED DIAGNOSTICS actual_message = MESSAGE_TEXT;
+        RETURN substring(actual_message FROM '; repair with (.*)$');
+    END;
+END;
+$advertised_repair$;
+
+/* The full message, for scenarios whose exact text is pinned in the expected output rather than in the call. */
+CREATE FUNCTION integrity_hint.message(case_name text)
+RETURNS text LANGUAGE plpgsql AS $message$
+BEGIN
+    BEGIN
+        PERFORM sql_saga.check_integrity();
+        RETURN case_name || ' | unexpected success';
+    EXCEPTION WHEN OTHERS THEN
+        RETURN format('%s | %s: %s', case_name, SQLSTATE, SQLERRM);
+    END;
+END;
+$message$;
+
+SELECT integrity_hint.shape(c.evtname) FROM pg_temp.canonical_event_trigger AS c ORDER BY c.evtname COLLATE "C";
+
+/*
  * Part 1: event triggers. StatBus migrations disable sql_saga_health_checks around GRANTs and re-enable it.
  * A sql_saga_rename_following that is left disabled silently desynchronizes the catalogue from the tables, so
  * check_integrity must refuse it and name the trigger and the exact repair.
@@ -155,6 +219,67 @@ ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_rename_following;
 SELECT integrity_hint.valid('rename_following recreated and added back');
 ROLLBACK TO SAVEPOINT dropped_no_filter;
 RELEASE SAVEPOINT dropped_no_filter;
+
+/*
+ * Every one of the five: drop it, run exactly the advertised repair (\gexec, verbatim), and require the recreated
+ * trigger to have the canonical shape captured from the fresh install, then a clean check_integrity.
+ */
+SAVEPOINT dropped_each;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_drop_protection;
+DROP EVENT TRIGGER sql_saga_drop_protection;
+SELECT integrity_hint.message('sql_saga_drop_protection dropped');
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_drop_protection');
+SELECT integrity_hint.valid('sql_saga_drop_protection repaired');
+ROLLBACK TO SAVEPOINT dropped_each;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_health_checks;
+DROP EVENT TRIGGER sql_saga_health_checks;
+SELECT integrity_hint.message('sql_saga_health_checks dropped');
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_health_checks');
+SELECT integrity_hint.valid('sql_saga_health_checks repaired');
+ROLLBACK TO SAVEPOINT dropped_each;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
+DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
+SELECT integrity_hint.message('sql_saga_record_alter_function_resolved dropped');
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_record_alter_function_resolved');
+SELECT integrity_hint.valid('sql_saga_record_alter_function_resolved repaired');
+ROLLBACK TO SAVEPOINT dropped_each;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change;
+DROP EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change;
+SELECT integrity_hint.message('sql_saga_refuse_managed_relation_identity_change dropped');
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_refuse_managed_relation_identity_change');
+SELECT integrity_hint.valid('sql_saga_refuse_managed_relation_identity_change repaired');
+ROLLBACK TO SAVEPOINT dropped_each;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_rename_following;
+DROP EVENT TRIGGER sql_saga_rename_following;
+SELECT integrity_hint.message('sql_saga_rename_following dropped');
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_rename_following');
+SELECT integrity_hint.valid('sql_saga_rename_following repaired');
+ROLLBACK TO SAVEPOINT dropped_each;
+RELEASE SAVEPOINT dropped_each;
+
+/*
+ * Drift: the trigger exists and is a member, but its definition is not the extension's (here the tag filter lost
+ * ALTER ROUTINE). check_integrity must refuse it and name a repair that restores the canonical definition: as a
+ * member it cannot be dropped directly, so the repair detaches, drops, recreates and attaches it again.
+ */
+SAVEPOINT drifted;
+ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
+DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
+CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved();
+ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved;
+SELECT integrity_hint.shape('sql_saga_record_alter_function_resolved');
+SELECT integrity_hint.attempt('record_alter_function_resolved definition drifted',
+    $$sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger definition differs from the extension's; repair with ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved$$);
+SELECT integrity_hint.advertised_repair() \gexec
+SELECT integrity_hint.shape('sql_saga_record_alter_function_resolved');
+SELECT integrity_hint.valid('record_alter_function_resolved definition restored');
+ROLLBACK TO SAVEPOINT drifted;
+RELEASE SAVEPOINT drifted;
 
 /* A disabled event trigger is reported before any table-level damage it may have let through. */
 SAVEPOINT disabled_then_damage;
