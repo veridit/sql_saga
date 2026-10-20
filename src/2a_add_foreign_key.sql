@@ -39,7 +39,7 @@ BEGIN
             'CREATE INDEX %I ON %s USING GIST (%s, %I)',
             v_index_name,
             p_fk_table_oid::text,
-            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(p_fk_column_names) AS c),
+            (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(p_fk_column_names) WITH ORDINALITY AS u (c, o)),
             p_fk_era_row.range_column_name
         );
 
@@ -62,7 +62,7 @@ BEGIN
             'CREATE INDEX %I ON %s USING BTREE (%s)',
             v_index_name,
             p_fk_table_oid::text,
-            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(p_fk_column_names) AS c)
+            (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(p_fk_column_names) WITH ORDINALITY AS u (c, o))
         );
 
         -- Look for an existing btree index where the FK columns are a prefix.
@@ -124,6 +124,7 @@ DECLARE
     v_pk_table_name name;
     v_is_fk_temporal boolean;
     v_unique_key_name name;
+    v_key_ordered_fk_columns name[];
     v_fk_era_name name := fk_era_name;
 BEGIN
     -- Get schema and table names for both tables
@@ -138,11 +139,20 @@ BEGIN
     -- Look up the unique key name based on the PK table and columns.
     -- We match on primary or natural keys, as they are the intended targets for FKs.
     -- The ENUM order ('primary', 'natural', ...) ensures we prefer primary keys.
-    SELECT uk.unique_key_name INTO v_unique_key_name
+    -- pk_column_names may list the key's columns in any order: they are compared as a set, and the child
+    -- columns, paired with them by position as given, are put into the key's own column order, which is the
+    -- order add_regular_foreign_key and add_temporal_foreign_key pair them in.
+    SELECT uk.unique_key_name,
+           ARRAY(SELECT fk_column_names[pg_catalog.array_position(pk_column_names, u.c)]
+                 FROM unnest(uk.column_names) WITH ORDINALITY AS u (c, o)
+                 ORDER BY u.o)
+    INTO v_unique_key_name, v_key_ordered_fk_columns
     FROM sql_saga.unique_keys uk
     WHERE uk.table_schema = v_pk_schema_name
       AND uk.table_name = v_pk_table_name
-      AND uk.column_names = pk_column_names
+      AND cardinality(uk.column_names) = cardinality(pk_column_names)
+      AND ARRAY(SELECT c FROM unnest(uk.column_names) AS c ORDER BY c COLLATE "C")
+        = ARRAY(SELECT c FROM unnest(pk_column_names) AS c ORDER BY c COLLATE "C")
       AND uk.key_type IN ('primary', 'natural')
     ORDER BY uk.key_type
     LIMIT 1;
@@ -150,6 +160,10 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'No primary or natural unique key found on table %.% for columns %',
             quote_ident(v_pk_schema_name), quote_ident(v_pk_table_name), pk_column_names;
+    END IF;
+
+    IF cardinality(fk_column_names) = cardinality(pk_column_names) THEN
+        fk_column_names := v_key_ordered_fk_columns;
     END IF;
 
     -- Determine if the FK table is temporal
@@ -276,8 +290,8 @@ BEGIN
     WHERE (e.table_schema, e.table_name, e.era_name) = (uk_row.table_schema, uk_row.table_name, uk_row.era_name);
 
     -- For regular-to-temporal FKs, we only care about the stable (non-temporal) part of the key.
-    SELECT array_agg(c) INTO v_uk_stable_cols
-    FROM unnest(uk_row.column_names) AS c
+    SELECT array_agg(c ORDER BY o) INTO v_uk_stable_cols
+    FROM unnest(uk_row.column_names) WITH ORDINALITY AS u (c, o)
     WHERE c <> uk_era_row.range_column_name;
 
     uk_schema_name := uk_row.table_schema;
@@ -328,9 +342,11 @@ BEGIN
         helper_body text;
         existing_proc oid;
     BEGIN
+        -- Both lists follow fk_column_names by position: the helper's $i is the i-th referenced key column, so
+        -- the CHECK must pass the i-th child column there, whatever join plan the server picks (W11).
         SELECT
-            string_agg(format_type(a.atttypid, a.atttypmod), ', '),
-            string_agg(quote_ident(n.name), ', ')
+            string_agg(format_type(a.atttypid, a.atttypmod), ', ' ORDER BY n.ordinality),
+            string_agg(quote_ident(n.name), ', ' ORDER BY n.ordinality)
         INTO
             fk_column_signatures,
             fk_column_list
@@ -430,6 +446,16 @@ BEGIN
         fk_check_constraint := coalesce(fk_check_constraint, sql_saga.__internal_make_name(
             ARRAY[fk_table_name] || fk_column_names || ARRAY['check']
         ));
+        -- Two foreign keys on the same child columns (to different keys) would generate the same name.
+        pass := 0;
+        WHILE EXISTS (
+            SELECT FROM pg_catalog.pg_constraint AS c
+            WHERE c.conrelid = fk_table_oid
+              AND c.conname = fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+        LOOP
+            pass := pass + 1;
+        END LOOP;
+        fk_check_constraint := fk_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
         DECLARE
             check_clause text;
@@ -518,13 +544,13 @@ BEGIN
         violating_row_found boolean;
         fk_not_null_clause text;
     BEGIN
-        SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc /* %I */), ' AND ')
+        SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc /* %I */), ' AND ' ORDER BY u.o)
         INTO fk_not_null_clause
-        FROM unnest(fk_column_names) AS u(fkc);
+        FROM unnest(fk_column_names) WITH ORDINALITY AS u(fkc, o);
 
-        SELECT string_agg(format('uk.%I = fk.%I', u.ukc /* %I */, u.fkc /* %I */), ' AND ')
+        SELECT string_agg(format('uk.%I = fk.%I', u.ukc /* %I */, u.fkc /* %I */), ' AND ' ORDER BY u.o)
         INTO uk_where_clause
-        FROM unnest(v_uk_stable_cols, fk_column_names) AS u(ukc, fkc);
+        FROM unnest(v_uk_stable_cols, fk_column_names) WITH ORDINALITY AS u(ukc, fkc, o);
 
         EXECUTE format('SELECT EXISTS( ' ||
             'SELECT 1 FROM %1$I.%2$I AS fk ' ||
@@ -631,9 +657,9 @@ BEGIN
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name, e.era_name) = (uk_row.table_schema, uk_row.table_name, uk_row.era_name);
 
-    SELECT array_agg(c), string_agg(quote_ident(c), ', ')
+    SELECT array_agg(c ORDER BY o), string_agg(quote_ident(c), ', ' ORDER BY o) -- in constraint order, so the native FK pairs position i with key column i
     INTO v_uk_stable_cols, v_uk_stable_cols_list
-    FROM unnest(uk_row.column_names) AS c
+    FROM unnest(sql_saga.__internal_unique_key_constraint_columns(uk_row.unique_key_name)) WITH ORDINALITY AS u (c, o)
     WHERE c <> uk_era_row.range_column_name;
 
     IF fk_era_row.range_type <> uk_era_row.range_type THEN
@@ -690,7 +716,7 @@ BEGIN
         $$,
         fk_table_oid::text,                                                              /* %1$s */
         foreign_key_name,                                                                /* %2$I */
-        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(fk_column_names) AS c),      /* %3$s */
+        (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(fk_column_names) WITH ORDINALITY AS u (c, o)), /* %3$s */
         fk_era_row.range_column_name,                                                    /* %4$I */
         uk_table_oid::text,                                                              /* %5$s */
         CASE

@@ -14,6 +14,7 @@ $function$
 #variable_conflict use_variable
 DECLARE
     key_name_found name;
+    keys_found name[];
     fk_schema_name name;
     fk_table_name name;
     v_era_name name := era_name;
@@ -40,13 +41,24 @@ BEGIN
         WHERE (e.table_schema, e.table_name) = (fk_schema_name, fk_table_name);
     END IF;
 
-    SELECT fk.foreign_key_name INTO key_name_found
+    -- The catalog lists the child columns in the referenced key's order, which may differ from the order the
+    -- caller gave add_foreign_key; match them as a set. More than one match is ambiguous.
+    SELECT pg_catalog.array_agg(fk.foreign_key_name ORDER BY fk.foreign_key_name COLLATE "C")
+    INTO keys_found
     FROM sql_saga.foreign_keys AS fk
     WHERE (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name)
-      AND fk.column_names = column_names
+      AND pg_catalog.cardinality(fk.column_names) = pg_catalog.cardinality(column_names)
+      AND ARRAY(SELECT c FROM pg_catalog.unnest(fk.column_names) AS c ORDER BY c COLLATE "C")
+        = ARRAY(SELECT c FROM pg_catalog.unnest(column_names) AS c ORDER BY c COLLATE "C")
       AND fk.fk_era_name IS NOT DISTINCT FROM v_era_name;
 
-    IF NOT FOUND THEN
+    IF pg_catalog.cardinality(keys_found) > 1 THEN
+        RAISE EXCEPTION 'foreign key on table % for columns % is ambiguous: it matches foreign keys %; use sql_saga.drop_foreign_key_by_name',
+            table_oid, column_names, pg_catalog.array_to_string(keys_found, ', ');
+    END IF;
+    key_name_found := keys_found[1];
+
+    IF key_name_found IS NULL THEN
         IF v_era_name IS NOT NULL THEN
             RAISE EXCEPTION 'foreign key on table % for columns % with era % does not exist', table_oid, column_names, v_era_name;
         ELSE

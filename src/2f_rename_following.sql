@@ -1491,33 +1491,71 @@ BEGIN
         EXECUTE sql;
     END LOOP;
 
-    -- Follow renames for columns in XOR unique keys by inspecting the unified constraint
-    FOR sql IN
-        WITH new_xor_cols AS (
-            SELECT
-                uk.unique_key_name,
-                array_agg(DISTINCT a.attname ORDER BY a.attname) AS new_column_names
-            FROM sql_saga.unique_keys uk
+    /*
+     * Follow renames for columns in XOR unique keys by inspecting the unified constraint.
+     * column_names is stored in the order given to add_unique_key (the constraint order) and is
+     * rewritten only when the SET of key column names changed (a real rename), never when only the
+     * order differs. A renamed column is replaced IN PLACE, in column_names and in
+     * mutually_exclusive_columns, so both keep their stored order. The old name is mapped to the new
+     * one by attnum: the constraint column (by attnum) whose current name is not catalogued is the
+     * renamed one, and the catalogued name no longer present on the table is its old name.
+     */
+    DECLARE
+        v_xor_uk record;
+        v_missing_names name[];
+        v_unclaimed_names name[];
+        v_new_column_names name[];
+        v_new_xor_columns name[];
+    BEGIN
+        FOR v_xor_uk IN
+            SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.column_names, uk.mutually_exclusive_columns,
+                   pc.oid AS table_oid,
+                   (SELECT array_agg(a.attname ORDER BY u.ord)
+                    FROM unnest(c.conkey) WITH ORDINALITY AS u (attnum, ord)
+                    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (pc.oid, u.attnum)
+                    WHERE a.attname <> e.range_column_name -- The native constraint includes the range column
+                   ) AS constraint_column_names
+            FROM sql_saga.unique_keys AS uk
             JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
-            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
+            JOIN pg_catalog.pg_class AS pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT n.oid FROM pg_catalog.pg_namespace AS n WHERE n.nspname = uk.table_schema))
             JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, uk.unique_constraint)
-            CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
-            JOIN pg_attribute a ON (a.attrelid, a.attnum) = (pc.oid, u.attnum)
             WHERE uk.mutually_exclusive_columns IS NOT NULL
               AND uk.unique_constraint IS NOT NULL
-              AND a.attname NOT IN (e.range_column_name) -- Exclude temporal column
-            GROUP BY uk.unique_key_name
-        )
-        SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
-            nxc.new_column_names,
-            uk.unique_key_name
-        )
-        FROM sql_saga.unique_keys uk
-        JOIN new_xor_cols nxc ON uk.unique_key_name = nxc.unique_key_name
-        WHERE uk.column_names <> nxc.new_column_names
-    LOOP
-        EXECUTE sql;
-    END LOOP;
+            ORDER BY uk.unique_key_name COLLATE "C"
+        LOOP
+            -- Same set of names (possibly in another order): not a rename, keep the stored order.
+            CONTINUE WHEN v_xor_uk.column_names @> v_xor_uk.constraint_column_names
+                      AND v_xor_uk.constraint_column_names @> v_xor_uk.column_names;
+
+            -- Catalogued names no longer present on the table: the old names.
+            v_missing_names := ARRAY(
+                SELECT col.name
+                FROM unnest(v_xor_uk.column_names) WITH ORDINALITY AS col (name, n)
+                WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                                  WHERE (a.attrelid, a.attname) = (v_xor_uk.table_oid, col.name)
+                                    AND a.attnum > 0 AND NOT a.attisdropped)
+                ORDER BY col.n);
+            -- Constraint columns (identified by attnum) whose current name is not catalogued: the new names.
+            v_unclaimed_names := ARRAY(
+                SELECT col.name
+                FROM unnest(v_xor_uk.constraint_column_names) AS col (name)
+                WHERE NOT col.name = ANY (v_xor_uk.column_names));
+
+            IF cardinality(v_missing_names) <> 1 OR cardinality(v_unclaimed_names) <> 1 THEN
+                RAISE EXCEPTION 'sql_saga: cannot follow the column rename for XOR unique key "%" on table "%.%": catalogued columns (%) no longer match the columns of its constraint (%); rename one key column per ALTER TABLE statement',
+                    v_xor_uk.unique_key_name, v_xor_uk.table_schema, v_xor_uk.table_name,
+                    array_to_string(v_xor_uk.column_names, ', '), array_to_string(v_xor_uk.constraint_column_names, ', ');
+            END IF;
+
+            v_new_column_names := array_replace(v_xor_uk.column_names, v_missing_names[1], v_unclaimed_names[1]);
+            v_new_xor_columns := array_replace(v_xor_uk.mutually_exclusive_columns, v_missing_names[1], v_unclaimed_names[1]);
+
+            UPDATE sql_saga.unique_keys AS uk
+            SET column_names = v_new_column_names,
+                mutually_exclusive_columns = v_new_xor_columns
+            WHERE uk.unique_key_name = v_xor_uk.unique_key_name;
+        END LOOP;
+    END;
 
     FOR sql IN
         -- Follow renames for unique_constraint (for native temporal keys)

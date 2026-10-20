@@ -43,7 +43,12 @@ BEGIN
                        AND c.conrelid = fkc.oid
                        AND c.confrelid = ukc.oid
                        AND c.conkey = fk_cols.attnums
-                       AND c.confkey = uk_cols.attnums
+                       -- The canonical pairing (the key's constraint order), or the one historical pairing
+                       -- sql_saga 1.0/1.1 created against an XOR key whose catalog list it had sorted: the
+                       -- referenced columns sorted by name (dropping it is the first half of its repair).
+                       AND (c.confkey = uk_cols.attnums
+                            OR (uk.mutually_exclusive_columns IS NOT NULL
+                                AND c.confkey = sql_saga.__internal_historical_xor_confkey(uk.unique_key_name)))
                        AND c.conperiod
                        AND c.condeferrable
                        AND NOT c.condeferred

@@ -734,7 +734,8 @@ AS $__internal_temporal_foreign_key_is_attributable$
                pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))::oid AS uk_table_oid,
                fk_era.range_column_name AS fk_range_column_name,
                uk_era.range_column_name AS uk_range_column_name,
-               uk.column_names AS uk_column_names
+               uk.column_names AS uk_catalog_column_names,
+               sql_saga.__internal_unique_key_constraint_columns(uk.unique_key_name) AS uk_column_names
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         LEFT JOIN sql_saga.era AS fk_era
@@ -867,6 +868,7 @@ DECLARE
     function_oid oid;
     expected_return_type oid;
     missing_column name;
+    mispairing record;
 BEGIN
     /*
      * sql_saga's event triggers come first: a disabled, detached or dropped one (rename_following above all) lets
@@ -1119,6 +1121,16 @@ BEGIN
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         ORDER BY fk.table_schema COLLATE "C", fk.table_name COLLATE "C", fk.foreign_key_name COLLATE "C"
     LOOP
+        /*
+         * A foreign key whose objects pair child columns with other referenced columns than the unique key's
+         * constraint order (built by sql_saga 1.0/1.1 against a sorted XOR key catalog) is reported as such, with
+         * the repair, before the generic attribution checks (which it also fails).
+         */
+        SELECT * INTO mispairing FROM sql_saga.__internal_foreign_key_mispairing_report(r.foreign_key_name);
+        IF mispairing.message IS NOT NULL THEN
+            RAISE EXCEPTION USING MESSAGE = mispairing.message, HINT = mispairing.hint;
+        END IF;
+
         IF r.type = 'temporal_to_temporal' THEN
             base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
             IF base_oid IS NULL
