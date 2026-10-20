@@ -1817,6 +1817,39 @@ BEGIN
         WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = live.table_oid;
     END IF;
 
+    -- ---- 1.3 A3: managed updatable views follow ADD/DROP/RENAME COLUMN (src/2o_updatable_view_column_follow.sql) ----
+    /*
+     * Recreate the views that __internal_updatable_view_prepare_drop_column dropped at ddl_command_start,
+     * then bring the managed views of every table (and inheritance descendant) whose columns this
+     * ALTER TABLE added, dropped or renamed (objsubid > 0: RENAME COLUMN) up to the base's columns, and
+     * refresh their generated_columns.
+     */
+    IF is_alter_table THEN
+        DECLARE
+            v_view_shape_table_oids oid[];
+        BEGIN
+            v_view_shape_table_oids := ARRAY(
+                WITH RECURSIVE reshaped(table_oid) AS (
+                    SELECT c.objid
+                    FROM pg_catalog.pg_event_trigger_ddl_commands() AS c
+                    WHERE c.command_tag = 'ALTER TABLE'
+                      AND c.classid = 'pg_catalog.pg_class'::regclass
+                      AND (c.objsubid > 0 OR sql_saga.__internal_alter_table_changes_column_shape(c.command))
+                    UNION
+                    SELECT i.inhrelid
+                    FROM reshaped AS rs
+                    JOIN pg_catalog.pg_inherits AS i ON i.inhparent = rs.table_oid
+                )
+                SELECT DISTINCT rs.table_oid FROM reshaped AS rs);
+            -- rename_following runs as the extension owner, the only role that can read the pending table.
+            IF cardinality(v_view_shape_table_oids) > 0
+               OR EXISTS (SELECT FROM sql_saga.__internal_updatable_view_pending) THEN
+                PERFORM sql_saga.__internal_updatable_view_follow_shape(v_view_shape_table_oids);
+            END IF;
+        END;
+    END IF;
+    -- ---- end 1.3 A3 ----
+
 END;
 $function$;
 

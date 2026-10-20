@@ -41,6 +41,8 @@
 #include "utils/elog.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/acl.h"
+#include "catalog/pg_class.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 
@@ -704,6 +706,122 @@ PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
 PG_FUNCTION_INFO_V1(refuse_managed_relation_identity_change);
 PG_FUNCTION_INFO_V1(record_alter_function_resolved);
 
+/* ---- 1.3 A3: managed updatable views follow DROP COLUMN (see src/2o_updatable_view_column_follow.sql) ---- */
+/*
+ * Runs one SPI statement with the identity of the owner of the calling (event trigger) function, the
+ * extension owner, as record_alter_function_resolved does. The internal functions the event triggers
+ * call are not executable by PUBLIC, and DDL by any role (on any table) must not depend on such grants.
+ * The caller has done SPI_connect.
+ */
+static int
+spi_execute_as_function_owner(FunctionCallInfo fcinfo, const char *sql, int nargs,
+							  Oid *argtypes, Datum *values, const char *nulls, bool read_only)
+{
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	int			ret = 0;
+
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(function_owner,
+						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	PG_TRY();
+	{
+		if (nargs == 0)
+			ret = SPI_execute(sql, read_only, 0);
+		else
+			ret = SPI_execute_with_args(sql, nargs, argtypes, values, nulls, read_only, 0);
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+	return ret;
+}
+
+/*
+ * ddl_command_start of ALTER TABLE ... DROP COLUMN: hand the table and the dropped column names to
+ * sql_saga.__internal_updatable_view_prepare_drop_column, which records and drops the managed views
+ * that show those columns (recreated at ddl_command_end), so that PostgreSQL lets the column go.
+ * Does nothing when the installed SQL version has no such function (older extension scripts loaded
+ * with this library).
+ */
+static void
+prepare_updatable_view_drop_column(FunctionCallInfo fcinfo, AlterTableStmt *stmt)
+{
+	ListCell   *cell;
+	List	   *column_names = NIL;
+	Oid			relation_oid;
+	Datum	   *elems;
+	ArrayType  *names_array;
+	Oid			argtypes[] = {OIDOID, TEXTARRAYOID, BOOLOID};
+	Datum		values[3];
+	char		nulls[] = {' ', ' ', ' '};
+	int			n;
+	int			i;
+	int			ret;
+
+	if (stmt->objtype != OBJECT_TABLE || stmt->relation == NULL)
+		return;
+
+	foreach(cell, stmt->cmds)
+	{
+		AlterTableCmd *alter_cmd = lfirst_node(AlterTableCmd, cell);
+
+		if (alter_cmd->subtype == AT_DropColumn && alter_cmd->name != NULL)
+			column_names = lappend(column_names, alter_cmd->name);
+	}
+	if (column_names == NIL)
+		return;
+
+	relation_oid = RangeVarGetRelid(stmt->relation, NoLock, true);
+	if (!OidIsValid(relation_oid))
+		return;
+
+	/*
+	 * ddl_command_start runs before PostgreSQL checks ownership: leave a caller who may not alter the
+	 * table to that check, so nothing is done on its behalf as the extension owner.
+	 */
+	if (!object_ownercheck(RelationRelationId, relation_oid, GetUserId()))
+		return;
+
+	if (!OidIsValid(LookupFuncName(list_make2(makeString("sql_saga"),
+											  makeString("__internal_updatable_view_prepare_drop_column")),
+								   3, argtypes, true)))
+		return;
+
+	n = list_length(column_names);
+	elems = (Datum *) palloc(sizeof(Datum) * n);
+	i = 0;
+	foreach(cell, column_names)
+		elems[i++] = CStringGetTextDatum((char *) lfirst(cell));
+	names_array = construct_array(elems, n, TEXTOID, -1, false, TYPALIGN_INT);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	values[0] = ObjectIdGetDatum(relation_oid);
+	values[1] = PointerGetDatum(names_array);
+	values[2] = BoolGetDatum(stmt->relation->inh);
+	ret = spi_execute_as_function_owner(fcinfo,
+		"SELECT sql_saga.__internal_updatable_view_prepare_drop_column($1, $2, $3)",
+		3, argtypes, values, nulls, false);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+}
+/* ---- end 1.3 A3 ---- */
+
 Datum
 refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 {
@@ -750,6 +868,11 @@ refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 		relation = stmt->relation;
 		missing_ok = stmt->missing_ok;
 	}
+	else if (IsA(trigdata->parsetree, AlterTableStmt))
+	{
+		prepare_updatable_view_drop_column(fcinfo, castNode(AlterTableStmt, trigdata->parsetree));
+		PG_RETURN_NULL();
+	}
 	else
 		PG_RETURN_NULL();
 
@@ -759,9 +882,9 @@ refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 	if (schema_name != NULL)
 	{
 		schema_values[0] = CStringGetTextDatum(schema_name);
-		ret = SPI_execute_with_args(
+		ret = spi_execute_as_function_owner(fcinfo,
 			"SELECT sql_saga.__internal_refuse_managed_schema_rename($1)",
-			1, schema_argtypes, schema_values, nulls, false, 0);
+			1, schema_argtypes, schema_values, nulls, false);
 	}
 	else
 	{
@@ -779,9 +902,9 @@ refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 		}
 
 		values[0] = ObjectIdGetDatum(relation_oid);
-		ret = SPI_execute_with_args(
+		ret = spi_execute_as_function_owner(fcinfo,
 			"SELECT sql_saga.__internal_refuse_managed_relation_identity_change($1)",
-			1, argtypes, values, nulls, false, 0);
+			1, argtypes, values, nulls, false);
 	}
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));

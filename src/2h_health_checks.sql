@@ -929,6 +929,34 @@ BEGIN
         END IF;
     END LOOP;
 
+    /*
+     * A managed view dropped at ddl_command_start of an ALTER TABLE ... DROP COLUMN is recreated, and its
+     * pending row consumed, at the ddl_command_end of the same statement (src/2o). A row seen here (other
+     * sessions' in-flight rows are invisible) was left behind by a statement whose end trigger did not run.
+     */
+    FOR r IN
+        SELECT p.*,
+               pg_catalog.format('DELETE FROM sql_saga.__internal_updatable_view_pending WHERE (view_schema, view_name) = (%L, %L)',
+                   p.view_schema, p.view_name)
+               || CASE WHEN EXISTS (SELECT FROM sql_saga.updatable_view AS uv
+                                    WHERE (uv.view_schema, uv.view_name) = (p.view_schema, p.view_name)) THEN ''
+                       WHEN p.view_type = 'for_portion_of' THEN
+                           pg_catalog.format('; SELECT sql_saga.add_for_portion_of_view(%L, era_name => %L%s)',
+                               pg_catalog.format('%I.%I', p.table_schema, p.table_name), p.era_name,
+                               CASE WHEN p.ephemeral_columns IS NOT NULL
+                                    THEN pg_catalog.format(', ephemeral_columns => %L', p.ephemeral_columns::text)
+                                    ELSE '' END)
+                       ELSE
+                           pg_catalog.format('; SELECT sql_saga.add_current_view(%L, era_name => %L, delete_mode => %L, current_func_name => %L)',
+                               pg_catalog.format('%I.%I', p.table_schema, p.table_name), p.era_name,
+                               COALESCE(p.view_delete_mode, 'delete_as_cutoff'), p.current_func) END AS repair_sql
+        FROM sql_saga.__internal_updatable_view_pending AS p
+        ORDER BY p.view_schema COLLATE "C", p.view_name COLLATE "C"
+    LOOP
+        RAISE EXCEPTION 'sql_saga: integrity violation for updatable view "%.%" of table "%.%": view was dropped by an ALTER TABLE ... DROP COLUMN and not recreated, because event trigger sql_saga_rename_following did not run; repair with %',
+            r.view_schema, r.view_name, r.table_schema, r.table_name, r.repair_sql;
+    END LOOP;
+
     /* Base relation and era invariants are the first dependency layer. */
     FOR r IN
         SELECT e.*,
