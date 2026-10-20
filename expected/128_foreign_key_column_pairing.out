@@ -1,0 +1,187 @@
+\set ECHO none
+--- part 1: planner forced to a merge join, which sorts the name join (the W11 shape)
+plan: name join sorts by name: true
+add regular foreign key: ok
+add temporal foreign key: ok
+regular child check arguments in key order: true
+integrity: ok
+regular: existing key accepted: accepted
+regular: missing key refused: refused
+regular: key read alphabetically refused: refused
+regular: NULL column accepted (MATCH SIMPLE): accepted
+regular: reference to key row 1 inserted: ok
+regular parent: delete referenced key row refused: refused
+regular parent: update referenced key refused: refused
+regular parent: delete unreferenced key row accepted: accepted
+regular parent: update unreferenced key accepted: accepted
+temporal: existing key accepted: accepted
+temporal: missing key refused: refused
+temporal: key read alphabetically refused: refused
+temporal: reference to key row 1 inserted: ok
+temporal parent: delete referenced key row refused: refused
+temporal parent: update referenced key refused: refused
+temporal parent: delete unreferenced key row accepted: accepted
+temporal parent: update unreferenced key accepted: accepted
+plan (mixed): name join sorts by name: true
+mixed: add regular foreign key: ok
+mixed: add temporal foreign key: ok
+mixed: regular child check arguments in key order: true
+mixed: integrity: ok
+mixed regular: existing key accepted: accepted
+mixed regular: missing key refused: refused
+mixed regular: reference to key row 1 inserted: ok
+mixed regular parent: delete referenced key row refused: refused
+mixed regular parent: update referenced key refused: refused
+mixed regular parent: delete unreferenced key row accepted: accepted
+mixed regular parent: update unreferenced key accepted: accepted
+mixed temporal: existing key accepted: accepted
+mixed temporal: missing key refused: refused
+mixed temporal: reference to key row 1 inserted: ok
+mixed temporal parent: delete referenced key row refused: refused
+mixed temporal parent: update referenced key refused: refused
+mixed temporal parent: delete unreferenced key row accepted: accepted
+mixed temporal parent: update unreferenced key accepted: accepted
+--- part 1: planner forced to a nested loop, which keeps the given order
+plan: name join sorts by name: false
+add regular foreign key: ok
+add temporal foreign key: ok
+regular child check arguments in key order: true
+integrity: ok
+regular: existing key accepted: accepted
+regular: missing key refused: refused
+regular: key read alphabetically refused: refused
+regular: NULL column accepted (MATCH SIMPLE): accepted
+regular: reference to key row 1 inserted: ok
+regular parent: delete referenced key row refused: refused
+regular parent: update referenced key refused: refused
+regular parent: delete unreferenced key row accepted: accepted
+regular parent: update unreferenced key accepted: accepted
+temporal: existing key accepted: accepted
+temporal: missing key refused: refused
+temporal: key read alphabetically refused: refused
+temporal: reference to key row 1 inserted: ok
+temporal parent: delete referenced key row refused: refused
+temporal parent: update referenced key refused: refused
+temporal parent: delete unreferenced key row accepted: accepted
+temporal parent: update unreferenced key accepted: accepted
+plan (mixed): name join sorts by name: false
+mixed: add regular foreign key: ok
+mixed: add temporal foreign key: ok
+mixed: regular child check arguments in key order: true
+mixed: integrity: ok
+mixed regular: existing key accepted: accepted
+mixed regular: missing key refused: refused
+mixed regular: reference to key row 1 inserted: ok
+mixed regular parent: delete referenced key row refused: refused
+mixed regular parent: update referenced key refused: refused
+mixed regular parent: delete unreferenced key row accepted: accepted
+mixed regular parent: update unreferenced key accepted: accepted
+mixed temporal: existing key accepted: accepted
+mixed temporal: missing key refused: refused
+mixed temporal: reference to key row 1 inserted: ok
+mixed temporal parent: delete referenced key row refused: refused
+mixed temporal parent: update referenced key refused: refused
+mixed temporal parent: delete unreferenced key row accepted: accepted
+mixed temporal parent: update unreferenced key accepted: accepted
+--- part 2: referenced columns given in another order than the key
+add regular foreign key, referenced columns alphabetical: ok
+add temporal foreign key, referenced columns reversed: ok
+perm_ref_fkey: {p,r,l,e} -> c4_par_r_key {person_id,person_role_id,legal_unit_id,establishment_id}
+perm_tref_fkey: {p,r,l,e} -> c4_par_t_key {person_id,person_role_id,legal_unit_id,establishment_id}
+regular child check arguments in key order: true
+integrity: ok
+regular: existing key accepted: accepted
+regular: missing key refused: refused
+regular: key read in the given referenced order refused: refused
+regular: reference to key row 1 inserted: ok
+regular parent: delete referenced key row refused: refused
+regular parent: update referenced key refused: refused
+regular parent: delete unreferenced key row accepted: accepted
+regular parent: update unreferenced key accepted: accepted
+temporal: existing key accepted: accepted
+temporal: missing key refused: refused
+temporal: key read in the given referenced order refused: refused
+temporal: reference to key row 1 inserted: ok
+temporal parent: delete referenced key row refused: refused
+temporal parent: update referenced key refused: refused
+temporal parent: delete unreferenced key row accepted: accepted
+temporal parent: update unreferenced key accepted: accepted
+--- part 2: drop_foreign_key finds a permuted foreign key by its child columns in key order or in the order given
+drop regular by catalogued (key) order: ok
+drop regular by the order given to add_foreign_key: ok
+drop temporal by catalogued (key) order: ok
+drop temporal by the order given to add_foreign_key: ok
+drop by a different column set: error: foreign key on table fkp.perm_ref for columns {p,r,l} does not exist
+add a second regular foreign key on the same child columns: ok
+drop by the order given, ambiguous: error: foreign key on table fkp.perm_ref for columns {e,l,p,r} is ambiguous: it matches foreign keys perm_ref2_fkey, perm_ref_fkey; use sql_saga.drop_foreign_key_by_name
+drop by key order, ambiguous: error: foreign key on table fkp.perm_ref for columns {p,r,l,e} is ambiguous: it matches foreign keys perm_ref2_fkey, perm_ref_fkey; use sql_saga.drop_foreign_key_by_name
+drop by name instead: ok
+both regular foreign keys still there: perm_ref2_fkey, perm_ref_fkey
+--- part 2: renames of a permuted foreign key (rolled back)
+perm_ref_fkey: {person,r,l,e} -> c4_par_r_key {person_id,role_id,legal_unit_id,establishment_id}
+perm_tref_fkey: {person,r,l,e} -> c4_par_t_key {person_id,role_id,legal_unit_id,establishment_id}
+integrity after the renames: ok
+regular: existing key accepted after the renames: accepted
+regular: missing key refused after the renames: refused
+regular parent: update referenced key refused after the renames: refused
+temporal: existing key accepted after the renames: accepted
+temporal: missing key refused after the renames: refused
+temporal parent: update referenced key refused after the renames: refused
+--- part 3: correctly paired foreign keys to the XOR key
+integrity: ok
+--- part 3: the mispaired foreign keys (the 1.0/1.1 state) enforce the wrong pairing
+regular: intended key refused: refused
+temporal: intended key refused: refused
+regular: crossed key accepted and kept: ok
+temporal: crossed key accepted and kept: ok
+--- part 3: check_integrity names the mispaired regular foreign key, the caveated repair and the orphan scan
+reported exactly as expected
+--- part 3: the orphan scan of the hint, run verbatim, lists the row the mispaired foreign key let in
+orphan: (9,40,30,10,20)
+--- part 3: the repair, run verbatim while the orphan exists, is refused and leaves the mispaired foreign key as it was
+repair person_ref_fkey with the orphan present: refused
+person_ref_fkey objects unchanged (no unvalidated constraint left behind): true
+still reported exactly as expected
+--- part 3: the repair, run verbatim once the orphan is resolved
+repair person_ref_fkey: ok
+--- part 3: check_integrity then names the mispaired temporal foreign key
+reported exactly as expected
+repair person_tref_fkey with the orphan present: refused
+person_tref_fkey objects unchanged (no unvalidated constraint left behind): true
+still reported exactly as expected
+repair person_tref_fkey: ok
+integrity after both repairs: ok
+--- part 3: the repaired foreign keys pair as intended
+regular: intended key accepted: accepted
+regular: crossed key refused: refused
+regular: reference to key row 1 inserted: ok
+temporal: intended key accepted: accepted
+temporal: crossed key refused: refused
+temporal: reference to key row 4 inserted: ok
+parent: delete key row referenced only by the regular child refused: refused
+parent: update key referenced only by the regular child refused: refused
+parent: delete key row referenced only by the temporal child refused: refused
+parent: update key referenced only by the temporal child refused: refused
+parent: delete unreferenced key row accepted: accepted
+parent: update unreferenced key accepted: accepted
+integrity: ok
+--- part 4: correctly paired foreign keys with quoted names
+integrity: ok
+--- part 4: the mispaired foreign keys with quoted names enforce the wrong pairing
+regular: intended key refused: refused
+temporal: intended key refused: refused
+regular: crossed key accepted and kept: ok
+temporal: crossed key accepted and kept: ok
+--- part 4: check_integrity reports the regular foreign key with correctly quoted repair and scan
+reported exactly as expected
+orphan: (9,2,1)
+repair fk "odd" 'r': ok
+--- part 4: then the temporal foreign key
+reported exactly as expected
+repair fk "odd" 't': ok
+integrity after both repairs: ok
+regular: intended key accepted: accepted
+regular: crossed key refused: refused
+temporal: intended key accepted: accepted
+temporal: crossed key refused: refused
+integrity at the end: ok

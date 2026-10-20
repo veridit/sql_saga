@@ -2172,6 +2172,140 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------------
+section "foreign keys created against a sorted XOR key are mispaired: the update refuses with the exact repair" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# tmp/fable_audit_v13.md C2/C3/C4 and P1 item 7 (the xorfk10 shape), tmp/v13_fkpair_red_brief.md. On the
+# baseline, unrelated DDL sorts the catalog list of an XOR key (W1). add_foreign_key then finds the key only
+# by that sorted list (C4), so the user passes it, and pairs the child columns, given in the user's order,
+# with it: the child column a_person is paired with establishment_id, and so on. The regular FK's helper and
+# referenced-side triggers and the native temporal FK (REFERENCES in sorted order) all carry that pairing,
+# and they agree with the sorted catalog, so the baseline sees nothing wrong. Intent cannot be recovered,
+# so the update must not silently re-pair: it refuses, atomically, naming each mispaired FK with the exact
+# drop_foreign_key / add_foreign_key statements (pairing by position against the key's constraint order, a
+# proposal the user must confirm) and an upgrade HINT: confirm the pairing, run the drop part on the current
+# version, update, then run the add part on the new version; plus how affected rows are found (an orphan
+# scan for a regular FK, whose CHECK validated nothing correctly; the native temporal FK re-validates on
+# add). The child column names sort in the user's order, so the child CHECK is mispaired whatever plan the
+# baseline's unordered string_agg (W11) got.
+XORFK=${PREFIX}_xorfk
+new_db "$XORFK" "$EXT_ROOT" "$OLD_LIB"
+out=$(sql "$XORFK" <<SQL
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
+CREATE TABLE person_for_unit (id int NOT NULL, person_id int NOT NULL, person_role_id int NOT NULL, legal_unit_id int, establishment_id int,
+                              valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('person_for_unit', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'person_for_unit', key_type => 'natural',
+    column_names => ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'],
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'person_for_unit_natural_key_valid');
+-- Unrelated DDL: the baseline sorts the catalog list of the XOR key.
+ALTER TABLE person_for_unit ADD COLUMN note text;
+-- 1 = (person 10, role 20, legal unit 30, establishment 40) for the regular child, 4 = (12, 22, 32, 42) for the
+-- temporal child, 3 = (11, 21, 31, 41) unreferenced; no row (40, 30, 10, 20).
+INSERT INTO person_for_unit (id, person_id, person_role_id, legal_unit_id, establishment_id, valid_range)
+VALUES (1, 10, 20, 30, 40, '[2020-01-01,infinity)'), (3, 11, 21, 31, 41, '[2020-01-01,infinity)'), (4, 12, 22, 32, 42, '[2020-01-01,infinity)');
+CREATE TABLE person_ref (id int PRIMARY KEY, a_person int, b_role int, c_lu int, d_est int);
+CREATE TABLE person_tref (id int, a_person int, b_role int, c_lu int, d_est int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('person_tref', 'valid_range', 'valid');
+-- The only pk_column_names the baseline accepts is the sorted list.
+SELECT sql_saga.add_foreign_key('person_ref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est']::name[], 'person_for_unit',
+    ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id']::name[], foreign_key_name => 'person_ref_fkey');
+SELECT sql_saga.add_foreign_key('person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est']::name[], 'person_for_unit',
+    ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id']::name[], foreign_key_name => 'person_tref_fkey');
+-- Key row 1 read through the mispairing (a_person = establishment 40, b_role = legal unit 30, ...): accepted
+-- by the baseline, an orphan once paired as intended.
+INSERT INTO person_ref VALUES (9, 40, 30, 10, 20);
+INSERT INTO person_tref VALUES (9, 40, 30, 10, 20, '[2021-01-01,2022-01-01)');
+SQL
+)
+printf '%s\n' "$out" | grep -q '^ERROR' && die "mispaired FK fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+xorfk_probe() { if q "$XORFK" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $1; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
+XORFK_CATALOG_SQL="SELECT uk.column_names::text FROM sql_saga.unique_keys AS uk WHERE uk.unique_key_name = 'person_for_unit_natural_key_valid'"
+XORFK_REF_DROP="SELECT sql_saga.drop_foreign_key('public.person_ref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'])"
+XORFK_REF_ADD="SELECT sql_saga.add_foreign_key('public.person_ref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'], 'public.person_for_unit', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], foreign_key_name => 'person_ref_fkey')"
+XORFK_REF_SCAN="SELECT fk.* FROM public.person_ref AS fk WHERE fk.a_person IS NOT NULL AND fk.b_role IS NOT NULL AND fk.c_lu IS NOT NULL AND fk.d_est IS NOT NULL AND NOT EXISTS (SELECT FROM public.person_for_unit AS uk WHERE uk.person_id = fk.a_person AND uk.person_role_id = fk.b_role AND uk.legal_unit_id = fk.c_lu AND uk.establishment_id = fk.d_est)"
+XORFK_TREF_DROP="SELECT sql_saga.drop_foreign_key('public.person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'])"
+XORFK_TREF_ADD="SELECT sql_saga.add_foreign_key('public.person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est'], 'public.person_for_unit', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], foreign_key_name => 'person_tref_fkey')"
+XORFK_REF_MESSAGE="sql_saga: integrity violation for foreign key \"person_ref_fkey\": pairs child column a_person with referenced column establishment_id, but unique key \"person_for_unit_natural_key_valid\" pairs it with referenced column person_id; repair with $XORFK_REF_DROP; $XORFK_REF_ADD"
+XORFK_TREF_MESSAGE="sql_saga: integrity violation for foreign key \"person_tref_fkey\": pairs child column a_person with referenced column establishment_id, but unique key \"person_for_unit_natural_key_valid\" pairs it with referenced column person_id; repair with $XORFK_TREF_DROP; $XORFK_TREF_ADD"
+# The update cannot run that repair for the user: its add part pairs by position, which only the user can
+# confirm, and the old add_foreign_key cannot even find the key by its constraint order. So the refusal of
+# the update carries an upgrade-specific HINT with the sequence (check_integrity on an updated database keeps
+# the plain two-statement repair, see sql/128).
+XORFK_UPGRADE_STEPS="The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. To upgrade: on the current version run the drop_foreign_key statement, then ALTER EXTENSION sql_saga UPDATE, then run the add_foreign_key statement on the new version."
+XORFK_REF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with $XORFK_REF_SCAN"
+XORFK_TREF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows that reference a missing key; add_foreign_key re-validates the native foreign key and refuses while they exist."
+# The shape this section is about. If the baseline did not mispair, the section proves nothing.
+FAILURE_CLASS=prerequisite
+check "mispaired FKs: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,legal_unit_id,person_id,person_role_id}" "$(q "$XORFK" "$XORFK_CATALOG_SQL")"
+check "mispaired FKs: the $BASELINE_VERSION regular FK refuses the intended key" "refused" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40)")"
+check "mispaired FKs: the $BASELINE_VERSION temporal FK refuses the intended key" "refused" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 10, 20, 30, 40, '[2021-01-01,2022-01-01)')")"
+check "mispaired FKs: the native temporal FK references the sorted list" \
+    "FOREIGN KEY (a_person, b_role, c_lu, d_est, PERIOD valid_range) REFERENCES person_for_unit(establishment_id, legal_unit_id, person_id, person_role_id, PERIOD valid_range) DEFERRABLE" \
+    "$(q "$XORFK" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'person_tref'::regclass AND conname = 'person_tref_fkey'")"
+FAILURE_CLASS="expected RED"
+psql -X -q -d postgres -c "ALTER DATABASE $XORFK RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $XORFK"
+# 1. Both FKs mispaired: the update names the regular one first (check_integrity's table order). This
+# database has no system versioning, so there are no query functions to fingerprint.
+xorfk_state() {
+    local parts="" p rc=0
+    p=$(fingerprint_part ext ext_snapshot "$1") || rc=1; parts="$p"
+    p=$(fingerprint_part dump raw_dump_schema "$1") || rc=1; parts="$parts|$p"
+    p=$(fingerprint_part catalog_rows raw_catalog_rows "$1") || rc=1; parts="$parts|$p"
+    echo "$parts"
+    return $rc
+}
+xorfk_before=$(xorfk_state "$XORFK") || die "mispaired FK fixture: prior-state capture failed: $xorfk_before"
+out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$XORFK" 2>&1)
+check "mispaired FKs: update refused naming the regular FK with its exact repair" "ERROR:  $XORFK_REF_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+check "mispaired FKs: the refusal has the upgrade HINT: confirm the pairing, drop, update, add, and the orphan scan" "HINT:  $XORFK_REF_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+check "mispaired FKs: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$XORFK" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "mispaired FKs: refusal leaves extension objects, user schema and catalog rows unchanged" "$xorfk_before" "$(xorfk_state "$XORFK")"
+# 2. The hint's scan, run verbatim on the baseline, lists the orphan. The add part cannot run on the baseline
+# (its add_foreign_key only finds the key by the sorted list), so it is not tried there. Then the drop part.
+check "mispaired FKs: the hint's scan lists the row the mispaired regular FK let in" "9|40|30|10|20" "$(q "$XORFK" "$XORFK_REF_SCAN")"
+check "mispaired FKs: the drop part of the regular repair succeeds on $BASELINE_VERSION" "" \
+    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_REF_DROP" | sql "$XORFK" | grep -m1 '^ERROR')"
+xorfk_between=$(xorfk_state "$XORFK") || die "mispaired FK fixture: state capture failed: $xorfk_between"
+out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$XORFK" 2>&1)
+check "mispaired FKs: update then refused naming the temporal FK with its exact repair" "ERROR:  $XORFK_TREF_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+check "mispaired FKs: the temporal refusal has the upgrade HINT (the native FK re-validates on add)" "HINT:  $XORFK_TREF_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+check "mispaired FKs: second refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$XORFK" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "mispaired FKs: second refusal leaves extension objects, user schema and catalog rows unchanged" "$xorfk_between" "$(xorfk_state "$XORFK")"
+check "mispaired FKs: the drop part of the temporal repair succeeds on $BASELINE_VERSION" "" \
+    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_TREF_DROP" | sql "$XORFK" | grep -m1 '^ERROR')"
+# 3. No mispaired FK left: the update succeeds. The add parts are tried first with the orphans still there:
+# each must be refused and leave nothing behind (no unvalidated constraint, no catalog row). Then the orphans
+# are resolved and the add parts run verbatim on the new version.
+check "mispaired FKs: update succeeds once both mispaired FKs are dropped" "" "$(q "$XORFK" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+check "mispaired FKs: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$XORFK" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "mispaired FKs: the XOR key catalog is in constraint order after the update" "{person_id,person_role_id,legal_unit_id,establishment_id}" "$(q "$XORFK" "$XORFK_CATALOG_SQL")"
+XORFK_LEFTOVERS_SQL="SELECT (SELECT count(*) FROM sql_saga.foreign_keys WHERE table_name IN ('person_ref', 'person_tref')) || '|' || (SELECT count(*) FROM pg_constraint WHERE conrelid IN ('person_ref'::regclass, 'person_tref'::regclass) AND (contype = 'f' OR (contype = 'c' AND pg_get_constraintdef(oid) LIKE '%person_for_unit%'))) || '|' || (SELECT count(*) FROM pg_trigger WHERE tgrelid = 'person_for_unit'::regclass AND NOT tgisinternal AND tgname LIKE 'person_%ref_fkey%')"
+check "mispaired FKs: no foreign key objects left after the drops" "0|0|0" "$(q "$XORFK" "$XORFK_LEFTOVERS_SQL")"
+check "mispaired FKs: the regular add part is refused while its orphan exists" "ERROR" \
+    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_REF_ADD" | sql "$XORFK" | grep -m1 -o '^ERROR')"
+check "mispaired FKs: the temporal add part is refused while its orphan exists" "ERROR" \
+    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_TREF_ADD" | sql "$XORFK" | grep -m1 -o '^ERROR')"
+check "mispaired FKs: the refused add parts leave no constraint, trigger or catalog row behind" "0|0|0" "$(q "$XORFK" "$XORFK_LEFTOVERS_SQL")"
+check "mispaired FKs: the add parts of both repairs succeed on $NEW_VERSION once the orphans are resolved" "" \
+    "$(printf 'SET client_min_messages = warning;\nDELETE FROM person_ref WHERE id = 9;\nDELETE FROM person_tref WHERE id = 9;\n%s;\n%s;\n' "$XORFK_REF_ADD" "$XORFK_TREF_ADD" | sql "$XORFK" | grep -m1 '^ERROR')"
+check "mispaired FKs: check_integrity passes after the repair" "" "$(q "$XORFK" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "mispaired FKs: repaired regular FK accepts the intended key" "accepted" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40)")"
+check "mispaired FKs: repaired regular FK refuses the crossed key" "refused" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 40, 30, 10, 20)")"
+check "mispaired FKs: repaired temporal FK accepts the intended key" "accepted" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)')")"
+check "mispaired FKs: repaired temporal FK refuses the crossed key" "refused" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 40, 30, 10, 20, '[2021-01-01,2022-01-01)')")"
+# Parent side: one parent row per child type, the reference inserted (and checked) first, kept.
+check "mispaired FKs: references from the repaired regular child (row 1) and temporal child (row 4) inserted" "" \
+    "$(printf "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40);\nINSERT INTO person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)');\n" | sql "$XORFK" | grep -m1 '^ERROR')"
+check "mispaired FKs: deleting the key row referenced only by the regular child is refused" "refused" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 1")"
+check "mispaired FKs: updating the key referenced only by the regular child is refused" "refused" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 1")"
+check "mispaired FKs: deleting the key row referenced only by the temporal child is refused" "refused" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 4")"
+check "mispaired FKs: updating the key referenced only by the temporal child is refused" "refused" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 4")"
+check "mispaired FKs: an unreferenced key row can be deleted" "accepted" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 3")"
+check "mispaired FKs: an unreferenced key can be updated" "accepted" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 3")"
+
+# ---------------------------------------------------------------------------------------------
 # tmp/fable_audit_v13.md finding 3 (A3). The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
 # so their column list is frozen; StatBus then ran ALTER TABLE ... ADD COLUMN on era tables that already had
 # views (stat_for_unit.stat GENERATED ALWAYS ... STORED; location.region_version_id plain + FK + CHECK). On
