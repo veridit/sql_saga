@@ -29,10 +29,21 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.1 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.2' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regclass('sql_saga.temporal_merge_cache') IS NOT NULL
+           OR pg_catalog.to_regclass('sql_saga.history_policy_sync_guard') IS NULL
+           OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_event_trigger AS e
+               WHERE e.evtfoid = 'sql_saga.drop_protection()'::pg_catalog.regprocedure
+                 AND e.evtenabled <> 'D') <> 1 THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.2 is not the supported v1.2 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.2 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0 or 1.1, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1 or 1.2, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0 or v1.1 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1 or v1.2 extension.';
     END IF;
 
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)
