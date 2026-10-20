@@ -1,0 +1,44 @@
+\set ECHO none
+--- baseline ---
+fresh family | ok
+--- part 1: event triggers ---
+sql_saga_drop_protection | O
+sql_saga_health_checks | O
+sql_saga_record_alter_function_resolved | O
+sql_saga_refuse_managed_relation_identity_change | O
+sql_saga_rename_following | O
+rename_following disabled | P0001: sql_saga: integrity violation for event trigger "sql_saga_rename_following": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_rename_following ENABLE
+rename_following re-enabled | ok
+health_checks disabled | P0001: sql_saga: integrity violation for event trigger "sql_saga_health_checks": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_health_checks ENABLE
+health_checks re-enabled | ok
+two disabled, first by name | P0001: sql_saga: integrity violation for event trigger "sql_saga_drop_protection": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_drop_protection ENABLE
+two disabled, next by name | P0001: sql_saga: integrity violation for event trigger "sql_saga_rename_following": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_rename_following ENABLE
+both re-enabled | ok
+ENABLE ALWAYS and ENABLE REPLICA are accepted | ok
+rename_following not an extension member | P0001: sql_saga: integrity violation for event trigger "sql_saga_rename_following": event trigger is not a member of extension sql_saga; repair with ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_rename_following
+rename_following added back | ok
+record_alter_function_resolved dropped | P0001: sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger is missing; repair with CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved
+record_alter_function_resolved recreated and added back | ok
+rename_following dropped | P0001: sql_saga: integrity violation for event trigger "sql_saga_rename_following": event trigger is missing; repair with CREATE EVENT TRIGGER sql_saga_rename_following ON ddl_command_end EXECUTE FUNCTION sql_saga.rename_following(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_rename_following
+rename_following recreated and added back | ok
+disabled trigger reported first | P0001: sql_saga: integrity violation for event trigger "sql_saga_refuse_managed_relation_identity_change": event trigger is disabled; repair with ALTER EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ENABLE
+--- part 2: renamed era table / era column ---
+era table renamed | P0001: sql_saga: integrity violation for table "integrity_hint.parent": catalogued base table is missing; if it was renamed or moved, rename or move it back to integrity_hint.parent
+era table renamed back (parent) | ok
+era table renamed (child) | P0001: sql_saga: integrity violation for table "integrity_hint.child": catalogued base table is missing; if it was renamed or moved, rename or move it back to integrity_hint.child
+era table renamed back | ok
+quoted family | ok
+era table moved | P0001: sql_saga: integrity violation for table "Odd Schema.Odd Table": catalogued base table is missing; if it was renamed or moved, rename or move it back to "Odd Schema"."Odd Table"
+era table moved back | ok
+era range column renamed | P0001: sql_saga: integrity violation for era "valid" on table "integrity_hint.parent": column "valid_range" is missing; if it was renamed, rename it back with ALTER TABLE integrity_hint.parent RENAME COLUMN <current name> TO valid_range
+era range column renamed back | ok
+synchronization works after repair | [2024-01-01,infinity)
+era valid_from column renamed | P0001: sql_saga: integrity violation for era "valid" on table "integrity_hint.child": column "valid_from" is missing; if it was renamed, rename it back with ALTER TABLE integrity_hint.child RENAME COLUMN <current name> TO valid_from
+era valid_from column renamed back | ok
+era valid_until column renamed | P0001: sql_saga: integrity violation for era "valid" on table "integrity_hint.child": column "valid_until" is missing; if it was renamed, rename it back with ALTER TABLE integrity_hint.child RENAME COLUMN <current name> TO valid_until
+era valid_until column renamed back | ok
+quoted era range column renamed | P0001: sql_saga: integrity violation for era "valid" on table "Odd Schema.Odd Table": column "Valid Range" is missing; if it was renamed, rename it back with ALTER TABLE "Odd Schema"."Odd Table" RENAME COLUMN <current name> TO "Valid Range"
+quoted era range column renamed back | ok
+era range column of the wrong type | P0001: sql_saga: integrity violation for era "valid" on table "integrity_hint.child": column or range type metadata is noncanonical; repair with drop_era and add_era
+--- final ---
+unchanged family at the end | ok
