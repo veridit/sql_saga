@@ -11,12 +11,12 @@ Completed and regression-tested on the development branch:
 - [x] Integrity checks cover event-trigger shape, membership and enablement, with tested repair hints
 - [x] Reject old catalog rows restored into the wrong version with the named catalog-format safeguard
 - [x] Fix quoted relation lookup and ephemeral/key-consistency metadata renames
+- [x] Remove both managed view types on cascading era removal, preserve user synchronization-function dependants and give ordered teardown guidance (134, independent G4)
 
 Release gates still open:
 - [ ] Replace regular-FK child CHECKs with deferred constraint triggers and validate lifecycle/merge/restore behavior
 - [ ] Follow supported column type changes in managed views, with clear refusals for era columns and user dependants
 - [ ] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL
-- [ ] Audit dependency refusals without modifying user-defined dependent objects
 - [ ] Freeze 1.2 artifacts and build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
 - [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
@@ -47,8 +47,8 @@ Release gates still open:
 - Renames followed: FK child columns, referenced key columns (helper regenerated), era range/boundary columns
 - Shared regular-FK helpers upgrade cleanly (1.0 and 1.1); quoted helper names can be shared
 - Security: history policy/RLS protection no longer bypassable via `sql_saga.managing_history_policies` (1.1 bug)
-- Parallel restore without deadlocks (`sql_saga.parallel_restore`, `sync_all_history_policies()`); regular FKs to
-  temporal tables need a serial or single-transaction restore (documented)
+- Parallel restore without deadlocks (`sql_saga.parallel_restore`, `sync_all_history_policies()`); the documented
+  serial/single-transaction workaround for regular-FK CHECK load order was later found insufficient, prompting 1.3
 - Upgrade refuses customised `add_system_versioning` privileges with a whole-set hint; exact pre-upgrade check is a
   rolled-back `ALTER EXTENSION UPDATE` (`doc/upgrade.md`)
 - Drop API timing harness (15 ms ceiling), upgrade/restore harnesses extended
