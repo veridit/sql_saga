@@ -465,6 +465,44 @@ FROM pg_catalog.pg_attribute AS a
 WHERE a.attrelid = 'vac.facts__for_portion_of_valid'::regclass AND a.attnum > 0 AND NOT a.attisdropped;
 SELECT vac.integrity('after the repair of the pending row');
 ROLLBACK;
+
+\echo '--- 17. The repair named for a pending for_portion_of view restores its ephemeral_columns'
+-- vac.audited's view has ephemeral_columns {edited_at} (section 13). The repair text from check_integrity
+-- is executed verbatim; the recreated view must carry the same ephemeral_columns as the dropped one.
+ALTER TABLE vac.audited ADD COLUMN scratch text;
+CREATE FUNCTION vac.run_reported_repair() RETURNS text LANGUAGE plpgsql AS $run_reported_repair$
+DECLARE
+    v_message text;
+BEGIN
+    BEGIN
+        PERFORM sql_saga.check_integrity();
+        RETURN 'nothing reported';
+    EXCEPTION WHEN OTHERS THEN
+        v_message := SQLERRM;
+    END;
+    IF position('; repair with ' IN v_message) = 0 THEN
+        RETURN 'no repair in: ' || v_message;
+    END IF;
+    EXECUTE substring(v_message FROM position('; repair with ' IN v_message) + length('; repair with '));
+    RETURN 'executed the reported repair';
+END;
+$run_reported_repair$;
+BEGIN;
+ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
+ALTER TABLE vac.audited DROP COLUMN scratch;
+ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
+SELECT to_regclass('vac.audited__for_portion_of_valid') AS audited_view,
+       (SELECT p.ephemeral_columns FROM sql_saga.__internal_updatable_view_pending AS p
+        WHERE (p.view_schema, p.view_name) = ('vac', 'audited__for_portion_of_valid')) AS pending_ephemeral_columns;
+SELECT vac.integrity('with the pending ephemeral view left behind');
+SELECT vac.run_reported_repair();
+SELECT uv.view_name, uv.ephemeral_columns,
+       (SELECT count(*) FROM sql_saga.__internal_updatable_view_pending) AS pending_rows
+FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'audited');
+SELECT vac.integrity('after the repair of the pending ephemeral view');
+ROLLBACK;
+ALTER TABLE vac.audited DROP COLUMN scratch;
+SELECT uv.view_name, uv.ephemeral_columns FROM sql_saga.updatable_view AS uv WHERE (uv.table_schema, uv.table_name) = ('vac', 'audited');
 SELECT vac.integrity('at the end');
 
 SET client_min_messages = warning;

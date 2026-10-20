@@ -63,6 +63,127 @@ if [ "${UPGRADE_PATH_RUNNER:-0}" != 1 ]; then
     cleanup_artifacts() { rm -rf "$ARTIFACT_WORK"; }
     trap cleanup_artifacts EXIT
 
+    # -----------------------------------------------------------------------------------------
+    # Candidate-only section: managed views follow ALTER TABLE run inside ANOTHER extension's script.
+    # No baseline needed. Four dummy extensions live in a private extension directory (never the
+    # global one); the scratch database sees them, then the candidate, then $system, through
+    # extension_control_path. Each script changes a managed table it does not own:
+    #   xs_add     ALTER TABLE ... ADD COLUMN               (view extended in place or recreated)
+    #   xs_drop    ALTER TABLE ... DROP COLUMN              (view dropped and recreated)
+    #   xs_rename  ALTER TABLE ... RENAME COLUMN            (view column renamed)
+    #   xs_repair  follow_shape on a stale view, as the 1.3 update script will for StatBus's views
+    # After CREATE EXTENSION: the views have the new shape, are not members of the dummy extension,
+    # check_integrity is clean, no pending rebuild row is left and pg_dump emits both views.
+    # Run alone with UPGRADE_ONLY=extension_scripts.
+    # -----------------------------------------------------------------------------------------
+    extension_scripts_section() {
+        local xs_db="saga_up_xs_${$}_${RANDOM}" xs_root="$ARTIFACT_WORK/xs_ext" xs_fails=0
+        local candidate_root case_name statement expect_red got want view
+        candidate_root=$(dirname "$CANDIDATE_DIR")
+        mkdir -p "$xs_root/extension"
+        for case_name in add drop rename repair; do
+            printf "comment = 'sql_saga upgrade_test dummy: %s'\ndefault_version = '1'\nrelocatable = false\n" "$case_name" \
+                >"$xs_root/extension/xs_$case_name.control"
+        done
+        echo 'ALTER TABLE xs.t_add ADD COLUMN z int;' >"$xs_root/extension/xs_add--1.sql"
+        echo 'ALTER TABLE xs.t_drop DROP COLUMN extra;' >"$xs_root/extension/xs_drop--1.sql"
+        echo 'ALTER TABLE xs.t_rename RENAME COLUMN name TO label;' >"$xs_root/extension/xs_rename--1.sql"
+        echo "SELECT sql_saga.__internal_updatable_view_follow_shape(ARRAY['xs.t_repair'::regclass::oid]);" \
+            >"$xs_root/extension/xs_repair--1.sql"
+        chmod -R a+rX "$xs_root"
+
+        xs_sql() { psql -X -At -q -v ON_ERROR_STOP=1 -d "$xs_db" 2>&1 | sed -e 's/^psql:[^ ]*:[0-9]*: //'; }
+        xs_q() { printf '%s\n' "$1" | xs_sql | sed -n '1,/ERROR/p' | grep -m1 -E '^ERROR|.'; }
+        xs_check() {  # xs_check <expected-red 0|1> <description> <expected> <actual>
+            if [ "$3" = "$4" ]; then
+                echo "    ok    $2"
+            else
+                if [ "$1" = 1 ]; then
+                    echo "    FAIL [expected RED] $2 (expected '$3', got '$4')"
+                else
+                    echo "    FAIL [regression] $2 (expected '$3', got '$4')"
+                fi
+                xs_fails=$((xs_fails + 1))
+            fi
+        }
+
+        echo
+        echo "== candidate: managed views follow ALTER TABLE inside another extension's script"
+        createdb "$xs_db" >/dev/null 2>&1 || { echo "HARNESS ERROR: createdb $xs_db" >&2; return 2; }
+        psql -X -q -d postgres -c "ALTER DATABASE $xs_db SET extension_control_path = '$xs_root:$candidate_root:\$system'" >/dev/null 2>&1 \
+            || { dropdb --if-exists "$xs_db"; echo "HARNESS ERROR: extension_control_path on $xs_db" >&2; return 2; }
+        got=$(xs_sql <<'SQL'
+SET client_min_messages = warning;
+CREATE EXTENSION btree_gist;
+CREATE EXTENSION sql_saga;
+CREATE SCHEMA xs;
+DO $setup$
+DECLARE
+    t text;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['t_add', 't_drop', 't_rename', 't_repair'] LOOP
+        EXECUTE format('CREATE TABLE xs.%I (id int NOT NULL, name text, extra text, valid_range daterange NOT NULL)', t);
+        PERFORM sql_saga.add_era(format('xs.%I', t)::regclass, 'valid_range');
+        PERFORM sql_saga.add_unique_key(format('xs.%I', t)::regclass, ARRAY['id'], key_type => 'primary');
+        PERFORM sql_saga.add_for_portion_of_view(format('xs.%I', t)::regclass);
+        PERFORM sql_saga.add_current_view(format('xs.%I', t)::regclass);
+    END LOOP;
+END;
+$setup$;
+SELECT 'setup done';
+SQL
+)
+        if [ "$(printf '%s\n' "$got" | tail -1)" != "setup done" ]; then
+            echo "HARNESS ERROR: extension-script fixtures: $got" >&2
+            dropdb --if-exists "$xs_db"
+            return 2
+        fi
+        for case_name in add drop rename repair; do
+            case $case_name in
+                add)    want="id,name,extra,valid_range,z"; expect_red=1 ;;
+                drop)   want="id,name,valid_range";         expect_red=0 ;;
+                rename) want="id,label,extra,valid_range";  expect_red=0 ;;
+                repair) want="id,name,extra,valid_range,z"; expect_red=1
+                    # A stale view, as a 1.2 database holds it: ADD COLUMN without the end trigger that
+                    # follows it. Made last, because check_integrity (database-wide) refuses it until repaired.
+                    xs_check 0 "xs_repair fixture: both views of xs.t_repair are stale (lack z)" "id,name,extra,valid_range|id,name,extra,valid_range" \
+                        "$(xs_q "ALTER EVENT TRIGGER sql_saga_rename_following DISABLE; ALTER TABLE xs.t_repair ADD COLUMN z int; ALTER EVENT TRIGGER sql_saga_rename_following ENABLE; SELECT string_agg(attname, ',' ORDER BY attnum) FILTER (WHERE attrelid = 'xs.t_repair__for_portion_of_valid'::regclass) || '|' || string_agg(attname, ',' ORDER BY attnum) FILTER (WHERE attrelid = 'xs.t_repair__current_valid'::regclass) FROM pg_attribute WHERE attrelid IN ('xs.t_repair__for_portion_of_valid'::regclass, 'xs.t_repair__current_valid'::regclass) AND attnum > 0 AND NOT attisdropped")" ;;
+            esac
+            statement=$(xs_q "CREATE EXTENSION xs_$case_name")
+            xs_check $expect_red "xs_$case_name: CREATE EXTENSION succeeds" "CREATE EXTENSION succeeded" \
+                "$(printf '%s' "$statement" | grep -q '^ERROR' && echo "$statement" || echo "CREATE EXTENSION succeeded")"
+            for view in for_portion_of_valid current_valid; do
+                xs_check $expect_red "xs_$case_name: t_${case_name}__$view columns" "$want" \
+                    "$(xs_q "SELECT string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'xs.t_${case_name}__$view'::regclass AND attnum > 0 AND NOT attisdropped")"
+            done
+            xs_check $expect_red "xs_$case_name: the views (and their row types) are not members of any extension" "0" \
+                "$(xs_q "SELECT count(*) FROM pg_depend AS d WHERE d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e' AND ((d.classid = 'pg_class'::regclass AND d.objid IN ('xs.t_${case_name}__for_portion_of_valid'::regclass, 'xs.t_${case_name}__current_valid'::regclass)) OR (d.classid = 'pg_type'::regclass AND d.objid IN (SELECT t.oid FROM pg_type AS t WHERE t.typnamespace = 'xs'::regnamespace)))")"
+            xs_check $expect_red "xs_$case_name: the dummy extension has no members" "0" \
+                "$(xs_q "SELECT count(*) FROM pg_depend AS d JOIN pg_extension AS x ON x.oid = d.refobjid WHERE d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e' AND x.extname = 'xs_$case_name'")"
+            xs_check $expect_red "xs_$case_name: check_integrity" "ok" \
+                "$(xs_q "SELECT sql_saga.check_integrity(); SELECT 'ok'" | tail -1)"
+            xs_check $expect_red "xs_$case_name: no pending rebuild row" "0" \
+                "$(xs_q "SELECT count(*) FROM sql_saga.__internal_updatable_view_pending")"
+            xs_check $expect_red "xs_$case_name: pg_dump emits both views" "2" \
+                "$(pg_dump --schema-only -d "$xs_db" -n xs 2>/dev/null | grep -c -E "^CREATE VIEW xs\.t_${case_name}__(for_portion_of|current)_valid ")"
+            xs_check 0 "xs_$case_name: DROP EXTENSION leaves the views" "2" \
+                "$(xs_q "SET client_min_messages = warning; DROP EXTENSION IF EXISTS xs_$case_name; SELECT count(*) FROM pg_class WHERE oid IN (to_regclass('xs.t_${case_name}__for_portion_of_valid'), to_regclass('xs.t_${case_name}__current_valid'))" | tail -1)"
+        done
+
+        psql -X -q -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$xs_db' AND pid <> pg_backend_pid()" >/dev/null 2>&1
+        dropdb --if-exists "$xs_db" >/dev/null 2>&1 || echo "cleanup failed to drop database $xs_db" >&2
+        if [ "$xs_fails" -ne 0 ]; then
+            echo "    RED. extension-script section has $xs_fails failure(s)"
+            return 1
+        fi
+        return 0
+    }
+
+    if [ "${UPGRADE_ONLY:-}" = extension_scripts ]; then
+        extension_scripts_section
+        exit $?
+    fi
+
     echo "== candidate 1.2 artifacts"
     control_version=""
     if [ -f "$CANDIDATE_DIR/sql_saga.control" ]; then
@@ -120,6 +241,8 @@ if [ "${UPGRADE_PATH_RUNNER:-0}" != 1 ]; then
     fi
 
     overall=0
+    extension_scripts_section
+    case $? in 0) ;; 1) overall=1 ;; *) exit 2 ;; esac
     for spec in "v1.0|1.0|9e39fcc" "v1.1|1.1|9c72e66"; do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         echo
