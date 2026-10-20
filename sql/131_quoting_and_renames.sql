@@ -141,11 +141,9 @@ SELECT public.q131_integrity('after non-ephemeral column rename and back');
  * Behaviour unchanged: the renamed column is still ephemeral. Making ID 1 'one' on [2024-06-01,infinity) with a
  * different edit time coalesces with the adjacent 'one' segment into a single row, through the view (era-level
  * ephemeral columns) and through temporal_merge directly (auto-discovered from the era). Coalescing deletes a row
- * of entity 1 while "Re g" references entity 1. Up to 1.2 the regular foreign key's parent-side check refuses that
- * even though the key still exists; test 129 covers that defect. This test is about names, so the reference is
- * removed first. TODO(1.3 design B): remove this DELETE once 129 passes.
+ * of entity 1 while "Re g" references entity 1; the key still exists, so the regular foreign key accepts it
+ * (test 129 covers the referenced-side semantics).
  */
-DELETE FROM "Re g";
 SAVEPOINT through_view;
 SELECT public.q131_attempt('view update after rename',
     $$UPDATE "Odd ""Schema"""."Ta'ble__for_portion_of_valid" SET "Na me" = 'one', "Edited ""At""" = '2024-07-01', valid_from = '2024-06-01', valid_until = 'infinity' WHERE "ID" = 1$$);

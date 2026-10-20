@@ -124,7 +124,7 @@ CREATE FUNCTION rft.child_side(fk_name name) RETURNS SETOF text LANGUAGE sql AS 
     SELECT format('%s | %s | catalogued %s | %s | %s | %s | %s | %s',
         fk.foreign_key_name,
         t.tgname,
-        t.tgname = fk.fk_check_constraint,
+        (t.tgname = fk.fk_check_constraint)::text,
         CASE WHEN c.contype = 't' THEN 'constraint trigger' ELSE 'plain trigger' END,
         CASE WHEN c.condeferrable THEN 'deferrable' ELSE 'not deferrable' END
             || CASE WHEN c.condeferred THEN ' initially deferred' ELSE ' initially immediate' END,
