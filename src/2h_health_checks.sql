@@ -868,6 +868,65 @@ DECLARE
     expected_return_type oid;
     missing_column name;
 BEGIN
+    /*
+     * sql_saga's event triggers come first: a disabled, detached or dropped one (rename_following above all) lets
+     * table-level damage through, so it is reported before any damage it may have caused. Name order, COLLATE "C".
+     * ENABLE ALWAYS and ENABLE REPLICA are enabled. A missing trigger cannot be attached again, so its repair
+     * recreates it with the definition from the extension script (src/2j_event_triggers.sql) and then attaches it.
+     * An existing trigger must also have the extension script's shape (event, tag filter as a set, function): a
+     * drifted one is detached, dropped, recreated and attached again. This list is the single copy of 2j that
+     * check_integrity holds, so every check_integrity on a fresh install compares it with what 2j actually created.
+     */
+    FOR r IN
+        SELECT d.evtname, d.evtevent, d.evttags, d.evtfoid_text, et.oid AS evt_oid, et.evtenabled,
+               EXISTS (SELECT 1 FROM pg_catalog.pg_depend AS dep
+                       JOIN pg_catalog.pg_extension AS x ON x.oid = dep.refobjid
+                       WHERE dep.classid = 'pg_catalog.pg_event_trigger'::regclass AND dep.objid = et.oid
+                         AND dep.refclassid = 'pg_catalog.pg_extension'::regclass AND dep.deptype = 'e'
+                         AND x.extname = 'sql_saga') AS is_member,
+               (et.evtevent IS NOT DISTINCT FROM d.evtevent
+                AND et.evtfoid IS NOT DISTINCT FROM pg_catalog.to_regprocedure(d.evtfoid_text || '()')::oid
+                AND ARRAY(SELECT t FROM unnest(et.evttags) AS t ORDER BY t COLLATE "C")
+                    = ARRAY(SELECT t FROM unnest(d.evttags) AS t ORDER BY t COLLATE "C")) AS has_canonical_shape,
+               pg_catalog.format('CREATE EVENT TRIGGER %I ON %s%s EXECUTE FUNCTION %s(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER %I',
+                   d.evtname, d.evtevent,
+                   CASE WHEN d.evttags IS NULL THEN ''
+                        ELSE pg_catalog.format(' WHEN TAG IN (%s)',
+                                 (SELECT pg_catalog.string_agg(pg_catalog.quote_literal(t), ', ' ORDER BY o)
+                                  FROM unnest(d.evttags) WITH ORDINALITY AS u (t, o))) END,
+                   d.evtfoid_text, d.evtname) AS recreate_sql
+        FROM (VALUES
+            ('sql_saga_drop_protection'::name, 'sql_drop'::name, NULL::text[], 'sql_saga.drop_protection'::text),
+            ('sql_saga_health_checks', 'ddl_command_end', NULL, 'sql_saga.health_checks'),
+            ('sql_saga_record_alter_function_resolved', 'ddl_command_start', ARRAY['ALTER FUNCTION', 'ALTER ROUTINE'],
+             'sql_saga.__internal_record_alter_function_resolved'),
+            ('sql_saga_refuse_managed_relation_identity_change', 'ddl_command_start', ARRAY['ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA'],
+             'sql_saga.__internal_refuse_managed_relation_identity_change'),
+            ('sql_saga_rename_following', 'ddl_command_end', NULL, 'sql_saga.rename_following')
+        ) AS d (evtname, evtevent, evttags, evtfoid_text)
+        LEFT JOIN pg_catalog.pg_event_trigger AS et ON et.evtname = d.evtname
+        ORDER BY d.evtname COLLATE "C"
+    LOOP
+        IF r.evt_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for event trigger "%": event trigger is missing; repair with %',
+                r.evtname, r.recreate_sql;
+        END IF;
+        IF NOT r.is_member THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for event trigger "%": event trigger is not a member of extension sql_saga; repair with ALTER EXTENSION sql_saga ADD EVENT TRIGGER %',
+                r.evtname, pg_catalog.quote_ident(r.evtname);
+        END IF;
+        IF NOT r.has_canonical_shape THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for event trigger "%": event trigger definition differs from the extension''s; repair with %',
+                r.evtname,
+                pg_catalog.format('ALTER EXTENSION sql_saga DROP EVENT TRIGGER %1$I; DROP EVENT TRIGGER %1$I; %2$s',
+                    r.evtname, r.recreate_sql);
+        END IF;
+        IF r.evtenabled = 'D' THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for event trigger "%": event trigger is disabled; repair with ALTER EVENT TRIGGER % ENABLE',
+                r.evtname, pg_catalog.quote_ident(r.evtname);
+        END IF;
+    END LOOP;
+
     /* Base relation and era invariants are the first dependency layer. */
     FOR r IN
         SELECT e.*,
@@ -930,8 +989,12 @@ BEGIN
     LOOP
         base_oid := r.inventory_table_oid;
         IF r.violation = 1 THEN
-            RAISE EXCEPTION 'sql_saga: integrity violation for table "%.%": catalogued base table is missing',
-                r.table_schema, r.table_name;
+            /*
+             * The catalogue names a table that no longer resolves: most likely renamed or moved without sql_saga
+             * following (sql_saga 1.0 did not). drop_era cannot even run then; renaming or moving it back is the repair.
+             */
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%.%": catalogued base table is missing; if it was renamed or moved, rename or move it back to %',
+                r.table_schema, r.table_name, pg_catalog.format('%I.%I', r.table_schema, r.table_name);
         END IF;
         IF r.violation = 2 THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for table "%": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era',
@@ -940,6 +1003,27 @@ BEGIN
         IF r.violation = 3 THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for table "%": catalogue relationships are incoherent; repair with drop_era and add_era',
                 sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF r.violation IN (4, 5) THEN
+            /*
+             * A catalogued era column that no longer exists under its name was most likely renamed without
+             * sql_saga following. Renaming it back is the repair, not drop_era and add_era. A column that exists
+             * with the wrong type keeps the noncanonical message below.
+             */
+            SELECT c.column_name INTO missing_column
+            FROM unnest(ARRAY[r.range_column_name, r.valid_from_column_name, r.valid_until_column_name])
+                 WITH ORDINALITY AS c (column_name, position)
+            WHERE c.column_name IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute AS a
+                              WHERE a.attrelid = base_oid AND a.attname = c.column_name
+                                AND a.attnum > 0 AND NOT a.attisdropped)
+            ORDER BY c.position
+            LIMIT 1;
+            IF missing_column IS NOT NULL THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": column "%" is missing; if it was renamed, rename it back with ALTER TABLE % RENAME COLUMN <current name> TO %',
+                    r.era_name, sql_saga.__internal_display_name(base_oid::regclass), missing_column,
+                    pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(missing_column);
+            END IF;
         END IF;
         IF r.violation = 4 THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": column or range type metadata is noncanonical; repair with drop_era and add_era',
