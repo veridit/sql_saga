@@ -37,10 +37,11 @@ Release gates still open:
   - [x] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did (independent final-fragment audit, including final preamble-only correction)
   - [ ] Prove all-baseline routine/family ACL parity, original event-trigger firing modes and atomic rollback on every refusal
   - [x] Retain the healthy 1.0 base-GRANT-before-managed-views bootstrap regression in the maintained tag matrix (46dcf17, independently reviewed; all three focused baseline probes pass)
-  - [ ] Preserve the original custom current-function binding during managed-view ADD/DROP/TYPE rebuilds and current-view writes (actual released-tag matrix reproduces an unqualified-function failure; RED135 and independent G2 in progress)
-  - [ ] Correct the maintained matrix's empty-trigger-attribute renderer and construct both XOR foreign keys before any sorting DDL; independently review the fixture corrections
-  - [ ] Classify released-1.2 user-policy and tampered-helper refusal diagnostics without weakening atomicity or actionable-error checks
-- [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
+  - [ ] Preserve the original custom current-function binding during managed-view ADD/DROP/TYPE rebuilds and current-view writes (actual released-tag matrix reproduces the defect; RED135 and generator44 committed ee71537, native prototype observed, bounded GREEN/G4 underway; preserve the caller search path and explicitly whitelist the two invoker clock helpers in 117)
+  - [ ] Correct the maintained matrix's empty-trigger-attribute renderer, controlled pre-sort XOR construction, stale-view base grants and lowercase event-test database names; independently review the fixture corrections without weakening acceptance assertions
+  - [ ] Name unmanaged user history policies and give an actionable manual move/drop-and-sync repair without touching the policy automatically (confirmed released-1.2 diagnostic defect; RED136/G2 committed 8dbf471, bounded 2h GREEN/G4 underway)
+  - [ ] Review the released-1.2 tampered-helper conversion refusal as a baseline-specific valid diagnostic, retaining exact object names, manual repair and atomicity checks
+- [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback (pre-fix restore matrix 15/15, every split case 20/20; repeat on final post-fix package)
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
 - [ ] Finish 1.3 API/runbook documentation and full assembled-package regression/native tests
