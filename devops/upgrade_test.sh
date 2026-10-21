@@ -1778,6 +1778,10 @@ if [ -n "$OLD_LIB" ]; then
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
 acl_entries "$OLD" >"$WORK/acl_entries.before"
+# Catalogued regular-FK helpers of the baseline, as acl_entries prints them (oid::regprocedure text).
+# One row per helper through sql (q keeps only the first line).
+printf '%s\n' "SELECT DISTINCT to_regprocedure(fk.fk_helper_function)::text FROM sql_saga.foreign_keys AS fk WHERE fk.type = 'regular_to_temporal' AND to_regprocedure(fk.fk_helper_function) IS NOT NULL ORDER BY 1;" | sql "$OLD" >"$WORK/fk_helpers.before"
+grep -q '^ERROR' "$WORK/fk_helpers.before" && die "capturing baseline regular-FK helpers: $(grep -m1 '^ERROR' "$WORK/fk_helpers.before")"
 
 # Anchor generated query functions to the released 1.1 state. The direct v1.1 path captures the
 # pristine fixture. The v1.0 path uses a sibling clone upgraded only through immutable 1.0--1.1.
@@ -3181,9 +3185,10 @@ check "extversion after update" "$NEW_VERSION" "$(q "$OLD" "SELECT extversion FR
 
 # ---------------------------------------------------------------------------------------------
 section "$NEW_VERSION structure after upgrade" "not meaningful (dependent)"
+# The fresh reference uses exactly the core fixture's hardened default privileges (fixture_core, (8)).
 FRESH_ACL_REF=${PREFIX}_fresh_aclref
 new_db "$FRESH_ACL_REF" "$EXT_ROOT"
-printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$NEW_VERSION" | sql "$FRESH_ACL_REF" >/dev/null
+printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nALTER DEFAULT PRIVILEGES FOR ROLE %s REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "${PREFIX}_owner" "$NEW_VERSION" | sql "$FRESH_ACL_REF" >/dev/null
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
@@ -3222,6 +3227,20 @@ else
                 echo "$entry" >>"$WORK/acl_entries.expected"
             fi
         done
+        # Regular-FK helpers the Design B conversion actually dropped: only catalogued baseline helper signatures that
+        # no longer exist leave the expected set. A helper that still exists (kept, e.g. with dependents) keeps its ACL.
+        : >"$WORK/fk_helpers.dropped"
+        while IFS= read -r helper; do
+            [ -n "$helper" ] || continue
+            if [ "$(q "$OLD" "SELECT to_regprocedure('$(printf '%s' "$helper" | sed "s/'/''/g")') IS NULL")" = t ]; then
+                echo "$helper" >>"$WORK/fk_helpers.dropped"
+                # Exact line prefix, not a substring anywhere in the line.
+                while IFS= read -r entry; do
+                    case "$entry" in "fn $helper|"*) ;; *) printf '%s\n' "$entry" ;; esac
+                done <"$WORK/acl_entries.expected" >"$WORK/acl_entries.expected.tmp"
+                mv "$WORK/acl_entries.expected.tmp" "$WORK/acl_entries.expected"
+            fi
+        done <"$WORK/fk_helpers.before"
         LC_ALL=C sort -o "$WORK/acl_entries.expected" "$WORK/acl_entries.expected"
         acl_entries "$OLD" >"$WORK/acl_entries.after"
         if diff -u "$WORK/acl_entries.expected" "$WORK/acl_entries.after" >"$WORK/acl_entries.diff"; then
