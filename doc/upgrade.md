@@ -35,7 +35,7 @@ CREATE CONSTRAINT TRIGGER <fk_check_constraint> AFTER INSERT OR UPDATE ON <child
     DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.regular_fk_check_c(...)
 ```
 
-`pg_dump` emits the trigger after the data of every table, so a restore no longer depends on the order in which tables are loaded. Helper functions that no regular foreign key still uses are dropped, and `fk_helper_function` becomes `NULL`.
+`pg_dump` emits the trigger after the data of every table, so a restore no longer depends on the order in which tables are loaded. `fk_helper_function` becomes `NULL` for every converted foreign key. A helper function that no foreign key uses any more is dropped without `CASCADE`, but only when nothing else depends on it and it is not a member of an extension. Otherwise it is kept, and a `NOTICE` names it and the reason (`sql_saga: Kept function ..., no longer used by any foreign key, because ...`).
 
 A constraint trigger only checks rows written after it exists. So, before it converts anything, the update scans every regular foreign key once, with that foreign key's `MATCH` rule. It refuses, atomically, while any child row references a key that no parent row has. Such rows can exist on 1.0 to 1.2. For example, a parent row deleted with `session_replication_role = replica` skips the parent-side check, and the CHECK of a mispaired foreign key validated the wrong columns. The refusal names the foreign key, the row count and a query that lists the rows:
 
