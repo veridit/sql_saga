@@ -246,6 +246,14 @@ BEGIN
     END LOOP;
 END;
 $$;
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
+NOTICE:  sql_saga: disable_temporal_triggers left native temporal foreign keys enabled (they have no sql_saga triggers); they are DEFERRABLE, defer them in this transaction with: SET CONSTRAINTS public.establishment_tm_bs_off_legal_unit_id_valid DEFERRED
 \echo '-- Trigger status log from benchmark --'
 -- Trigger status log from benchmark --
 SELECT * FROM trigger_log ORDER BY event, table_name, trigger_name;
