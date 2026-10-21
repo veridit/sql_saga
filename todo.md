@@ -26,17 +26,29 @@ Release gates still open:
 - [x] Invalidate native planner/executor metadata after target type changes, including rollback and other-session DDL (133, independent G4)
   - [x] Use structured fingerprints so quoted names cannot collide with encoded column lists
 - [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
+- [x] Accept released 1.2 in the read-only preflight, with independent frozen-layout and unchanged-fingerprint validation (effc130)
+- [x] Package the real 1.3 control/native version and verify install/native/safeguard tests plus all direct paths (e994fe0, private 3/3)
 - [ ] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
-  - [ ] Authenticate frozen inputs and test deterministic generation, SQL splitting and signature checks
-  - [ ] Preserve existing routine ACLs and apply explicit privileges only to new routines
+  - [x] Authenticate frozen inputs and test deterministic generation, SQL splitting and signature checks (5c3b0ad, independent G4, 43/43 and GNU make wiring)
+  - [x] Generate unchanged-signature replacements without ACL replay and require explicit new-routine privileges (actual upgraded ACL parity remains an acceptance gate)
   - [ ] Preserve managed-view identity, grants and extension membership when repairing stale views during UPDATE
 - [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
+  - [ ] Independently review and execute the actual three assembled migrations, including exact CHECK attribution and absence/ambiguity refusals
+  - [ ] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did
+  - [ ] Prove all-baseline routine/family ACL parity, original event-trigger firing modes and atomic rollback on every refusal
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
 - [ ] Finish 1.3 API/runbook documentation and full assembled-package regression/native tests
+  - [x] Review and commit the 1.3 runbook contract, preserving the old-dump restore block verbatim (3cd6315)
+  - [x] Run reviewed-source native unit tests (5/5)
+  - [ ] Pass the complete real-1.3 regression and benchmark suite in an isolated snapshot
+  - [ ] Reconcile documentation and generated API output with actual migration/restore outcomes
   - [ ] Run the deterministic two-session FK concurrency harness in the Makefile and CI on an explicitly identified disposable cluster
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
+  - [x] Obtain Fable's source/test coverage map with missing execution evidence explicitly distinguished from defects
+  - [ ] Update that map after actual released-tag upgrade and restore acceptance
+  - [ ] Stop remaining task-owned clusters and inspect the final scoped git diff/status
 - [ ] Obtain owner approval before pushing or tagging the release and before sending external notices
 
 ## Medium Priority - Refactoring & API Improvements
