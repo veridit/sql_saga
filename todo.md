@@ -36,23 +36,24 @@ Release gates still open:
   - [x] Independently review and execute the actual three assembled migrations, including exact CHECK attribution and absence/ambiguity refusals
   - [x] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did (independent final-fragment audit, including final preamble-only correction)
   - [ ] Prove all-baseline routine/family ACL parity, original event-trigger firing modes and atomic rollback on every refusal
-  - [x] Preserve custom routine grants and PUBLIC revokes on the direct 1.0 path (250eaee, exact reversible generated-copy omissions, 50/50 generator units and independent actual-upgrade G4; frozen artifacts unchanged)
-  - [x] Compare upgrade ACL sets against only the documented new PUBLIC routines and signature replacement, while retaining exact unchanged-object and custom-site privileges (ca8654e, independent G2, existing revoked-routine and unauthorized grant-option negative controls)
+  - [ ] Resolve the reopened direct-1.0 privilege conflict: preserve explicit site PUBLIC revokes while retaining the historical correction for hardened installs (ae23109 final matrix: 1.0 434 checks pass, 7 fail; 250eaee blanket grant omission leaves eight API routines owner-only). Investigate original pg_init_privs before choosing a policy, then require new RED/G2/GREEN/G4 evidence.
+  - [ ] Correct and re-review the exact ACL oracle for the same hardened defaults as the core fixture and intentional removal of attributable regular-FK helper routines, retaining unrelated/retained-helper/custom-ACL negative controls (final matrix 1.1 477/1 and 1.2 425/1 are oracle failures, not passing release gates).
   - [x] Retain the healthy 1.0 base-GRANT-before-managed-views bootstrap regression in the maintained tag matrix (46dcf17, independently reviewed; all three focused baseline probes pass)
   - [x] Preserve the original custom current-function binding during managed-view ADD/DROP/TYPE rebuilds and current-view writes (b71ce1e, independent G4, actual 121/121 fast tests; caller path preserved, two read-only invoker clock helpers explicitly whitelisted in 117; final released-tag acceptance remains below)
   - [x] Correct the maintained matrix's empty-trigger-attribute renderer, controlled pre-sort XOR construction, stale-view base grants and lowercase event-test database names (59fe389, independent five-change G2, actual three-baseline fixture evidence; final matrix still required)
   - [x] Name unmanaged user history policies and give an actionable manual move/drop-and-sync repair without touching the policy automatically (7d6dbef, RED136/G2 and independent private G4; quoted executable repairs, full policy snapshots, unchanged missing/stale diagnostics and checker ACL)
   - [x] Review the released-1.2 tampered-helper conversion refusal as a baseline-specific valid diagnostic, retaining exact object names, manual repair and atomicity checks (59fe389, independent G2, actual55000 and executable HINT retained)
-- [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback (pre-fix restore matrix 15/15, every split case 20/20; repeat on final post-fix package)
+- [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback (pre-fix restore matrix 15/15, every split case 20/20; final restore is held until the hardened-ACL upgrade blocker is fixed)
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
 - [ ] Finish 1.3 API/runbook documentation and full assembled-package regression/native tests
   - [x] Review and commit the 1.3 runbook contract, preserving the old-dump restore block verbatim (3cd6315)
   - [x] Run reviewed-source native unit tests (5/5)
   - [x] Pass the complete real-1.3 regression and benchmark suite in an isolated snapshot before the binding fix (132/132, tmp/coord/full13_0004/test_all_green.log)
-  - [ ] Rerun focused and full assembled-package regression after the binding fix and any subsequent source correction
+  - [x] Rerun focused and full assembled-package regression after the binding, policy and privilege corrections (ae23109, private final package: 134/134 including all benchmarks, generator50/50, native5/5; tmp/coord/post_binding_full/test_all.log)
   - [x] Integrate the eight reviewed intentional benchmark102 native-FK NOTICE lines and immediately rerun the affected test (f5cd490, 001/102 2/2)
-  - [ ] Reconcile documentation and generated API output with actual migration/restore outcomes
+  - [x] Compare generated API documentation with the committed copy after final package regression (byte-identical, ae23109)
+  - [ ] Reconcile runbook with actual final migration/restore outcomes, preserving the marked old-dump restore block
   - [x] Integrate reviewed bounded two-session FK concurrency harness in Makefile and disposable CI (d4bba39, c8c2862; independent 35/35 plus timeout/signal/poisoned-environment controls; Ubuntu CI execution awaits push approval)
   - [x] Execute the public Makefile concurrency target on the integrated candidate (35/35, tmp/v13_designBtests/rfc_make_run.log)
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
