@@ -1878,10 +1878,21 @@ section "atomic failure (tampered regular-FK helper)" "not meaningful (dependent
 tamper_before="$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
 out=$(q "$TAMPER" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
 case "$out" in
-    *par_id_exists*exact*helper*) ok "update rejects the regex-matching helper body and names the function" ;;
+    *par_id_exists*exact*helper*) [ "$BASELINE_VERSION" != 1.2 ] && ok "update rejects the regex-matching helper body and names the function" || fail "1.2 update refused with the frozen exact-helper text instead of the conversion refusal: $out" ;;
+    *"cannot convert the referencing side of foreign key rchild_par_id_fkey to a constraint trigger: CHECK constraint rchild_par_id_check on table public.rchild or its function public.par_id_exists(integer) is not the one sql_saga created"*)
+        # Baseline-specific path: 1.2--1.3 runs no frozen helper validator; the Design B conversion refuses instead.
+        if [ "$BASELINE_VERSION" = 1.2 ]; then ok "1.2 update refuses the tampered helper in the conversion, naming FK, CHECK and helper"
+        else fail "update rejects the tampered helper, but without the actionable exact-helper error: $out"; fi ;;
     ERROR*) fail "update rejects the tampered helper, but without the actionable exact-helper error: $out" ;;
     *) fail "update succeeded despite the tampered regular-FK helper body" ;;
 esac
+if [ "$BASELINE_VERSION" = 1.2 ]; then
+    out=$(printf "\\set VERBOSITY verbose\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$TAMPER" 2>&1)
+    check "1.2 tampered helper: SQLSTATE 55000" "ERROR:  55000:" "$(printf '%s\n' "$out" | grep -m1 '^ERROR' | cut -c1-14)"
+    check "1.2 tampered helper: the HINT gives the repair (restore, or drop on the current version, update, add again)" \
+        "HINT:  Restore them as sql_saga created them, or drop the foreign key on the current version (SELECT sql_saga.drop_foreign_key_by_name('public.rchild', 'rchild_par_id_fkey')), run ALTER EXTENSION sql_saga UPDATE, then add it again." \
+        "$(printf '%s\n' "$out" | grep -m1 '^HINT')"
+fi
 check "tampered-helper failure leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$TAMPER" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "tampered-helper failure is atomic" "$tamper_before" "$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
 check "tampered helper body remains untouched after refusal" "t" "$(q "$TAMPER" "SELECT prosrc LIKE '%OR true%' FROM pg_proc WHERE oid='public.par_id_exists(integer)'::regprocedure")"
@@ -2590,7 +2601,7 @@ RFK_CHILD_SIDE_SQL="SELECT string_agg(format('%s:%s=%s/%s/%s/%s/%s', fk.foreign_
     CASE WHEN t.tgname = fk.fk_check_constraint THEN 'catalogued' ELSE 'uncatalogued' END,
     CASE WHEN c.contype = 't' THEN 'constraint trigger' ELSE 'plain trigger' END,
     CASE WHEN c.condeferrable AND NOT c.condeferred THEN 'deferrable initially immediate' ELSE 'other deferral' END,
-    CASE WHEN t.tgtype = 21 AND t.tgattr::int2[] = '{}' THEN 'after insert or update'
+    CASE WHEN t.tgtype = 21 AND coalesce(cardinality(t.tgattr::int2[]), 0) = 0 THEN 'after insert or update'
          WHEN t.tgtype = 21 THEN 'after insert or update of ' || (SELECT string_agg(a.attname, ',' ORDER BY u.o) FROM unnest(t.tgattr::int2[]) WITH ORDINALITY AS u (n, o)
                                   JOIN pg_attribute AS a ON (a.attrelid, a.attnum) = (t.tgrelid, u.n)) ELSE 'tgtype ' || t.tgtype END,
     CASE t.tgenabled WHEN 'O' THEN 'enabled' ELSE 'not enabled' END), ' ' ORDER BY fk.foreign_key_name, t.tgname)
@@ -2860,20 +2871,46 @@ section "correctly paired FKs created before the XOR sort survive the sort and t
 # them as mispaired, must not re-pair them, and must leave the intended pairs enforcing.
 xor_presort_case() {  # xor_presort_case <label> <sorting statement>
     local label=$1 sorter=$2 db=${PREFIX}_xorpre_$1 got
-    v13_db "$db" "CREATE TABLE unit_role (id int NOT NULL, kind text NOT NULL, legal_unit_id int, establishment_id int, valid_range daterange NOT NULL);
+    # Controlled construction: on every released baseline, add_era and add_foreign_key are themselves DDL that
+    # the baseline's rename_following answers by sorting the XOR catalog, so the second FK of a pair can never be
+    # registered against the constraint order (tmp/v13_upgrade_harness/logs/xorpre_probe.log). The state a site
+    # reaches by creating its FKs and only later running unrelated DDL is built by disabling ONLY
+    # sql_saga_rename_following while both FKs are registered, re-enabling it (state O) right after, and then
+    # running the tested sort explicitly ($sorter), with the prerequisites below proved in between.
+    v13_db "$db" "CREATE TABLE role_tref (id int, r_kind text, r_lu int, r_est int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('role_tref', 'valid_range', 'valid');
+CREATE TABLE role_ref (id int PRIMARY KEY, r_kind text, r_lu int, r_est int);
+CREATE TABLE unit_role (id int NOT NULL, kind text NOT NULL, legal_unit_id int, establishment_id int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('unit_role', 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'unit_role', key_type => 'natural', column_names => ARRAY['kind', 'legal_unit_id', 'establishment_id'],
     mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'unit_role_kind_valid');
 INSERT INTO unit_role VALUES (1, 'a', 30, 40, '[2020-01-01,infinity)'), (2, 'b', 31, 41, '[2020-01-01,infinity)');
-CREATE TABLE role_ref (id int PRIMARY KEY, r_kind text, r_lu int, r_est int);
-CREATE TABLE role_tref (id int, r_kind text, r_lu int, r_est int, valid_range daterange NOT NULL);
-SELECT sql_saga.add_era('role_tref', 'valid_range', 'valid');
+ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
 SELECT sql_saga.add_foreign_key('role_ref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_ref_fkey');
 SELECT sql_saga.add_foreign_key('role_tref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_tref_fkey');
+ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
 INSERT INTO role_ref VALUES (1, 'a', 30, 40);
-INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');
-$sorter"
+INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');"
     FAILURE_CLASS=prerequisite
+    local key_sql="SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'"
+    check "$label: before the sort the catalog holds the constraint order" "{kind,legal_unit_id,establishment_id}" "$(q "$db" "$key_sql")"
+    check "$label: before the sort sql_saga_rename_following is enabled (O)" "O" \
+        "$(q "$db" "SELECT evtenabled FROM pg_event_trigger WHERE evtname = 'sql_saga_rename_following'")"
+    check "$label: before the sort the native temporal FK pairs r_kind/r_lu/r_est with kind/legal_unit_id/establishment_id" \
+        "r_kind=kind,r_lu=legal_unit_id,r_est=establishment_id" \
+        "$(q "$db" "SELECT string_agg(fa.attname || '=' || pa.attname, ',' ORDER BY u.o) FROM pg_constraint AS c, unnest(c.conkey, c.confkey) WITH ORDINALITY AS u (fk, pk, o)
+            JOIN pg_attribute AS fa ON (fa.attrelid, fa.attnum) = ('role_tref'::regclass, u.fk) JOIN pg_attribute AS pa ON (pa.attrelid, pa.attnum) = ('unit_role'::regclass, u.pk)
+            WHERE c.conrelid = 'role_tref'::regclass AND c.conname = 'role_tref_fkey' AND fa.attname <> 'valid_range'")"
+    check "$label: before the sort the regular FK CHECK passes r_kind, r_lu, r_est to a helper reading kind, legal_unit_id, establishment_id as \$1..\$3" "t|t" \
+        "$(q "$db" "SELECT (SELECT pg_get_constraintdef(c.oid) LIKE '%(r_kind, r_lu, r_est))' FROM pg_constraint AS c WHERE c.conrelid = 'role_ref'::regclass AND c.conname = (SELECT fk_check_constraint FROM sql_saga.foreign_keys WHERE foreign_key_name = 'role_ref_fkey'))::text
+            || '|' || (SELECT regexp_replace(p.prosrc, '\s+', ' ', 'g') ~ 'uk\.kind (OPERATOR\(pg_catalog\.=\)|=) \\\$1 AND uk\.legal_unit_id (OPERATOR\(pg_catalog\.=\)|=) \\\$2 AND uk\.establishment_id (OPERATOR\(pg_catalog\.=\)|=) \\\$3'
+                FROM pg_proc AS p WHERE p.oid = (SELECT fk_helper_function::regprocedure FROM sql_saga.foreign_keys WHERE foreign_key_name = 'role_ref_fkey'))::text" | sed 's/true/t/g; s/false/f/g')"
+    check "$label: before the sort the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
+    check "$label: before the sort the regular FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
+    check "$label: before the sort the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
+    check "$label: before the sort the temporal FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 40, 30, '[2021-01-01,2022-01-01)')")"
+    # The tested sort: the unrelated statement, run by the user with following enabled.
+    check "$label: the sorting statement runs" "" "$(q "$db" "$sorter" | grep '^ERROR')"
     check "$label: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,kind,legal_unit_id}" \
         "$(q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
     check "$label: before the update the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
@@ -2951,12 +2988,17 @@ section "own-script stale view repair keeps the managed view's OID, grants, comm
 # view: a clear refusal naming the dependent view, atomically, is accepted there.
 new_role "${PREFIX}_viewer"
 SV=${PREFIX}_staleview
+# Fixture construction: the viewer gets SELECT on the base before the managed view exists (the managed view
+# runs as the caller, so the base grant is what lets the viewer read through it). A direct grant on the managed
+# view is added only on 1.1/1.2; released 1.0 refuses direct grants on managed views by design.
+if [ "$BASELINE_VERSION" = 1.0 ]; then SV_VIEW_GRANT=""; else SV_VIEW_GRANT="GRANT SELECT ON sv_base__for_portion_of_valid TO ${PREFIX}_viewer;"; fi
 v13_db "$SV" "CREATE TABLE sv_base (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date);
 SELECT sql_saga.add_era('sv_base', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('sv_base', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'sv_base_id_valid');
+GRANT SELECT ON sv_base TO ${PREFIX}_viewer;
 SELECT sql_saga.add_for_portion_of_view('sv_base');
 INSERT INTO sv_base (id, name, valid_from, valid_until) VALUES (1, 'one', '2024-01-01', 'infinity');
-GRANT SELECT ON sv_base__for_portion_of_valid TO ${PREFIX}_viewer;
+$SV_VIEW_GRANT
 COMMENT ON VIEW sv_base__for_portion_of_valid IS 'site comment';
 CREATE VIEW user_names AS SELECT id, name FROM sv_base__for_portion_of_valid;
 GRANT SELECT ON user_names TO ${PREFIX}_viewer;
@@ -3003,7 +3045,8 @@ section "sql_saga_rename_following state: ALWAYS and REPLICA are kept, DISABLED 
 # refuses with check_integrity's repair, and nothing changes.
 for state in ALWAYS REPLICA DISABLE; do
     case $state in ALWAYS) code=A ;; REPLICA) code=R ;; DISABLE) code=D ;; esac
-    db=${PREFIX}_evt_$code
+    # Fixture construction: database names are lowercase (unquoted in new_db); the event mode stays A/R/D.
+    db=${PREFIX}_evt_$(printf '%s' "$code" | tr 'ARD' 'ard')
     if [ $state = DISABLE ]; then stmt="ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;"; else stmt="ALTER EVENT TRIGGER sql_saga_rename_following ENABLE $state;"; fi
     v13_db "$db" "CREATE TABLE evt_t (id int NOT NULL, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('evt_t', 'valid_range', 'valid');
