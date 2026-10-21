@@ -587,6 +587,33 @@ _GUARD_LINE_12 = (
 )
 _HINT_12 = "                      'ALTER EXTENSION sql_saga UPDATE TO ''1.2'';',"
 
+# The 1.0--1.1 part of frozen 1.0--1.2 re-grants EXECUTE TO PUBLIC on routines that already exist in 1.0.
+# CREATE OR REPLACE keeps their ACL, so replaying these grants would undo a custom REVOKE ... FROM PUBLIC.
+_ACL_FPO_10 = "GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;"
+_ACL_CV_10 = "GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;"
+_ACL_TM_10 = "\n".join([
+    "DO $grant_temporal_merge$",
+    "DECLARE",
+    "    r record;",
+    "BEGIN",
+    "    FOR r IN",
+    "        SELECT p.oid::regprocedure AS routine, p.prokind",
+    "        FROM pg_catalog.pg_proc AS p",
+    "        WHERE p.pronamespace = 'sql_saga'::regnamespace",
+    "          AND p.proname IN ('temporal_merge', 'temporal_merge_plan', 'temporal_merge_plan_native',",
+    "                            'temporal_merge_execute', 'temporal_merge_drop_temp_tables',",
+    "                            'temporal_merge_executor_introspect')",
+    "    LOOP",
+    "        EXECUTE format('GRANT EXECUTE ON %s %s TO PUBLIC',",
+    "            CASE WHEN r.prokind = 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, r.routine);",
+    "    END LOOP;",
+    "END;",
+    "$grant_temporal_merge$;",
+])
+_ACL_FPO_10_KEPT = "-- sql_saga 1.3: existing ACL of sql_saga.for_portion_of_trigger() kept (historical PUBLIC grant omitted)"
+_ACL_CV_10_KEPT = "-- sql_saga 1.3: existing ACL of sql_saga.current_view_trigger() kept (historical PUBLIC grant omitted)"
+_ACL_TM_10_KEPT = "-- sql_saga 1.3: existing ACLs of the temporal_merge routines kept (historical PUBLIC grant loop omitted)"
+
 
 def _retarget(s):
     return s.replace("'1.2'", "'1.3'").replace("version 1.2'", "version 1.3'") \
@@ -598,7 +625,8 @@ _ANCHORS = {
     "1.1--1.2": [(_GUARD_BLOCK_12, _retarget(_GUARD_BLOCK_12)), (_HINT_12, _retarget(_HINT_12)),
                  (GATE, GATE_REPLACEMENT)],
     "1.0--1.2": [(_GUARD_LINE_12, _retarget(_GUARD_LINE_12)), (_GUARD_BLOCK_12, _retarget(_GUARD_BLOCK_12)),
-                 (_HINT_12, _retarget(_HINT_12)), (GATE, GATE_REPLACEMENT)],
+                 (_HINT_12, _retarget(_HINT_12)), (GATE, GATE_REPLACEMENT),
+                 (_ACL_FPO_10, _ACL_FPO_10_KEPT), (_ACL_CV_10, _ACL_CV_10_KEPT), (_ACL_TM_10, _ACL_TM_10_KEPT)],
 }
 _HEADERS = {"1.1--1.2": header("1.2"), "1.0--1.2": header("1.1")}
 # Lines that mention 1.2 and stay unchanged (comments, message text, names, lock text).
