@@ -1,0 +1,22 @@
+\set ECHO none
+healthy baseline | ok
+plain unmanaged history policy | sql_saga: integrity violation for system-versioned table hpol.hp: history table hpol.hp_history has policy user_history_policy not managed by sql_saga
+  HINT: Review the policy definition, then run DROP POLICY user_history_policy ON hpol.hp_history; if it is still needed, create it on hpol.hp; then run SELECT sql_saga.sync_history_policies('hpol.hp');
+hp_history:user_history_policy:(tenant = CURRENT_USER)
+plain sync alone | sql_saga: policies on history table "hpol.hp_history" are managed by sql_saga
+  HINT: Drop policy "user_history_policy" on "hpol.hp_history" and create it on "hpol.hp"; sql_saga copies its SELECT and ALL policies to the history.
+hp_history:user_history_policy:(tenant = CURRENT_USER)
+plain drop from history | ok
+plain create on base | ok
+plain sync | ok
+plain after repair | ok
+hp:user_history_policy:(tenant = CURRENT_USER)
+quoted unmanaged history policy | sql_saga: integrity violation for system-versioned table "Hpol Q"."Q Tab": history table "Hpol Q"."Q Tab_history" has policy "User ""Q"" Policy" not managed by sql_saga
+  HINT: Review the policy definition, then run DROP POLICY "User ""Q"" Policy" ON "Hpol Q"."Q Tab_history"; if it is still needed, create it on "Hpol Q"."Q Tab"; then run SELECT sql_saga.sync_history_policies('"Hpol Q"."Q Tab"');
+quoted sync alone | sql_saga: policies on history table "Hpol Q.Q Tab_history" are managed by sql_saga
+  HINT: Drop policy "User "Q" Policy" on "Hpol Q.Q Tab_history" and create it on "Hpol Q.Q Tab"; sql_saga copies its SELECT and ALL policies to the history.
+"Hpol Q"."Q Tab_history":User "Q" Policy:true, hp:user_history_policy:(tenant = CURRENT_USER)
+quoted drop from history | ok
+quoted sync | ok
+quoted after repair | ok
+hp:user_history_policy:(tenant = CURRENT_USER)
