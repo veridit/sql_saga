@@ -14,7 +14,7 @@ jobs:
         run: |
           sudo apt-get install -y postgresql-common ca-certificates
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3
+          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3 acl
 
       - name: Start PostgreSQL 18
         run: |
@@ -75,6 +75,18 @@ jobs:
 
       - name: Run concurrent function-attribution isolation test
         run: make test-function-attribution-concurrency PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Run regular foreign-key concurrency checks
+        # This server was created by this job and is disposable. The harness verifies its exact identity.
+        env:
+          PGHOST: /var/run/postgresql
+          PGPORT: '5432'
+        run: |
+          export PGUSER="$(whoami)"
+          export REGULAR_FK_CONCURRENCY_DATA_DIRECTORY="$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atc 'SHOW data_directory')"
+          # The harness resolves this directory with pwd -P. Allow traversal only on this disposable job's cluster.
+          sudo setfacl -m "u:$(whoami):x" "$REGULAR_FK_CONCURRENCY_DATA_DIRECTORY"
+          make test-regular-fk-concurrency PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Show regression diffs on failure
         if: failure()

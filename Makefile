@@ -328,6 +328,12 @@ test-upgrade:
 test-function-attribution-concurrency:
 	devops/test_function_attribution_concurrency.sh
 
+# Regular FK concurrency needs an explicitly identified disposable server, not ambient libpq defaults.
+# Set PGHOST, PGPORT and REGULAR_FK_CONCURRENCY_DATA_DIRECTORY (the server's SHOW data_directory).
+.PHONY: test-regular-fk-concurrency
+test-regular-fk-concurrency:
+	PG_CONFIG="$(PG_CONFIG)" devops/test_regular_fk_concurrency.sh
+
 # Local private-cluster performance gate for metadata-first drop APIs against released v1.1.
 # This builds both revisions under a scratch directory and is intentionally not part of CI.
 .PHONY: test-drop-api-performance
