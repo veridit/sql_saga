@@ -197,6 +197,8 @@ $(DIRECT_UPDATE): .update_scripts_$(EXTVERSION).stamp
 .update_scripts_$(EXTVERSION).stamp: $(UPDATE_GENERATOR_INPUTS) $(if $(UPDATE_SCRIPTS_MISSING),update_scripts_force)
 	$(SQL_SAGA_PYTHON) devops/generate_update_scripts.py --src src --versions versions --devops devops --outdir . --extversion $(EXTVERSION)
 	touch '$@'
+	@# GNU make 4 compares sub-second mtimes: the scripts, written before the stamp, would look stale.
+	touch -r '$@' $(DIRECT_UPDATE)
 .PHONY: update_scripts_force
 update_scripts_force:
 endif
