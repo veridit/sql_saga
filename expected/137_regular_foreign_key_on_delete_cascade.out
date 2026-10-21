@@ -39,4 +39,22 @@ notes | 3,4,5
 delete legal unit 4 (tag 1, NO ACTION) | error 23503
 tags | 1
 legal units | 1,1,2,2,3,4
+--- part 6: interactions
+disable_temporal_triggers, delete 2 | ok
+notes (note 3 not cascaded) | 1,2,3,4,5
+session_replication_role replica, delete 2 | ok
+notes (note 3 not cascaded) | 1,2,3,4,5
+child column renamed, catalog | {unit_id} delete CASCADE
+child column renamed, delete 2 | ok
+notes | 1,2,4,5
+parent key column renamed, delete 2 | ok
+notes | 1,2,4,5
+drop_foreign_key | ok
+after drop_foreign_key, delete 2 | ok
+notes (nothing cascaded) | 1,2,3,4,5
+writer without rights on note, delete 2 | ok
+notes | 1,2,4,5
+chain, delete 2 | ok
+note_parts (30 cascaded natively from note 3) | 40
+note audit (child trigger fired) | 3
 check_integrity at the end | ok

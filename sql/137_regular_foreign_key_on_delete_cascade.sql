@@ -203,6 +203,58 @@ SELECT 'delete legal unit 4 (tag 1, NO ACTION) | ' || rfc.run($$DELETE FROM rfc.
 SELECT 'tags | ' || rfc.ids('rfc.tag');
 SELECT 'legal units | ' || rfc.ids('rfc.legal_unit');
 ROLLBACK TO SAVEPOINT p;
+
+\echo '--- part 6: interactions'
+-- disable_temporal_triggers (StatBus's bulk-load path) and the replica role skip the cascade, as they skip the check.
+CALL sql_saga.disable_temporal_triggers('rfc.legal_unit', 'rfc.note');
+SELECT 'disable_temporal_triggers, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+SELECT 'notes (note 3 not cascaded) | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+SET LOCAL session_replication_role = replica;
+SELECT 'session_replication_role replica, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+RESET session_replication_role;
+SELECT 'notes (note 3 not cascaded) | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+-- Rename following keeps the action and the cascade.
+ALTER TABLE rfc.note RENAME COLUMN legal_unit_id TO unit_id;
+SELECT 'child column renamed, catalog | ' || fk.column_names::text || ' delete ' || fk.delete_action
+FROM sql_saga.foreign_keys AS fk WHERE fk.foreign_key_name = 'note_legal_unit_id_fkey';
+SELECT 'child column renamed, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+SELECT 'notes | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+ALTER TABLE rfc.legal_unit RENAME COLUMN id TO unit_id;
+SELECT 'parent key column renamed, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE unit_id = 2$$);
+SELECT 'notes | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+-- drop_foreign_key removes the cascade with the rest of the foreign key.
+SELECT 'drop_foreign_key | ' || rfc.run($$SELECT sql_saga.drop_foreign_key('rfc.note', ARRAY['legal_unit_id'])$$);
+SELECT 'after drop_foreign_key, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+SELECT 'notes (nothing cascaded) | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+-- The cascade runs as the extension owner: the parent's writer needs no rights on the child, as with native CASCADE.
+CREATE ROLE rfc_parent_writer;
+GRANT USAGE ON SCHEMA rfc TO rfc_parent_writer;
+GRANT SELECT, DELETE ON rfc.legal_unit TO rfc_parent_writer;
+SET LOCAL ROLE rfc_parent_writer;
+SELECT 'writer without rights on note, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+RESET ROLE;
+SELECT 'notes | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+-- The child's own triggers fire for cascaded rows, and a native cascade from the child continues the chain.
+CREATE TABLE rfc.note_part (id int PRIMARY KEY, note_id int REFERENCES rfc.note ON DELETE CASCADE);
+CREATE TABLE rfc.note_audit (note_id int);
+CREATE FUNCTION rfc.note_audit_delete() RETURNS trigger LANGUAGE plpgsql AS $note_audit_delete$
+BEGIN
+    INSERT INTO rfc.note_audit VALUES (OLD.id);
+    RETURN OLD;
+END;
+$note_audit_delete$;
+CREATE TRIGGER note_audit AFTER DELETE ON rfc.note FOR EACH ROW EXECUTE FUNCTION rfc.note_audit_delete();
+INSERT INTO rfc.note_part VALUES (30, 3), (40, 4);
+SELECT 'chain, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+SELECT 'note_parts (30 cascaded natively from note 3) | ' || rfc.ids('rfc.note_part');
+SELECT 'note audit (child trigger fired) | ' || coalesce(string_agg(na.note_id::text, ','), 'none') FROM rfc.note_audit AS na;
+ROLLBACK TO SAVEPOINT p;
 SELECT 'check_integrity at the end | ' || rfc.integrity();
 
 ROLLBACK;
