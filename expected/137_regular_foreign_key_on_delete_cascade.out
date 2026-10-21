@@ -57,4 +57,14 @@ notes | 1,2,4,5
 chain, delete 2 | ok
 note_parts (30 cascaded natively from note 3) | 40
 note audit (child trigger fired) | 3
+--- part 7: StatBus shape, two nullable references with one set (MATCH SIMPLE), and deferred timing
+unit_notes -> legal_unit CASCADE | ok
+unit_notes -> establishment CASCADE | ok
+delete legal unit 2 | ok
+unit_notes (only legal unit 2's note 1 gone, establishment 2's note 2 kept) | 2,3,4
+delete establishment 2 | ok
+unit_notes (only establishment 2's note 2 gone) | 1,3,4
+deferred, right after DELETE of 3 | 1,2,3,4
+deferred, at the check point (note 3 gone) | 1,2,4
+deferred, key 3 re-inserted before the check point (note 3 kept) | 1,2,3,4
 check_integrity at the end | ok

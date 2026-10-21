@@ -255,6 +255,47 @@ SELECT 'chain, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2
 SELECT 'note_parts (30 cascaded natively from note 3) | ' || rfc.ids('rfc.note_part');
 SELECT 'note audit (child trigger fired) | ' || coalesce(string_agg(na.note_id::text, ','), 'none') FROM rfc.note_audit AS na;
 ROLLBACK TO SAVEPOINT p;
+
+\echo '--- part 7: StatBus shape, two nullable references with one set (MATCH SIMPLE), and deferred timing'
+-- unit_notes references either a legal unit or an establishment: two CASCADE foreign keys, one per column.
+CREATE TABLE rfc.establishment (id int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+\o /dev/null
+SELECT sql_saga.add_era('rfc.establishment', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('rfc.establishment', ARRAY['id'], key_type => 'primary', unique_key_name => 'establishment_id_valid');
+\o
+INSERT INTO rfc.establishment (id, valid_from, valid_until) VALUES (1, '2020-01-01', 'infinity'), (2, '2020-01-01', 'infinity');
+CREATE TABLE rfc.unit_notes (id int PRIMARY KEY, legal_unit_id int, establishment_id int,
+                             CHECK (num_nonnulls(legal_unit_id, establishment_id) = 1));
+SELECT 'unit_notes -> legal_unit CASCADE | '
+    || rfc.run($$SELECT sql_saga.add_foreign_key('rfc.unit_notes', ARRAY['legal_unit_id'], 'rfc.legal_unit', ARRAY['id'], delete_action => 'CASCADE')$$);
+SELECT 'unit_notes -> establishment CASCADE | '
+    || rfc.run($$SELECT sql_saga.add_foreign_key('rfc.unit_notes', ARRAY['establishment_id'], 'rfc.establishment', ARRAY['id'], delete_action => 'CASCADE')$$);
+-- Legal unit 2 and establishment 2 have the same id; only the matching column's rows may go.
+INSERT INTO rfc.unit_notes VALUES (1, 2, NULL), (2, NULL, 2), (3, 3, NULL), (4, NULL, 1);
+SAVEPOINT q;
+SELECT 'delete legal unit 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
+SELECT 'unit_notes (only legal unit 2''s note 1 gone, establishment 2''s note 2 kept) | ' || rfc.ids('rfc.unit_notes');
+ROLLBACK TO SAVEPOINT q;
+SELECT 'delete establishment 2 | ' || rfc.run($$DELETE FROM rfc.establishment WHERE id = 2$$);
+SELECT 'unit_notes (only establishment 2''s note 2 gone) | ' || rfc.ids('rfc.unit_notes');
+ROLLBACK TO SAVEPOINT q;
+-- The foreign key's triggers are DEFERRABLE INITIALLY IMMEDIATE: by default the cascade runs at the end of the
+-- DELETE statement. When the caller defers constraints, it runs at the check point, and a key re-inserted before
+-- then keeps its children (the same rule as a temporal_merge, which defers these triggers itself).
+SET CONSTRAINTS ALL DEFERRED;
+DELETE FROM rfc.legal_unit WHERE id = 3;
+SELECT 'deferred, right after DELETE of 3 | ' || rfc.ids('rfc.unit_notes');
+SET CONSTRAINTS ALL IMMEDIATE;
+SELECT 'deferred, at the check point (note 3 gone) | ' || rfc.ids('rfc.unit_notes');
+ROLLBACK TO SAVEPOINT q;
+SET CONSTRAINTS ALL DEFERRED;
+DELETE FROM rfc.legal_unit WHERE id = 3;
+INSERT INTO rfc.legal_unit (id, ident_type, ident, name, valid_from, valid_until) VALUES (3, 'tax', '300', 'again', '2024-01-01', 'infinity');
+SET CONSTRAINTS ALL IMMEDIATE;
+SELECT 'deferred, key 3 re-inserted before the check point (note 3 kept) | ' || rfc.ids('rfc.unit_notes');
+ROLLBACK TO SAVEPOINT q;
+ROLLBACK TO SAVEPOINT p;
 SELECT 'check_integrity at the end | ' || rfc.integrity();
 
 ROLLBACK;
