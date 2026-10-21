@@ -2906,6 +2906,43 @@ if [ "$BASELINE_VERSION" = 1.0 ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
+section "base table grant made before both managed views exist: the update keeps every role's reads" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# tmp/g4_upgrade_fragments/upgrade10.log (Owl, pre-fix RED): on 1.0 a SELECT grant on the base table made
+# before add_for_portion_of_view/add_current_view leaves derived ACL entries on the managed views, and 1.0's
+# health_checks refused the update's own REVOKE ("cannot revoke SELECT directly from ...__current_valid").
+# The core fixture grants after its views, so it never reached this. Maintained regression for that fix. No user-dependent object and no direct view GRANT here. Grants
+# to PUBLIC (as Owl's setup) and to a dedicated role.
+new_role "${PREFIX}_pregrant"
+PG_DB=${PREFIX}_pregrant
+v13_db "$PG_DB" "CREATE TABLE pg_base (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('pg_base', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('pg_base', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'pg_base_id_valid');
+INSERT INTO pg_base (id, name, valid_from, valid_until) VALUES (1, 'one', '2020-01-01', 'infinity');
+GRANT SELECT ON pg_base TO PUBLIC;
+GRANT SELECT ON pg_base TO ${PREFIX}_pregrant;
+SELECT sql_saga.add_for_portion_of_view('pg_base');
+SELECT sql_saga.add_current_view('pg_base');"
+PG_READS_SQL="SELECT (SELECT count(*) FROM pg_base) || '|' || (SELECT count(*) FROM pg_base__for_portion_of_valid) || '|' || (SELECT count(*) FROM pg_base__current_valid)"
+PG_BASE_ACL_SQL="SELECT coalesce(relacl::text, '') FROM pg_class WHERE oid = 'pg_base'::regclass"
+FAILURE_CLASS=prerequisite
+check "base grant before views: the $BASELINE_VERSION baseline has both managed views" "2" \
+    "$(q "$PG_DB" "SELECT count(*) FROM sql_saga.updatable_view WHERE table_name = 'pg_base'")"
+# Observed on the released builds (tmp/v13_upgrade_harness/logs/pregrant_probe*.log): 1.1 and 1.2 let the role
+# read the base and both views; released 1.0 refuses the for_portion_of view. After the update: base ACL
+# unchanged and the 1.3 derived view access (role reads base and both views).
+if [ "$BASELINE_VERSION" = 1.0 ]; then PG_READS_BEFORE="denied: permission denied for view pg_base__for_portion_of_valid"; else PG_READS_BEFORE="1|1|1"; fi
+check "base grant before views: on $BASELINE_VERSION the role's reads are the released behaviour" "$PG_READS_BEFORE" "$(as_role "$PG_DB" ${PREFIX}_pregrant "$PG_READS_SQL")"
+pg_base_acl_before=$(q "$PG_DB" "$PG_BASE_ACL_SQL")
+FAILURE_CLASS="expected RED"
+v13_restart "$PG_DB"
+check "base grant before views: the update succeeds" "" "$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$PG_DB" 2>&1 | grep -m1 '^ERROR')"
+check "base grant before views: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$PG_DB")"
+check "base grant before views: check_integrity passes after the update" "" "$(q "$PG_DB" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+check "base grant before views: after the update the role still reads the base and both views" "1|1|1" "$(as_role "$PG_DB" ${PREFIX}_pregrant "$PG_READS_SQL")"
+check "base grant before views: the base table ACL is unchanged" "$pg_base_acl_before" "$(q "$PG_DB" "$PG_BASE_ACL_SQL")"
+
+# ---------------------------------------------------------------------------------------------
 section "own-script stale view repair keeps the managed view's OID, grants, comment and user dependents" "expected RED"
 # ---------------------------------------------------------------------------------------------
 # Plan section 4 (c). The managed for_portion_of view lags an ADD COLUMN (1.1 and 1.2 do not follow it) and a
