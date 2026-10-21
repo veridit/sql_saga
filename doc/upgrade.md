@@ -67,7 +67,7 @@ The statements are a proposal. Confirm that the pairing is the one you intended 
 
 ### Managed views
 
-1.1 and 1.2 do not follow an `ADD COLUMN` on the base table of a managed `for_portion_of` or `current` view, so such a view can lag its base table: it shows a prefix of the base table's current columns. From 1.1 and 1.2, the update repairs a view that lags in this way, and only in this way, in place. It keeps its OID, its grants, its comment and the user views that depend on it, and it stays a non-member of the extension. This in-place repair is a required acceptance criterion of the 1.3 update; this document does not record its result. A view that differs from its base table in any other way is not covered by this promise. From 1.0, the embedded 1.0-to-1.1 migration rebuilds every managed view, as an update to 1.1 did. When a user view depends on such a view, the update refuses, atomically, and names the dependent view. Drop the dependent view, update, then recreate it.
+1.1 and 1.2 do not follow an `ADD COLUMN` on the base table of a managed `for_portion_of` or `current` view, so such a view can lag its base table: it shows a prefix of the base table's current columns. From 1.1 and 1.2, the update repairs a view that lags in this way, and only in this way, in place. It keeps its OID, its grants, its comment and the user views that depend on it, and it stays a non-member of the extension. A view that differs from its base table in any other way is not covered by this promise. From 1.0, the embedded 1.0-to-1.1 migration rebuilds every managed view, as an update to 1.1 did. When a user view depends on such a view, the update refuses, atomically, and names the dependent view. Drop the dependent view, update, then recreate it.
 
 ### Privileges
 
