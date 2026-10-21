@@ -27,7 +27,7 @@ FROZEN_SHA256 = {
 }
 
 # src files with routines changed since v1.2 (coordinator confirmed against `git diff --name-only v1.2 -- src`).
-ROUTINE_MANIFEST = ("0c", "0g", "0i", "0j", "1d", "1g", "1h", "1k", "2a", "2e", "2f", "2h", "2l", "2o", "3d", "3e")
+ROUTINE_MANIFEST = ("0c", "0g", "0i", "0j", "1d", "1g", "1h", "1k", "2a", "2e", "2f", "2h", "2l", "2o", "3c", "3d", "3e")
 # Changed, but handled by hand (schema fragment) or compiled, never emitted from src.
 MANUAL = ("0b", "sql_saga.c", "sql_saga.h", "covers_without_gaps.c", "covers_without_gaps.h")
 # ACL source files: only statements for routines new in 1.3 are emitted from them.

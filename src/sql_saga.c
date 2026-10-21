@@ -74,6 +74,10 @@
 #include "utils/hsearch.h"
 #include "utils/rangetypes.h"
 #include "utils/timestamp.h"
+#include "access/relation.h"
+#include "catalog/pg_namespace.h"
+#include "rewrite/rewriteHandler.h"
+#include "utils/ruleutils.h"
 
 #include "sql_saga.h"
 
@@ -2729,4 +2733,55 @@ write_history(PG_FUNCTION_ARGS)
 
 
 void _PG_init(void) {
+}
+
+/* ------------------------------------------------------------------------------------------------------------
+ * Current-view clock binding.
+ *
+ * A current view is "SELECT * FROM base WHERE <range> @> <clock>". PostgreSQL resolved <clock> (CURRENT_DATE,
+ * now() or a custom function given to add_current_view) when the view was created and keeps that exact binding
+ * in the view's rule. sql_saga.__internal_current_view_clock returns that bound expression as SQL text,
+ * deparsed by PostgreSQL. It is called with search_path = pg_catalog, pg_temp, so every function, operator and
+ * cast outside pg_catalog is printed schema-qualified: re-parsing the text under that same path binds the same
+ * objects. Used by view rebuilds (src/2o) and by current_view_trigger (src/3c), never re-resolving the
+ * registered name text on any other search_path. No OID is stored anywhere.
+ * ------------------------------------------------------------------------------------------------------------ */
+PG_FUNCTION_INFO_V1(current_view_clock);
+
+Datum
+current_view_clock(PG_FUNCTION_ARGS)
+{
+	Oid			view_oid = PG_GETARG_OID(0);
+	Relation	rel;
+	Query	   *query;
+	Node	   *quals;
+	OpExpr	   *op;
+	char	   *op_name;
+	char	   *clock;
+
+	rel = try_relation_open(view_oid, AccessShareLock);
+	if (rel == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("sql_saga: current view with OID %u does not exist", view_oid)));
+	if (rel->rd_rel->relkind != RELKIND_VIEW)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("sql_saga: \"%s\" is not a view", RelationGetRelationName(rel))));
+
+	query = get_view_query(rel);
+	quals = query->jointree != NULL ? query->jointree->quals : NULL;
+	op = (quals != NULL && IsA(quals, OpExpr)) ? (OpExpr *) quals : NULL;
+	op_name = op != NULL ? get_opname(op->opno) : NULL;
+	if (op == NULL || op_name == NULL || strcmp(op_name, "@>") != 0
+		|| get_func_namespace(op->opfuncid) != PG_CATALOG_NAMESPACE
+		|| list_length(op->args) != 2 || !IsA(linitial(op->args), Var))
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("sql_saga: view \"%s\" is not a current view of the form <range> @> <clock>",
+						RelationGetRelationName(rel))));
+
+	clock = deparse_expression((Node *) lsecond(op->args), NIL, false, false);
+	relation_close(rel, AccessShareLock);
+	PG_RETURN_TEXT_P(cstring_to_text(clock));
 }

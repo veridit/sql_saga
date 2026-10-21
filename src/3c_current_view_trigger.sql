@@ -1,3 +1,30 @@
+/*
+ * "Now" for a current view, by the clock the view is bound to: the right-hand side of its "<range> @> <clock>"
+ * filter, read from its rule (sql_saga.__internal_current_view_clock) and evaluated here, on a fixed search_path,
+ * so that exactly the function the view calls is called, never a same-named object earlier on the caller's path.
+ * SECURITY INVOKER: the clock runs with the privileges of whoever writes through the view, as the view's own
+ * filter does. EXECUTE for PUBLIC (explicit, also against restrictive default privileges): current_view_trigger
+ * calls it as that invoker. It evaluates only an expression PostgreSQL already parsed into the view's rule.
+ */
+CREATE FUNCTION sql_saga.__internal_current_view_now(view_oid oid, range_subtype regtype)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+STRICT
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $__internal_current_view_now$
+DECLARE
+    v_now text;
+BEGIN
+    EXECUTE pg_catalog.format('SELECT (%s)::%s::text', sql_saga.__internal_current_view_clock(view_oid), range_subtype)
+    INTO v_now;
+    RETURN v_now;
+END;
+$__internal_current_view_now$;
+
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_current_view_now(oid, regtype) TO PUBLIC;
+
 CREATE FUNCTION sql_saga.current_view_trigger()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -45,8 +72,11 @@ BEGIN
     identifier_columns := array_remove(identifier_columns, info.valid_until_column_name);
     identifier_columns := array_remove(identifier_columns, info.valid_to_column_name);
 
-    -- The function to get the current time is stored in the metadata for testability
-    now_function := info.current_func;
+    -- "Now" by the clock the view is bound to (read from its rule and evaluated on a fixed search_path), as a
+    -- typed literal. Not info.current_func, the text as registered: re-resolving that on the caller's
+    -- search_path could call a different, same-named function (or a shadowing now()).
+    now_function := format('%L::%s', sql_saga.__internal_current_view_now(TG_RELID, info.range_subtype),
+                           info.range_subtype /* %s */);
 
     IF (TG_OP = 'INSERT') THEN
         -- An INSERT creates a new history, starting now.

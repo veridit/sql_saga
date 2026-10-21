@@ -69,6 +69,8 @@ CREATE TABLE sql_saga.__internal_updatable_view_pending (
     trigger_name name NOT NULL,
     current_func text,
     ephemeral_columns name[],
+    -- A current view's bound clock (sql_saga.__internal_current_view_clock), read from the view's rule before the drop.
+    view_clock text,
     -- Facts of the dropped view, read from the catalogs by __internal_updatable_view_record_and_drop.
     view_acl aclitem[],
     view_comment text,
@@ -88,8 +90,10 @@ COMMENT ON TABLE sql_saga.__internal_updatable_view_pending IS
 /*
  * The CREATE [OR REPLACE] VIEW statement of add_for_portion_of_view / add_current_view, with the given
  * view options (reloptions; NULL: the options those functions use). security_invoker = on is always kept.
+ * A current view filters by clock: the bound clock of the view being rebuilt (sql_saga.__internal_current_view_clock),
+ * never uv.current_func, the text as registered, which names the function only under add_current_view's search_path.
  */
-CREATE FUNCTION sql_saga.__internal_updatable_view_create_sql(uv sql_saga.updatable_view, or_replace boolean, reloptions text[])
+CREATE FUNCTION sql_saga.__internal_updatable_view_create_sql(uv sql_saga.updatable_view, or_replace boolean, reloptions text[], clock text)
 RETURNS text
 LANGUAGE plpgsql
 STABLE
@@ -119,6 +123,9 @@ BEGIN
     FROM pg_catalog.unnest(v_options) WITH ORDINALITY AS o(opt, n);
 
     -- The statements of add_for_portion_of_view and add_current_view.
+    IF uv.view_type = 'current' AND clock IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: cannot rebuild current view "%.%" without its bound clock', uv.view_schema, uv.view_name;
+    END IF;
     IF uv.view_type = 'for_portion_of' THEN
         RETURN pg_catalog.format('CREATE %4$sVIEW %1$I.%2$I WITH (%5$s) AS TABLE %1$I.%3$I',
             uv.view_schema /* %1$I */, uv.view_name /* %2$I */, uv.table_name /* %3$I */,
@@ -127,7 +134,7 @@ BEGIN
 
     RETURN pg_catalog.format('CREATE %7$sVIEW %1$I.%2$I WITH (%8$s) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
         uv.view_schema /* %1$I */, uv.view_name /* %2$I */, uv.table_name /* %3$I */,
-        v_era.range_column_name /* %4$I */, uv.current_func /* %5$s */, v_era.range_subtype /* %6$s */,
+        v_era.range_column_name /* %4$I */, clock /* %5$s */, v_era.range_subtype /* %6$s */,
         CASE WHEN or_replace THEN 'OR REPLACE ' ELSE '' END /* %7$s */, v_with /* %8$s */);
 END;
 $__internal_updatable_view_create_sql$;
@@ -263,10 +270,11 @@ BEGIN
 
     INSERT INTO sql_saga.__internal_updatable_view_pending
         (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func,
-         ephemeral_columns, view_acl, view_comment, view_reloptions, view_columns, view_column_types, view_extension, view_delete_mode,
+         ephemeral_columns, view_clock, view_acl, view_comment, view_reloptions, view_columns, view_column_types, view_extension, view_delete_mode,
          column_facts, trigger_facts)
     SELECT uv.view_schema, uv.view_name, uv.view_type, uv.table_schema, uv.table_name, uv.era_name,
            uv.trigger_name, uv.current_func, uv.ephemeral_columns,
+           CASE WHEN uv.view_type = 'current' THEN sql_saga.__internal_current_view_clock(v_view_oid) END,
            c.relacl, pg_catalog.obj_description(v_view_oid, 'pg_class'), c.reloptions,
            ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute AS a
                  WHERE a.attrelid = v_view_oid AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum),
@@ -348,7 +356,7 @@ BEGIN
                  pending.era_name, pending.trigger_name, pending.current_func,
                  sql_saga.__internal_updatable_view_generated_columns(v_table_oid), pending.ephemeral_columns)::sql_saga.updatable_view;
 
-    EXECUTE sql_saga.__internal_updatable_view_create_sql(v_row, false, pending.view_reloptions);
+    EXECUTE sql_saga.__internal_updatable_view_create_sql(v_row, false, pending.view_reloptions, pending.view_clock);
     v_view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', v_row.view_schema, v_row.view_name));
 
     /*
@@ -932,7 +940,8 @@ BEGIN
                 -- rebuilds the view completely or refuses with its own message, so nothing is silently lost.
                 BEGIN
                     EXECUTE sql_saga.__internal_updatable_view_create_sql(v_row, true,
-                        (SELECT c.reloptions FROM pg_catalog.pg_class AS c WHERE c.oid = v_view.view_oid));
+                        (SELECT c.reloptions FROM pg_catalog.pg_class AS c WHERE c.oid = v_view.view_oid),
+                        CASE WHEN v_row.view_type = 'current' THEN sql_saga.__internal_current_view_clock(v_view.view_oid) END);
                     v_replaced := true;
                 EXCEPTION WHEN object_not_in_prerequisite_state THEN
                     /*
@@ -982,7 +991,7 @@ BEGIN
 END;
 $__internal_updatable_view_follow_shape$;
 
-REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_create_sql(sql_saga.updatable_view, boolean, text[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_create_sql(sql_saga.updatable_view, boolean, text[], text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_generated_columns(oid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_foreign_dependent(oid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_updatable_view_extension(oid) FROM PUBLIC;

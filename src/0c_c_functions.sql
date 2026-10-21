@@ -83,3 +83,18 @@ COMMENT ON FUNCTION sql_saga.generated_always_as_row_start_end() IS
 
 COMMENT ON FUNCTION sql_saga.write_history() IS
 'Trigger function to write the old row version to the history table for system-versioned tables.';
+
+/*
+ * The clock a current view is bound to (the right-hand side of its "<range> @> <clock>" filter), as SQL text
+ * deparsed by PostgreSQL from the view's rule. The fixed search_path makes every non-pg_catalog function,
+ * operator and cast print schema-qualified, so the text re-binds exactly the objects the view is bound to when
+ * parsed under the same path. SECURITY INVOKER: it reads only the rule of a view, which the caller can already
+ * see through pg_get_viewdef. EXECUTE is granted to PUBLIC explicitly (also against default privileges that
+ * revoke it) because current_view_trigger runs as the invoker of the DML on the view, whoever that is.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_current_view_clock(view_oid oid)
+RETURNS text
+AS 'sql_saga', 'current_view_clock'
+LANGUAGE c STRICT STABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp;
+
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_current_view_clock(oid) TO PUBLIC;
