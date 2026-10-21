@@ -18,7 +18,7 @@ Each released version has one generated, direct update script to 1.3. PostgreSQL
 - **1.1 to 1.3:** `sql_saga--1.1--1.3.sql`
 - **1.2 to 1.3:** `sql_saga--1.2--1.3.sql`
 
-The build generates the three scripts (`devops/generate_update_scripts.py`, Python 3, standard library only). Their inputs are the released artifacts `sql_saga--1.0--1.2.sql`, `sql_saga--1.1--1.2.sql` and `sql_saga--1.2.sql`, each authenticated by SHA-256, plus the routines changed since 1.2 and the 1.3 schema and repair steps. For 1.0 and 1.1, the frozen update to 1.2 is embedded with exactly these changes, and the build refuses any other difference: its native-library guard, its update hint and its final integrity gate are retargeted to 1.3, and, in the embedded 1.0 copy only, the statements that grant `EXECUTE` to `PUBLIC` on routines that already exist on 1.0 are left out (the two `GRANT`s on `for_portion_of_trigger()` and `current_view_trigger()` and the grant block for the six `temporal_merge` routines); the grants on helpers new in 1.1 remain. The released files in `versions/` are not changed. Every script records its source version first and ends with exactly one final integrity gate. The build fails on anything it does not recognize.
+The build generates the three scripts (`devops/generate_update_scripts.py`, Python 3, standard library only). Their inputs are the released artifacts `sql_saga--1.0--1.2.sql`, `sql_saga--1.1--1.2.sql` and `sql_saga--1.2.sql`, each authenticated by SHA-256, plus the routines changed since 1.2 and the 1.3 schema and repair steps. For 1.0 and 1.1, the frozen update to 1.2 is embedded with exactly these changes, and the build refuses any other difference: its native-library guard, its update hint and its final integrity gate are retargeted to 1.3, and, in the embedded 1.0 copy only, one privilege check is inserted before the embedded migration's first `GRANT` (see [Custom privileges on 1.0 routines](#custom-privileges-on-10-routines)). The released files in `versions/` are not changed. Every script records its source version first and ends with exactly one final integrity gate. The build fails on anything it does not recognize.
 
 Do not run an older update script (to 1.1 or 1.2) while the 1.3 native library is loaded: their native-library guards require the library of their own version. Update directly to 1.3.
 
@@ -71,11 +71,123 @@ The statements are a proposal. Confirm that the pairing is the one you intended 
 
 ### Privileges
 
-- Routines whose signature is unchanged keep their privileges, including site-specific `GRANT` and `REVOKE`: the update redefines them with `CREATE OR REPLACE`, which keeps the existing privileges, and does not replay grants. On the 1.0 path this holds because the generated script leaves out the frozen 1.0-to-1.1 migration's grants on routines that already exist (see [Supported paths](#supported-paths)); a site that revoked `EXECUTE` from `PUBLIC` on, for example, `for_portion_of_trigger()` keeps that revocation.
+- From 1.1 and 1.2, routines whose signature is unchanged keep their privileges, including site-specific `GRANT` and `REVOKE`: the update redefines them with `CREATE OR REPLACE`, which keeps the existing privileges, and does not replay grants. From 1.0, see the next section.
 - Routines new in 1.3 get explicit privileges, the same as in a fresh 1.3 installation. The new private helpers are revoked from `PUBLIC`, with three deliberate exceptions that are granted `EXECUTE` to `PUBLIC` explicitly, also where default privileges revoke it:
   - `sql_saga.regular_fk_check_c()`, the trigger function of regular foreign keys. Creating the trigger, as `pg_restore` does when it restores as the table owner, needs `EXECUTE`. The function only enforces the foreign key that its trigger arguments name.
   - `sql_saga.__internal_current_view_clock(oid)` and `sql_saga.__internal_current_view_now(oid, regtype)`, which give a `current` view's trigger the clock that view is bound to. The trigger runs as whoever writes through the view, so they are called as that writer. They are `SECURITY INVOKER` with a fixed `search_path`, and they only read and evaluate the clock expression PostgreSQL already parsed into the view's rule.
 - A routine whose signature changes is replaced, and the replacement cannot carry changed privileges over (see the next section).
+
+### Custom privileges on 1.0 routines
+
+The 1.0-to-1.1 migration embedded in the 1.0 script grants `EXECUTE` to `PUBLIC`, inside the extension script, on eight routines that already exist in 1.0:
+
+- `sql_saga.for_portion_of_trigger()`
+- `sql_saga.current_view_trigger()`
+- the six `temporal_merge` routines: `sql_saga.temporal_merge(...)`, `sql_saga.temporal_merge_plan(...)`, `sql_saga.temporal_merge_plan_native(...)`, `sql_saga.temporal_merge_execute(...)`, `sql_saga.temporal_merge_drop_temp_tables()` and `sql_saga.temporal_merge_executor_introspect(...)`, with their released 1.0 argument lists
+
+A 1.0 installation records no initial privileges for these routines. A `GRANT` inside the extension script records the privileges the routine then has as the extension's initial privileges, and `pg_dump` does not dump initial privileges. So any site-specific privilege present at that moment would be silently lost on the next dump and restore. That covers a `REVOKE` from `PUBLIC`, a named role, a grant option, and a database whose default privileges revoke `EXECUTE` from `PUBLIC`. The update therefore checks two things before that first `GRANT`:
+- that each of the eight routines has exactly the standard privileges: `EXECUTE` for its owner and for `PUBLIC`, both granted by the owner, without grant option, and nothing else;
+- that no other routine in schema `sql_saga` would be reached by the migration's grant by name (see [Other routines with these names](#other-routines-with-these-names) below).
+
+A 1.0 installation with the standard privileges and no such routine updates without any extra step.
+
+Otherwise the update refuses, and the refusal rolls back the whole update, leaving the database exactly as before:
+
+```text
+ERROR:  sql_saga: routine <routine> has privileges <privileges> that differ from the standard sql_saga privileges (EXECUTE for its owner and PUBLIC); the update from 1.0 cannot carry them over
+HINT:  The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '1.3', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples.
+```
+
+The message names the first routine that differs. Check all eight before you retry. Then, as the routines' owner, in one explicit transaction:
+
+1. Note the exact current privileges of each routine that differs.
+2. Change `EXECUTE` so that only the owner and `PUBLIC` hold it, without grant option.
+3. Run `ALTER EXTENSION sql_saga UPDATE TO '1.3'`.
+4. Reapply the noted privileges. They are then ordinary privileges, which `pg_dump` repeats.
+
+This privilege guard does not revoke or normalize site privileges automatically and does not handle grant chains. The manual steps below do not use `CASCADE`. Run the steps as explicit statements in one transaction, never in autocommit mode: if the update then fails, the changed privileges would stay committed. For example, if `EXECUTE` was revoked from `PUBLIC` on `for_portion_of_trigger()` and the other seven routines have the standard privileges:
+
+```sql
+BEGIN;
+GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
+ALTER EXTENSION sql_saga UPDATE TO '1.3';
+REVOKE EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() FROM PUBLIC;
+COMMIT;
+```
+
+The same applies to a database whose default privileges revoked `EXECUTE` from `PUBLIC` before 1.0 was installed. The eight routines are then owner-only, and the check refuses them in the same way. After the update, decide whether `PUBLIC` should keep `EXECUTE` on them, and revoke it again as above if it should not.
+
+If a named role holds `EXECUTE` with grant option on one of the routines, and has not granted it further, revoke the grant option and the privilege before the update and grant them again afterwards, in the same transaction. For example, for a role `site_role` on `for_portion_of_trigger()`, the other seven routines having the standard privileges:
+
+```sql
+BEGIN;
+REVOKE GRANT OPTION FOR EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() FROM site_role;
+REVOKE EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() FROM site_role;
+ALTER EXTENSION sql_saga UPDATE TO '1.3';
+GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO site_role WITH GRANT OPTION;
+COMMIT;
+```
+
+If a role has granted its privilege further, these statements do not cover it. Review those grants yourself, as the owner, before you change anything.
+
+The same check applies to a database restored at version 1.0 and then updated (see [Restore at the dump's own extension version](#restore-at-the-dumps-own-extension-version)). It looks at the privileges the eight routines have in the restored database. If they are not the standard ones, `ALTER EXTENSION sql_saga UPDATE` refuses in the same way, and the owner normalizes, updates and reapplies as above. A refusal inside a single transaction rolls back everything done in that transaction.
+
+#### The 1.0 health-check event trigger
+
+On released 1.0, the event trigger `sql_saga_health_checks` runs on every `GRANT` and checks the history tables of system-versioned tables. Where a history table has explicit privileges of its own, it refuses a correct `GRANT` on one of the eight routines (for example `cannot grant DELETE to "<history table>"`). Then the privileges can only be changed by a superuser, or another role allowed to run `ALTER EVENT TRIGGER`, in one explicit transaction:
+
+1. Record the trigger's current firing mode.
+2. Disable only `sql_saga_health_checks`.
+3. Give the eight routines the standard privileges, with explicit `GRANT` statements.
+4. Restore exactly the recorded firing mode.
+5. Run the update.
+6. Reapply the site privileges.
+7. Commit.
+
+For example, if the eight routines are owner-only:
+
+```sql
+BEGIN;
+SELECT set_config('site.health_checks_mode',
+    (SELECT evtenabled::text FROM pg_catalog.pg_event_trigger WHERE evtname = 'sql_saga_health_checks'), true);
+ALTER EVENT TRIGGER sql_saga_health_checks DISABLE;
+GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
+-- ... the same GRANT for each of the other seven routines that differ, with its full signature ...
+DO $restore$ BEGIN
+    EXECUTE format('ALTER EVENT TRIGGER sql_saga_health_checks %s', CASE current_setting('site.health_checks_mode')
+        WHEN 'O' THEN 'ENABLE' WHEN 'A' THEN 'ENABLE ALWAYS' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'D' THEN 'DISABLE' END);
+END $restore$;
+ALTER EXTENSION sql_saga UPDATE TO '1.3';
+-- reapply the site privileges here, for example REVOKE EXECUTE ... FROM PUBLIC
+COMMIT;
+```
+
+Disable no other trigger, and do not change `session_replication_role`. If anything fails before `COMMIT`, the whole transaction rolls back, including the firing mode and the privileges.
+
+If the trigger was disabled (mode `D`) before you started, the route leaves it disabled. The final integrity gate of the update then refuses, and the transaction rolls back, privileges and firing mode included. Whether to enable the trigger is a separate decision for you; the update never enables it.
+
+The update's normal migration of derived grants on history tables also applies on this path. It is not a side effect of these steps.
+
+#### Other routines with these names
+
+The embedded migration grants by name to every routine in schema `sql_saga` called `temporal_merge`, `temporal_merge_plan`, `temporal_merge_plan_native`, `temporal_merge_execute`, `temporal_merge_drop_temp_tables` or `temporal_merge_executor_introspect`. If you created a routine of your own with one of those names in schema `sql_saga`, for example an extra overload, it would get `EXECUTE` for `PUBLIC` recorded as its initial privileges. The update refuses instead:
+
+```text
+ERROR:  sql_saga: routine <routine> is not part of sql_saga 1.0, but the update from 1.0 would grant EXECUTE on it to PUBLIC
+HINT:  The update grants EXECUTE to PUBLIC on every routine in schema sql_saga with this name and records it as the extension's initial privileges. If you choose to, rename or move this routine, run ALTER EXTENSION sql_saga UPDATE TO '1.3', then rename or move it back. doc/upgrade.md has examples.
+```
+
+As the routine's owner, in one transaction, rename the routine or move it to another schema, update, then rename or move it back. Its own privileges are not changed. For example, for an overload `sql_saga.temporal_merge(text)`:
+
+```sql
+BEGIN;
+ALTER FUNCTION sql_saga.temporal_merge(text) RENAME TO temporal_merge_site_tmp;
+ALTER EXTENSION sql_saga UPDATE TO '1.3';
+ALTER FUNCTION sql_saga.temporal_merge_site_tmp(text) RENAME TO temporal_merge;
+COMMIT;
+```
+
+From 1.1 and 1.2 none of this applies. The eight routines already carry their 1.1 initial privileges, and the update leaves privileges as they are.
 
 ### Changed privileges on `add_system_versioning`
 
