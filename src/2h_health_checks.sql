@@ -872,6 +872,7 @@ DECLARE
     expected_return_type oid;
     missing_column name;
     mispairing record;
+    user_policy record;
 BEGIN
     /*
      * sql_saga's event triggers come first: a disabled, detached or dropped one (rename_following above all) lets
@@ -1308,6 +1309,36 @@ BEGIN
            OR NOT r.gated_view_attributable THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with rebuild_system_versioning_views',
                 sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        /*
+         * A policy of the user's own on the history table: sync_history_policies refuses to remove it, so the
+         * generic repair below cannot work. Name it and give the manual repair. Never touch the user's policy.
+         * The first one in name order (COLLATE "C") is reported.
+         */
+        IF history_oid IS NOT NULL THEN
+            SELECT p.polname, bn.nspname AS base_schema, b.relname AS base_name,
+                   hn.nspname AS history_schema, h.relname AS history_name
+              INTO user_policy
+              FROM pg_catalog.pg_policy AS p
+              JOIN pg_catalog.pg_class AS h ON h.oid = p.polrelid
+              JOIN pg_catalog.pg_namespace AS hn ON hn.oid = h.relnamespace
+              JOIN pg_catalog.pg_class AS b ON b.oid = base_oid
+              JOIN pg_catalog.pg_namespace AS bn ON bn.oid = b.relnamespace
+             WHERE p.polrelid = history_oid
+               AND NOT sql_saga.__internal_is_managed_history_policy(p.polname)
+             ORDER BY p.polname COLLATE "C"
+             LIMIT 1;
+            IF FOUND THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table %: history table % has policy % not managed by sql_saga',
+                    pg_catalog.format('%I.%I', user_policy.base_schema, user_policy.base_name),
+                    pg_catalog.format('%I.%I', user_policy.history_schema, user_policy.history_name),
+                    pg_catalog.quote_ident(user_policy.polname)
+                USING HINT = pg_catalog.format(
+                    'Review the policy definition, then run DROP POLICY %1$I ON %2$I.%3$I; if it is still needed, create it on %4$I.%5$I; then run SELECT sql_saga.sync_history_policies(%6$L);',
+                    user_policy.polname, user_policy.history_schema, user_policy.history_name,
+                    user_policy.base_schema, user_policy.base_name,
+                    pg_catalog.format('%I.%I', user_policy.base_schema, user_policy.base_name));
+            END IF;
         END IF;
         BEGIN
             IF history_oid IS NULL OR NOT sql_saga.__internal_history_policies_synchronized(base_oid, history_oid) THEN
