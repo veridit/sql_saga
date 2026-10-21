@@ -587,8 +587,11 @@ _GUARD_LINE_12 = (
 )
 _HINT_12 = "                      'ALTER EXTENSION sql_saga UPDATE TO ''1.2'';',"
 
-# The 1.0--1.1 part of frozen 1.0--1.2 re-grants EXECUTE TO PUBLIC on routines that already exist in 1.0.
-# CREATE OR REPLACE keeps their ACL, so replaying these grants would undo a custom REVOKE ... FROM PUBLIC.
+# The 1.0--1.1 part of frozen 1.0--1.2 grants EXECUTE TO PUBLIC on routines that already exist in 1.0. Released 1.0
+# records no pg_init_privs for them, so that in-extension GRANT records the then-current ACL as their initial
+# privileges, and pg_dump stops dumping any site grant. The 1.0 copy keeps the three historical grants verbatim and
+# refuses, immediately before the first of them, unless the eight routines carry exactly the canonical ACL and the
+# name-based grant loop reaches no other routine. The refusal rolls the whole ALTER EXTENSION back.
 _ACL_FPO_10 = "GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;"
 _ACL_CV_10 = "GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;"
 _ACL_TM_10 = "\n".join([
@@ -610,9 +613,65 @@ _ACL_TM_10 = "\n".join([
     "END;",
     "$grant_temporal_merge$;",
 ])
-_ACL_FPO_10_KEPT = "-- sql_saga 1.3: existing ACL of sql_saga.for_portion_of_trigger() kept (historical PUBLIC grant omitted)"
-_ACL_CV_10_KEPT = "-- sql_saga 1.3: existing ACL of sql_saga.current_view_trigger() kept (historical PUBLIC grant omitted)"
-_ACL_TM_10_KEPT = "-- sql_saga 1.3: existing ACLs of the temporal_merge routines kept (historical PUBLIC grant loop omitted)"
+_ACL_GUARD_10 = """DO $acl_guard_1_0$
+DECLARE
+    r record;
+BEGIN
+    -- The historical DO block that follows selects routines by name. Refuse any routine it would reach beyond the
+    -- six released ones: it would get PUBLIC EXECUTE recorded as its initial privileges.
+    FOR r IN
+        SELECT p.oid::pg_catalog.regprocedure AS routine
+        FROM pg_catalog.pg_proc AS p
+        WHERE p.pronamespace = 'sql_saga'::pg_catalog.regnamespace
+          AND p.proname IN ('temporal_merge', 'temporal_merge_plan', 'temporal_merge_plan_native',
+                            'temporal_merge_execute', 'temporal_merge_drop_temp_tables',
+                            'temporal_merge_executor_introspect')
+          AND p.oid <> ALL (ARRAY[
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_drop_temp_tables()'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)')]::pg_catalog.oid[])
+        ORDER BY 1
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'sql_saga: routine % is not part of sql_saga 1.0, but the update from 1.0 would grant EXECUTE on it to PUBLIC', r.routine
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'The update grants EXECUTE to PUBLIC on every routine in schema sql_saga with this name and records it as the extension''s initial privileges. If you choose to, rename or move this routine, run ALTER EXTENSION sql_saga UPDATE TO ''1.3'', then rename or move it back. doc/upgrade.md has examples.';
+    END LOOP;
+    FOR r IN
+        SELECT s.routine, p.proacl
+        FROM pg_catalog.unnest(ARRAY[
+            'sql_saga.for_portion_of_trigger()',
+            'sql_saga.current_view_trigger()',
+            'sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)',
+            'sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)',
+            'sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)',
+            'sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)',
+            'sql_saga.temporal_merge_drop_temp_tables()',
+            'sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)'
+        ]) WITH ORDINALITY AS s(routine, ord)
+        LEFT JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(s.routine)
+        WHERE p.oid IS NULL
+           OR (SELECT pg_catalog.array_agg(ROW(a.grantor = p.proowner, a.grantee, a.privilege_type, a.is_grantable)::text
+                                           ORDER BY a.grantee, a.privilege_type)
+               FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a)
+              IS DISTINCT FROM
+              (SELECT pg_catalog.array_agg(ROW(true, g, 'EXECUTE', false)::text ORDER BY g)
+               FROM pg_catalog.unnest(ARRAY[0::pg_catalog.oid, p.proowner]) AS g)
+        ORDER BY s.ord
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'sql_saga: routine % has privileges % that differ from the standard sql_saga privileges (EXECUTE for its owner and PUBLIC); the update from 1.0 cannot carry them over',
+            r.routine, COALESCE(r.proacl::text, '<missing>')
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'The update would record the current privileges as the extension''s initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO ''1.3'', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples.';
+    END LOOP;
+END;
+$acl_guard_1_0$;"""
+# Historical anchors kept verbatim on the 1.0 path; each must occur exactly once (count-checked, not replaced).
+_VERBATIM = {"1.0--1.2": [_ACL_CV_10, _ACL_TM_10], "1.1--1.2": []}
 
 
 def _retarget(s):
@@ -626,7 +685,7 @@ _ANCHORS = {
                  (GATE, GATE_REPLACEMENT)],
     "1.0--1.2": [(_GUARD_LINE_12, _retarget(_GUARD_LINE_12)), (_GUARD_BLOCK_12, _retarget(_GUARD_BLOCK_12)),
                  (_HINT_12, _retarget(_HINT_12)), (GATE, GATE_REPLACEMENT),
-                 (_ACL_FPO_10, _ACL_FPO_10_KEPT), (_ACL_CV_10, _ACL_CV_10_KEPT), (_ACL_TM_10, _ACL_TM_10_KEPT)],
+                 (_ACL_FPO_10, _ACL_GUARD_10 + "\n" + _ACL_FPO_10)],
 }
 _HEADERS = {"1.1--1.2": header("1.2"), "1.0--1.2": header("1.1")}
 # Lines that mention 1.2 and stay unchanged (comments, message text, names, lock text).
@@ -667,6 +726,10 @@ def transform_historical(text, source):
         if _count_lines(body, new) != 0:
             raise GeneratorError("replacement text already present in %s: %s" % (source, new.split("\n")[0]))
         anchor_lines.update(old.split("\n"))
+    for verbatim in _VERBATIM[source]:
+        c = _count_lines(body, verbatim)
+        if c != 1:
+            raise GeneratorError("expected exactly one verbatim anchor in %s, found %d: %s" % (source, c, verbatim.split("\n")[0]))
     for no, line in enumerate(body.split("\n"), 2):
         if _HAS_12.search(line) and line not in _COSMETIC_12 and line not in anchor_lines:
             raise GeneratorError("unclassified 1.2 occurrence in %s line %d: %s" % (source, no, line[:120]))
