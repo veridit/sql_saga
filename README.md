@@ -209,6 +209,38 @@ table, so the order in which the tables' data is loaded does not matter. Creatin
 validate the rows already restored, so the archive must be complete and come from a database whose regular
 foreign keys held (they are validated when added and when a database is updated to 1.3).
 
+#### ON DELETE CASCADE for regular foreign keys
+
+A regular foreign key accepts `delete_action => 'CASCADE'` (since 1.4). Use it for a non-temporal child row
+that has no meaning without its temporal parent, such as a note, a tag or an external identifier:
+
+```sql
+SELECT sql_saga.add_foreign_key('unit_notes', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id'],
+                                delete_action => 'CASCADE');
+```
+
+A regular reference only says that the key exists in the parent at some time. So the child rows go when the
+**last** parent row that has their key is deleted. Deleting one timeline row while another row of the same key
+remains keeps the children, and so does `temporal_merge` reshaping a timeline, since the key exists again by the
+end. This is the same rule `NO ACTION` uses to decide whether a delete would leave a child without a parent.
+
+The cascade behaves like PostgreSQL's own `ON DELETE CASCADE`:
+- It runs as the extension owner, so whoever deletes the parent needs no rights on the child.
+- The child's own triggers fire, including its own foreign keys and system versioning.
+- `disable_temporal_triggers` and `session_replication_role = replica` skip it, as they skip the `NO ACTION` check.
+- In `REPEATABLE READ`, a delete that would have to remove a child row committed after its snapshot fails with a
+  serialization failure (40001), so it never leaves an orphan.
+
+Bulk deletes cost about as much as `NO ACTION` when the key survives. When the key goes, they cost about four
+times a native cascade between plain tables: 214.8 ms against 51.8 ms for 10,000 keys with 2 children each.
+
+A temporal-to-temporal foreign key does not accept `CASCADE`: PostgreSQL does not support referential actions on
+foreign keys that use `PERIOD`. `SET NULL`, `SET DEFAULT` and `ON UPDATE` actions other than `NO ACTION` and
+`RESTRICT` are refused for both kinds.
+
+`TRUNCATE` of a parent table does not fire row triggers, so it neither checks nor cascades regular foreign keys.
+Use `DELETE`, or `TRUNCATE` the children too.
+
 #### Restoring over an existing database (`--clean`)
 
 `pg_restore --clean` (with or without `--if-exists`, serially or with `--single-transaction`) restores

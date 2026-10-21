@@ -4,6 +4,62 @@ This document records significant architectural decisions made during the develo
 
 ---
 
+## Decision: ON DELETE CASCADE for Regular-to-Temporal Foreign Keys, in the Existing C Trigger (1.4, 2026-10-21)
+
+### Problem
+
+StatBus has non-temporal addendum tables (notes, tags, external identifiers) that reference temporal legal
+units and establishments and have no meaning without them. Their references to plain tables use native
+`ON DELETE CASCADE`. For the temporal parents only `NO ACTION` and `RESTRICT` existed.
+
+### When a child goes
+
+A regular reference only requires that its key exists in the parent at some time. The child rows go when
+the **last** parent row with their key is deleted. Deleting one timeline row while another row of the
+same key remains keeps them. This is the rule `NO ACTION` already uses to decide whether a delete orphans
+a child, so the two actions disagree only on what happens at that point: refuse or delete.
+`temporal_merge` defers the parent-side trigger, so reshaping a timeline never cascades. Deleting an
+entity with `DELETE_MISSING_ENTITIES` does.
+
+### Implementation
+
+The parent-side `uk_delete` trigger (`uk_delete_check_c`, C) already finds the referencing children and
+checks for another parent row with the key, with cached SPI plans and the child foreign-key index. With
+`delete_action = CASCADE` it runs one more cached plan, `DELETE FROM ONLY child WHERE key = $1`, instead
+of raising the violation. Like native referential actions, it runs as the extension owner with child
+triggers firing, so system versioning, the child's own foreign keys and native cascades below it all
+apply. It uses the same snapshot handling as the existing lookups: under `REPEATABLE READ`, a child
+row committed after the snapshot makes the delete fail with 40001 rather than leave an orphan.
+
+Rust was considered and rejected. The cost is in the two index lookups and the delete, which are the same
+from either language, and every foreign-key trigger is C and shares its helpers. The Rust library holds
+the `temporal_merge` planner and executor.
+
+### Scope
+
+- `CASCADE` only for `regular_to_temporal`. A `temporal_to_temporal` key is a native `FOREIGN KEY ...
+  PERIOD`, and PostgreSQL 18 refuses referential actions on those ("unsupported ON DELETE action for
+  foreign key constraint using PERIOD").
+- `SET NULL`, `SET DEFAULT` and `ON UPDATE` actions other than `NO ACTION`/`RESTRICT` stay refused, now
+  with an explicit 0A000 error from `add_*_foreign_key` instead of a catalog CHECK violation.
+- `TRUNCATE` fires no row triggers, so it neither checks nor cascades a regular foreign key. This was
+  already true of `NO ACTION` in 1.3 and is documented.
+
+### Measured cost (macOS, PostgreSQL 18.3, best of 3)
+
+| 10,000 keys, 2 timeline rows each | ms |
+|---|---|
+| CASCADE, delete every row (20,000 children cascaded) | 214.8 |
+| CASCADE, delete one of two rows (children kept) | 133.1 |
+| NO ACTION, delete one of two rows (children kept) | 141.5 |
+| NO ACTION, delete every row of unreferenced keys | 50.7 |
+| native PostgreSQL CASCADE between plain tables (10,000 parents, 20,000 children) | 51.8 |
+
+When the key survives, CASCADE costs the same as `NO ACTION`. 50,000 keys took 1,308 ms, so the cost grows
+about linearly.
+
+---
+
 ## Decision: Use Constraint Triggers for Regular-to-Temporal Foreign Keys (1.3, 2026-10-20)
 
 ### Problem

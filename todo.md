@@ -19,23 +19,29 @@ failure so an upstream fix is noticed.
       (`tmp/upstream_pg_dump_check_order.md`, draft not sent). No longer affects sql_saga 1.3, which uses constraint
       triggers; owner decides whether to send it
 
-## Next - ON DELETE CASCADE for regular foreign keys (requested by StatBus, 2026-10-21)
+## In progress - ON DELETE CASCADE for regular foreign keys (requested by StatBus, 2026-10-21)
 
 **Need.** A non-temporal child row that is an addendum to a temporal parent (it has no meaning without the parent) should go with the parent. StatBus has three such tables, `external_ident`, `tag_for_unit` and `unit_notes`, which reference `legal_unit.id` and `establishment.id` (temporal, unique only with the validity range). From sql_saga 1.3 they use `add_foreign_key` (regular-to-temporal), because 1.3's child-side constraint trigger is what makes `pg_dump`/`pg_restore --single-transaction` work (STATBUS-524). Their references to plain tables already use native `FOREIGN KEY ... ON DELETE CASCADE`. For the temporal parents, the only options today are `NO ACTION`/`RESTRICT`, so StatBus ships `NO ACTION` until this exists.
 
 **Today.** `sql_saga.fk_actions` lists `CASCADE`, `SET NULL` and `SET DEFAULT`, but the `sql_saga.foreign_keys` catalog refuses them for both `update_action` and `delete_action` (`CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))`, `sql_saga--1.3.sql`). The parent side is the `uk_delete` trigger (`sql_saga.uk_delete_check_c()`, `src/sql_saga.c`). It refuses a `DELETE` only when a child still references the key and no other parent row has it, so `temporal_merge` and plain DML may reshape a parent's timeline.
 
-**Semantics to specify and test (RED first).**
-- [ ] Decide the cascade point: a child is deleted when the **last** parent row carrying its key is deleted. Deleting one era row while another row of the same entity remains keeps the child, the same rule the `NO ACTION` check already uses.
-- [ ] `delete_action => 'CASCADE'` on `add_foreign_key`/`add_regular_foreign_key` for `regular_to_temporal` keys; record it in `sql_saga.foreign_keys`; relax the catalog CHECK for that case only. Decide explicitly whether `temporal_to_temporal` (native `FOREIGN KEY ... PERIOD`) gets it or is refused with a clear message.
-- [ ] Cascades must not fire while `temporal_merge` reorganizes a timeline (an intermediate state can lack the key momentarily), consistent with how the deferred constraint triggers are handled today.
-- [ ] Concurrency: parent delete racing a child insert of the same key leaves neither an orphan nor a lost child (mirror the existing REPEATABLE READ orphan test).
-- [ ] `MATCH SIMPLE`/`FULL` with multi-column and XOR keys: cascade deletes exactly the children whose full key vanished.
-- [ ] Interaction with `disable_temporal_triggers`, `session_replication_role = replica`, `check_integrity()` (report a missing or misconfigured cascade), rename following and `drop_foreign_key`.
-- [ ] Dump/restore: the cascade object restores in every documented mode (serial, `--single-transaction`, split, `--clean`) and does not fire during restore.
-- [ ] Upgrade path: existing `NO ACTION` keys are unchanged; a key can be switched to `CASCADE` (drop and re-add, or a documented alter).
-- [ ] `UPDATE` of the parent key: decide whether `update_action => 'CASCADE'` is in scope or stays refused (StatBus does not need it; ids are identity columns).
-- [ ] Document in README and `doc/api.md` with an addendum example, and record the decision in `doc/decision-log.md`.
+**Done on master (not yet released; d076080, d79f715, 1e80fa7, 0ca559a and the docs commit).**
+- [x] Cascade point: a child is deleted when the **last** parent row carrying its key is deleted; deleting one timeline row while another row of the key remains keeps it (owner confirmed 2026-10-21; test 137)
+- [x] `delete_action => 'CASCADE'` on `add_foreign_key`/`add_regular_foreign_key` for `regular_to_temporal`, recorded in `sql_saga.foreign_keys`, catalog CHECK relaxed for that case only. `temporal_to_temporal` refuses it with 0A000 (PostgreSQL 18 refuses actions on `PERIOD` keys). `SET NULL`/`SET DEFAULT` and every `ON UPDATE` action other than `NO ACTION`/`RESTRICT` refused with 0A000 (test 137)
+- [x] Implemented in C in the existing `uk_delete_check_c`: one cached `DELETE FROM ONLY child WHERE key = $1` through the child FK index, run as the extension owner with child triggers firing. Rust rejected (cost is in the lookups, which are the same from either language)
+- [x] `temporal_merge` reshaping a timeline does not cascade; `DELETE_MISSING_ENTITIES` does (test 137)
+- [x] Composite natural key with MATCH FULL: exactly the vanished key's children go, NULL keys are kept (test 137)
+- [x] Concurrency: six two-session races in `devops/test_regular_fk_concurrency.sh`, never an orphan; REPEATABLE READ refuses with 40001 like native CASCADE (58/58 checks)
+- [x] Interactions: `disable_temporal_triggers` and replica role skip it; child and parent column renames keep it; `drop_foreign_key` removes it; a writer without rights on the child can delete the parent; child triggers, system versioning and native cascades below the child fire; `check_integrity` reports a catalog/trigger action mismatch (test 137 and verified by hand)
+- [x] Dump/restore: a CASCADE child that sorts before its parent loads fully and still cascades after serial, single-transaction, no-owner, clean, psql clean and split (20/20) restores (`devops/restore_roundtrip.sh` regular_fk_order)
+- [x] `update_action => 'CASCADE'` stays refused (StatBus ids are identity columns)
+- [x] Benchmark: 10,000 keys, CASCADE 214.8 ms when every key goes, 133.1 ms when keys survive (NO ACTION 141.5 ms), native PostgreSQL CASCADE 51.8 ms; 50,000 keys 1,308 ms (linear). Recorded in `doc/decision-log.md`
+- [x] Documented in README, `doc/api.md` (regenerated) and `doc/decision-log.md`
+- [x] Full fast suite 122/122
+
+**Still open before StatBus can use it.**
+- [ ] Owner decision: release as 1.4. Needs 1.3->1.4 (and 1.0/1.1/1.2->1.4) update scripts for the catalog CHECK change, a version bump, and the released-tag upgrade matrix and Linux CI
+- [ ] Owner decision: `TRUNCATE` of a parent leaves regular children (CASCADE or NO ACTION) without a parent, because TRUNCATE fires no row triggers. Pre-existing in 1.3, documented in README. Option: refuse TRUNCATE of a referenced parent with a statement-level TRUNCATE trigger, as native FKs do
 
 **StatBus follow-up once released.** StatBus switches its six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x `legal_unit_id`, `establishment_id`) from `NO ACTION` to `CASCADE` in a migration, and test 142 asserts the cascade.
 

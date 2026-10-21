@@ -350,7 +350,7 @@ SECURITY DEFINER
 
 ### add_regular_foreign_key
 
-> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000.
+> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000. delete_action NO ACTION (the default) and RESTRICT refuse deleting the last parent row that has a referenced key; CASCADE (since 1.4) deletes the child rows of that key instead. Deleting one timeline row while another row of the same key remains never cascades, and temporal_merge reshaping a timeline does not either. SET NULL and SET DEFAULT, and every update_action other than NO ACTION and RESTRICT, are refused with SQLSTATE 0A000.
 
 ```sql
 FUNCTION add_regular_foreign_key(
