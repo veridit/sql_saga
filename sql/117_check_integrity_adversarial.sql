@@ -190,14 +190,19 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- New 1.2 inspection and formatting helpers are private.
 -- One intentional 1.2 change: add_system_versioning gained a trailing history_table_must_exist boolean
 -- (DEFAULT false, so every 1.1 call form still works); its identity below is the 1.2 one. One intentional
--- 1.2 addition: sync_all_history_policies(), the final command of a parallel restore (README). Everything
--- else must match 1.1 exactly.
+-- 1.2 addition: sync_all_history_policies(), the final command of a parallel restore (README). Two intentional
+-- 1.3 additions: __internal_current_view_clock(oid) and __internal_current_view_now(oid, regtype). Every current-view
+-- INSERT/UPDATE/DELETE runs current_view_trigger as the invoker of that DML, and it calls them to evaluate the
+-- clock the view is bound to on a fixed search_path, so PUBLIC must be able to execute them. Both are SECURITY
+-- INVOKER and read only the rule of the given view. Everything else must match 1.1 exactly.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
 ('__internal_add_system_time_era(table_oid regclass, range_column_name name, infinity_check_constraint name, generated_always_trigger name, write_history_trigger name, truncate_trigger name, excluded_column_names name[])'),
 ('__internal_check_history_columns(table_oid oid, history_table_oid oid, without_columns name[])'),
 ('__internal_column_type_sql(type_oid oid, typmod integer, collation_oid oid)'),
+('__internal_current_view_clock(view_oid oid)'),
+('__internal_current_view_now(view_oid oid, range_subtype regtype)'),
 ('__internal_ddl_command_affects_managed_object()'),
 ('__internal_deny_history(table_oid oid)'),
 ('__internal_display_name(object_name regclass)'),

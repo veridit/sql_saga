@@ -243,7 +243,7 @@ class AclAndSignatures(unittest.TestCase):
 
     def test_manifest(self):
         self.assertEqual(sorted(self.g.ROUTINE_MANIFEST), sorted(
-            "0c 0g 0i 0j 1d 1g 1h 1k 2a 2e 2f 2h 2l 2o 3d 3e".split()))
+            "0c 0g 0i 0j 1d 1g 1h 1k 2a 2e 2f 2h 2l 2o 3c 3d 3e".split()))
         self.assertIn("0b", self.g.MANUAL)
         self.assertNotIn("3f", self.g.ROUTINE_MANIFEST)
         self.assertNotIn("3g", self.g.ROUTINE_MANIFEST)
