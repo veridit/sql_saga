@@ -502,6 +502,14 @@ INSERT INTO contact SELECT g, 'tax', (1 + g % 50)::text FROM generate_series(1, 
 INSERT INTO contact VALUES (101, NULL, '999');
 INSERT INTO establishment (id, legal_unit_id, valid_from, valid_until)
     SELECT g, g, '2021-01-01', 'infinity' FROM generate_series(1, 50) AS g;
+-- An ON DELETE CASCADE child (1.4) that sorts before its parent. Restore must load every row (the cascade never
+-- fires while a dump loads) and the restored database must still cascade.
+CREATE TABLE addendum (id int PRIMARY KEY, legal_unit_id int);
+SELECT sql_saga.add_foreign_key('addendum', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id'], delete_action => 'CASCADE');
+INSERT INTO addendum SELECT g, 1 + g % 50 FROM generate_series(1, 100) AS g;
+-- Legal unit 51 is referenced only by the addendum (two rows), so deleting it after restore shows the cascade.
+INSERT INTO legal_unit (id, ident_type, ident, valid_from, valid_until) VALUES (51, 'tax', '51', '2020-01-01', 'infinity');
+INSERT INTO addendum VALUES (151, 51), (152, 51);
 GRANT SELECT ON legal_unit, activity, contact, stat TO ${PREFIX}_r1;
 SQL
     } | psql_q -d "$1"
@@ -892,8 +900,21 @@ restore_variant() {
     t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
     manual_state=$(manual_schema_state "$dst"); snapshots=$(snapshot_faults "$dst")
-    local integrity
+    local integrity cascade
     integrity=$(psql -X -At -d "$dst" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
+    # regular_fk_order: all 102 CASCADE child rows survived the load, and deleting legal unit 51 (referenced only by
+    # two addendum rows) still cascades in the restored database (rolled back).
+    if [ "$case" = regular_fk_order ]; then
+        cascade=$(psql -X -At -d "$dst" -v ON_ERROR_STOP=1 <<'SQL' 2>&1
+BEGIN;
+SELECT 'loaded ' || count(*) FROM addendum;
+DELETE FROM legal_unit WHERE id = 51;
+SELECT 'after delete ' || count(*) FROM addendum;
+ROLLBACK;
+SQL
+)
+        cascade=$(echo $cascade)
+    fi
     # BASELINE_V11=1: a released 1.1 build has neither check_integrity() nor column snapshots.
     if [ "${BASELINE_V11:-0}" = 1 ]; then integrity=t; snapshots=0; fi
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
@@ -931,6 +952,10 @@ restore_variant() {
     fi
     if [ "$integrity" != "t" ]; then
         echo "    $variant: check_integrity failed ($integrity)"
+        return 1
+    fi
+    if [ "$case" = regular_fk_order ] && [ "$cascade" != "BEGIN loaded 102 DELETE 1 after delete 100 ROLLBACK" ]; then
+        echo "    $variant: ON DELETE CASCADE child wrong after restore (expected 'BEGIN loaded 102 DELETE 1 after delete 100 ROLLBACK', got '$cascade')"
         return 1
     fi
     echo "    $variant: ok"
