@@ -413,8 +413,8 @@ SELECT 'deferred child: invalid insert then SIMPLE null | ' || rft.outcome(
     $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET legal_unit_id = NULL WHERE id = 90$$);
 SELECT 'deferred child: FULL partial null then correct | ' || rft.outcome(
     $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.contact VALUES (90, 'tax', NULL); UPDATE rft.contact SET ident = '300' WHERE id = 90$$);
--- An UPDATE that does not touch the key columns makes the orphaning version obsolete without firing a new check
--- (the trigger is UPDATE OF the key columns): the surviving row still references a missing key and must be refused.
+-- A payload-only UPDATE makes the orphaning row version obsolete. The trigger must also check that successor
+-- version, so it fires on every UPDATE rather than UPDATE OF the key columns.
 SELECT 'deferred child: invalid insert then payload-only update survives | ' || rft.outcome(
     $$SET CONSTRAINTS ALL DEFERRED; INSERT INTO rft.activity VALUES (90, 999, NULL); UPDATE rft.activity SET note = 'second' WHERE id = 90$$);
 SELECT 'deferred child: invalid key update then payload-only update survives | ' || rft.outcome(
