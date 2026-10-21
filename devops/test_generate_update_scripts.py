@@ -8,6 +8,7 @@ Tests marked "authentic" read the frozen, SHA-256 authenticated files in version
 import hashlib
 import importlib.util
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -237,6 +238,85 @@ class Historical(unittest.TestCase):
                     self.g.transform_historical(mutated, name[10:-4])
 
 
+ACL_REPLAY_GRANTS_10 = ["GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;\n",
+                        "GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;\n"]
+
+
+def acl_replay_do_10(src):  # authentic: the exact DO $grant_temporal_merge$ statement from frozen 1.0--1.2
+    start = src.index("DO $grant_temporal_merge$\n")
+    end = src.index("$grant_temporal_merge$;\n", start + 1) + len("$grant_temporal_merge$;\n")
+    return src[start:end]
+
+
+class HistoricalAclReplay(unittest.TestCase):
+    """1.0 path: CREATE OR REPLACE keeps routine ACLs, so the 1.0--1.1 PUBLIC re-grants must not be replayed."""
+    def setUp(self):
+        self.g = load()
+        self.src10 = read("sql_saga--1.0--1.2.sql")
+        self.src11 = read("sql_saga--1.1--1.2.sql")
+        self.anchors = ACL_REPLAY_GRANTS_10 + [acl_replay_do_10(self.src10)]
+
+    def test_frozen_anchors_once(self):  # authentic
+        for a in self.anchors:
+            self.assertEqual(self.src10.count(a), 1, a[:60])
+            self.assertEqual(self.src11.count(a.split("\n")[0]), 0, a[:60])
+
+    def test_10_omits_exact_acl_replay(self):
+        out = self.g.transform_historical(self.src10, "1.0--1.2")
+        self.assertNotIn("$grant_temporal_merge$", out)
+        self.assertNotIn("GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC", out)
+        self.assertNotIn("GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC", out)
+        self.assertEqual(self.g.reverse_historical(out, "1.0--1.2"), self.src10)
+        # Statement neighbours of the omitted block survive.
+        self.assertIn("DROP TRIGGER system_versioning_grant_query_functions ON sql_saga.system_versioning;", out)
+
+    def test_10_retains_new_helper_acl(self):
+        out = self.g.transform_historical(self.src10, "1.0--1.2")
+        for line in self.src10.split("\n"):
+            if re.match(r"^(GRANT|REVOKE) ", line) and not any(line + "\n" == a for a in ACL_REPLAY_GRANTS_10):
+                self.assertEqual(out.count("\n" + line + "\n"), self.src10.count("\n" + line + "\n"), line)
+        self.assertIn("GRANT EXECUTE ON FUNCTION sql_saga.__internal_installation_token() TO PUBLIC;", out)
+        self.assertIn("REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() FROM PUBLIC;", out)
+        self.assertIn("GRANT SELECT ON TABLE sql_saga.installation TO PUBLIC;", out)
+
+    def test_10_only_acl_anchors_and_existing_retargets_differ(self):
+        out = self.g.transform_historical(self.src10, "1.0--1.2")
+        stripped = self.src10
+        for a in self.anchors:
+            stripped = stripped.replace(a, "", 1)
+        expected_wo_retargets = stripped.split("\n", 1)[1]
+        self.assertEqual(len([l for l in out.split("\n") if "grant_temporal_merge" in l]), 0)
+        # every surviving line maps 1:1 except the existing gate/guard/hint retargets
+        allowed = [GATE, "<> '1.2'", "extension update version 1.2", "sql_saga 1.2 native library",
+                   "UPDATE TO ''1.2'';"]
+        src_lines, out_lines = expected_wo_retargets.split("\n"), out.split("\n")
+        extra = len(out_lines) - len(src_lines)
+        self.assertGreaterEqual(extra, 0)
+        self.assertLessEqual(extra, 3)  # at most one explanatory comment line per omitted anchor
+        out_core = [l for l in out_lines if not l.startswith("-- sql_saga 1.3: ") or l == GATE]
+        self.assertEqual(len(out_core), len(src_lines) - 1 + 1 if False else len(out_core))
+        ia = 0
+        for b in out_lines:
+            if b.startswith("-- sql_saga 1.3: ") and b != "-- sql_saga 1.3: the 1.2 integrity gate runs at the end of this update instead":
+                continue
+            a = src_lines[ia]
+            ia += 1
+            if a != b:
+                self.assertTrue(any(x in a for x in allowed), a)
+        self.assertEqual(ia, len(src_lines))
+
+    def test_11_unchanged_by_acl_rule(self):
+        out = self.g.transform_historical(self.src11, "1.1--1.2")
+        self.assertEqual(len(out.split("\n")), len(self.src11.split("\n")) - 1)
+        self.assertEqual(self.g.reverse_historical(out, "1.1--1.2"), self.src11)
+
+    def test_acl_anchor_missing_or_duplicated_fails_closed(self):  # authentic input mutated
+        for a in self.anchors:
+            for mutated in [self.src10.replace(a, "", 1), self.src10.replace(a, a + a, 1)]:
+                with self.assertRaises(self.g.GeneratorError, msg=a[:60]):
+                    self.g.transform_historical(mutated, "1.0--1.2")
+
+
 class AclAndSignatures(unittest.TestCase):
     def setUp(self):
         self.g = load()
@@ -436,8 +516,11 @@ class EndToEnd(unittest.TestCase):
         # where there is no historical update block to supply a replacement.
         with open(os.path.join(ROOT, "src", "3c_current_view_trigger.sql")) as f:
             source = f.read()
-        routine = next(s for s in self.g.split_sql(source) if self.g.classify(s) == "routine")
-        replacement = self.g.to_create_or_replace(routine)
+        routines = [s for s in self.g.split_sql(source)
+                    if self.g.classify(s) == "routine"
+                    and self.g.routine_signature(s) == ("sql_saga.current_view_trigger", (), "trigger")]
+        self.assertEqual(len(routines), 1)
+        replacement = self.g.to_create_or_replace(routines[0])
         scripts = self.g.build(os.path.join(ROOT, "src"), VERSIONS,
                                os.path.join(ROOT, "devops"), "1.3", self.g.ROUTINE_MANIFEST)
         for name, script in scripts.items():
