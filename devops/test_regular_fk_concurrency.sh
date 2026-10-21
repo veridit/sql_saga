@@ -27,6 +27,16 @@
 #   segment_deletes_rc/rr    two sessions each delete one of the two timeline rows of a referenced key: the
 #                            second blocks, then is refused; one row stays
 #
+# ON DELETE CASCADE (1.4), a second child table rfc.cchild. Same contract (never an orphan), and the child goes with
+# the last parent row of its key, and only then:
+#   cascade_rc_after_child_commit  READ COMMITTED parent DELETE after a concurrent child INSERT committed: the
+#                                  child it could not see when it began is cascaded too
+#   cascade_rr_after_child_commit  the same in REPEATABLE READ: refused with 40001 (as native CASCADE), both kept
+#   cascade_child_lock             an open child INSERT blocks the parent DELETE; once committed it is cascaded
+#   cascade_rr_child_insert        REPEATABLE READ child INSERT after the key's last row was deleted: refused
+#   cascade_segment_deletes_rc/rr  two sessions each delete one of key 2's rows: the first keeps the child, the
+#                                  second (the last row) cascades it
+#
 # Safety: runs only against a private cluster the caller names explicitly.
 #   PGHOST, PGPORT                          required, no defaults
 #   REGULAR_FK_CONCURRENCY_DATA_DIRECTORY   required; must equal the server's data_directory (identity guard)
@@ -317,9 +327,13 @@ outcome() {
 }
 
 orphans() {
-    q "SELECT count(*) FROM rfc.child AS c
-       WHERE c.parent_id IS NOT NULL AND NOT EXISTS (SELECT FROM rfc.parent AS p WHERE p.id = c.parent_id)"
+    q "SELECT (SELECT count(*) FROM rfc.child AS c
+               WHERE c.parent_id IS NOT NULL AND NOT EXISTS (SELECT FROM rfc.parent AS p WHERE p.id = c.parent_id))
+            + (SELECT count(*) FROM rfc.cchild AS c
+               WHERE c.parent_id IS NOT NULL AND NOT EXISTS (SELECT FROM rfc.parent AS p WHERE p.id = c.parent_id))"
 }
+
+cchildren() { q "SELECT count(*) FROM rfc.cchild WHERE parent_id = $1"; }
 
 "$CREATEDB" --maintenance-db=postgres "$DB" >"$WORK/createdb.log" 2>&1 || die "createdb failed: $(cat "$WORK/createdb.log")"
 CREATED=1
@@ -332,13 +346,16 @@ SELECT sql_saga.add_era('rfc.parent', 'valid_range', 'valid', valid_from_column_
 SELECT sql_saga.add_unique_key('rfc.parent', ARRAY['id'], key_type => 'primary', unique_key_name => 'rfc_parent_id_valid');
 CREATE TABLE rfc.child (seq int PRIMARY KEY, parent_id int, payload text);
 SELECT sql_saga.add_regular_foreign_key('rfc.child', ARRAY['parent_id'], 'rfc_parent_id_valid');
+-- ON DELETE CASCADE child (1.4): goes with the last parent row of its key.
+CREATE TABLE rfc.cchild (seq int PRIMARY KEY, parent_id int, payload text);
+SELECT sql_saga.add_regular_foreign_key('rfc.cchild', ARRAY['parent_id'], 'rfc_parent_id_valid', delete_action => 'CASCADE');
 SQL
 "$PSQL" -X --no-psqlrc -q --set=ON_ERROR_STOP=1 --dbname="$DB" --file="$WORK/setup.sql" >"$WORK/setup.log" 2>&1 \
     || die "setup failed: $(cat "$WORK/setup.log")"
 
 # reset: key 1 has one timeline row, key 2 has two; no children.
 reset() {
-    q "TRUNCATE rfc.child; DELETE FROM rfc.parent;
+    q "TRUNCATE rfc.child, rfc.cchild; DELETE FROM rfc.parent;
        INSERT INTO rfc.parent (id, label, valid_from, valid_until) VALUES
          (1, 'a', '2020-01-01', 'infinity'),
          (2, 'a', '2020-01-01', '2022-01-01'), (2, 'b', '2022-01-01', 'infinity')" >/dev/null || die "reset failed"
@@ -446,6 +463,99 @@ echo "== segment_deletes_rc"
 segment_deletes segment_deletes_rc "READ COMMITTED"
 echo "== segment_deletes_rr"
 segment_deletes segment_deletes_rr "REPEATABLE READ"
+
+# ON DELETE CASCADE (1.4). The contract is unchanged: no orphan whatever the interleaving. In addition the child
+# goes with the last parent row of its key, and only then.
+
+# cascade_after_child_commit <case> <isolation>: the parent session takes its snapshot, a CASCADE child of key 1 is
+# inserted and committed by another session, then the parent DELETE of key 1 runs and commits. The child the parent
+# session could not see must still be deleted (or the DELETE refused), never left as an orphan.
+cascade_after_child_commit() {
+    name=$1
+    reset
+    open_session "$name"
+    step "$name" "BEGIN ISOLATION LEVEL $2; SELECT count(*) FROM rfc.cchild;"
+    check "$name: the concurrent CASCADE child INSERT commits" 0 \
+        "$(run_session "${name}_child" "INSERT INTO rfc.cchild VALUES (200, 1, 'concurrent')")"
+    try_step "$name" "DELETE FROM rfc.parent WHERE id = 1;"
+    try_step "$name" "COMMIT;"
+    close_session "$name"
+    result=$(outcome "$name")
+    case $result in
+        accepted) check "$name: key 1 deleted, its CASCADE child deleted with it" "0 0" \
+                      "$(q "SELECT count(*) FROM rfc.parent WHERE id = 1") $(cchildren 1)" ;;
+        refused) check "$name: DELETE refused, parent and child kept" "1 1" \
+                     "$(q "SELECT count(*) FROM rfc.parent WHERE id = 1") $(cchildren 1)" ;;
+        *) check "$name: the parent DELETE is accepted or refused" "accepted or refused" "$result" ;;
+    esac
+    check "$name: no orphan" 0 "$(orphans)"
+}
+
+echo "== cascade_rc_after_child_commit"
+cascade_after_child_commit cascade_rc_after_child_commit "READ COMMITTED"
+echo "== cascade_rr_after_child_commit"
+cascade_after_child_commit cascade_rr_after_child_commit "REPEATABLE READ"
+
+# cascade_child_lock: an open CASCADE child INSERT of key 1; the parent DELETE must wait for it, then delete it.
+echo "== cascade_child_lock"
+reset
+open_session cascade_child_lock
+step cascade_child_lock "BEGIN; INSERT INTO rfc.cchild VALUES (201, 1, 'held');"
+start_background cascade_child_lock_parent "DELETE FROM rfc.parent WHERE id = 1"
+await_blocked cascade_child_lock_parent
+check "cascade_child_lock: the parent DELETE waits for the open child INSERT" waiting "$(lock_waiting cascade_child_lock_parent)"
+step cascade_child_lock "COMMIT;"
+close_session cascade_child_lock
+finish_background cascade_child_lock_parent
+check "cascade_child_lock: the parent DELETE is accepted once the child commits" accepted "$(outcome cascade_child_lock_parent)"
+check "cascade_child_lock: the committed child was cascaded" 0 "$(cchildren 1)"
+check "cascade_child_lock: no orphan" 0 "$(orphans)"
+
+# cascade_rr_child_insert: REPEATABLE READ CASCADE child INSERT, snapshot taken before a concurrent DELETE of the
+# only parent row of key 1 committed: refused (the key is gone), no orphan.
+echo "== cascade_rr_child_insert"
+reset
+open_session cascade_rr_child_insert
+step cascade_rr_child_insert "BEGIN ISOLATION LEVEL REPEATABLE READ; SELECT count(*) FROM rfc.parent;"
+check "cascade_rr_child_insert: the concurrent parent DELETE commits" 0 \
+    "$(run_session cascade_rr_child_insert_parent "DELETE FROM rfc.parent WHERE id = 1")"
+try_step cascade_rr_child_insert "INSERT INTO rfc.cchild VALUES (202, 1, 'stale snapshot');"
+try_step cascade_rr_child_insert "COMMIT;"
+close_session cascade_rr_child_insert
+check "cascade_rr_child_insert: the child INSERT is refused" refused "$(outcome cascade_rr_child_insert)"
+check "cascade_rr_child_insert: no orphan" 0 "$(orphans)"
+
+# cascade_segment_deletes <case> <isolation>: two sessions each delete one of the two rows of key 2, which has a
+# CASCADE child. The first commits and keeps the child (key 2 remains); the second, the last row, cascades it.
+cascade_segment_deletes() {
+    name=$1
+    reset
+    q "INSERT INTO rfc.cchild VALUES (203, 2, 'references 2')" >/dev/null || die "cascade child insert failed"
+    open_session "$name"
+    step "$name" "BEGIN ISOLATION LEVEL $2; DELETE FROM rfc.parent WHERE id = 2 AND valid_from = '2020-01-01';"
+    check "$name: the child is kept while the other row of key 2 exists" 1 "$(cchildren 2)"
+    start_background "${name}_other" "BEGIN ISOLATION LEVEL $2; DELETE FROM rfc.parent WHERE id = 2 AND valid_from = '2022-01-01'; COMMIT;"
+    await_blocked "${name}_other"
+    check "$name: the second DELETE waits for the first" waiting "$(lock_waiting "${name}_other")"
+    try_step "$name" "COMMIT;"
+    close_session "$name"
+    finish_background "${name}_other"
+    check "$name: the first DELETE commits" accepted "$(outcome "$name")"
+    result=$(outcome "${name}_other")
+    case $result in
+        accepted) check "$name: last row deleted, CASCADE child deleted" "0 0" \
+                      "$(q "SELECT count(*) FROM rfc.parent WHERE id = 2") $(cchildren 2)" ;;
+        refused) check "$name: second DELETE refused, one row and the child kept" "1 1" \
+                     "$(q "SELECT count(*) FROM rfc.parent WHERE id = 2") $(cchildren 2)" ;;
+        *) check "$name: the second DELETE is accepted or refused" "accepted or refused" "$result" ;;
+    esac
+    check "$name: no orphan" 0 "$(orphans)"
+}
+
+echo "== cascade_segment_deletes_rc"
+cascade_segment_deletes cascade_segment_deletes_rc "READ COMMITTED"
+echo "== cascade_segment_deletes_rr"
+cascade_segment_deletes cascade_segment_deletes_rr "REPEATABLE READ"
 
 harness_ok
 if [ "$FAILURES" -gt 0 ]; then
