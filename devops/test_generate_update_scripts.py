@@ -430,6 +430,21 @@ class EndToEnd(unittest.TestCase):
     def setUp(self):
         self.g = load()
 
+    def test_current_view_trigger_replaced_on_every_direct_path(self):
+        # Binding correctness is shared by rebuilt view rules and current-view DML.
+        # Every direct update must install the actual source trigger, including 1.2
+        # where there is no historical update block to supply a replacement.
+        with open(os.path.join(ROOT, "src", "3c_current_view_trigger.sql")) as f:
+            source = f.read()
+        routine = next(s for s in self.g.split_sql(source) if self.g.classify(s) == "routine")
+        replacement = self.g.to_create_or_replace(routine)
+        scripts = self.g.build(os.path.join(ROOT, "src"), VERSIONS,
+                               os.path.join(ROOT, "devops"), "1.3", self.g.ROUTINE_MANIFEST)
+        for name, script in scripts.items():
+            with self.subTest(script=name):
+                self.assertTrue(replacement in script,
+                                name + " does not install the source current_view_trigger()")
+
     def make_tree(self, d, preamble=None):
         src = os.path.join(d, "src")
         dev = os.path.join(d, "devops")
