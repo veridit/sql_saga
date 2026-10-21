@@ -590,6 +590,29 @@ SQL
 # Observations
 # ---------------------------------------------------------------------------------------------
 # Effective ACL of every relation and function outside system schemas, owners excluded.
+# acl_entries <db>: the rows acl_digest hashes (object|grantee|privilege, grantee role names, grant option
+# marked with *), one per line, sorted. acl_digest itself is unchanged (restore and idempotence use it).
+acl_entries() {
+    sql "$1" <<'SQL'
+WITH objs AS (
+    SELECT format('rel %s', c.oid::regclass) AS obj, c.relowner AS owner,
+           COALESCE(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner)) AS acl
+    FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND c.relkind IN ('r', 'v', 'm', 'S', 'p')
+    UNION ALL
+    SELECT format('fn %s', p.oid::regprocedure), p.proowner, COALESCE(p.proacl, acldefault('f', p.proowner))
+    FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+)
+SELECT e.entry FROM (
+    SELECT format('%s|%s|%s%s', o.obj, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, a.privilege_type, CASE WHEN a.is_grantable THEN '*' ELSE '' END) AS entry
+    FROM objs AS o CROSS JOIN LATERAL aclexplode(o.acl) AS a
+    WHERE a.grantee <> o.owner
+) AS e
+ORDER BY e.entry COLLATE "C";
+SQL
+}
+
 acl_digest() {
     sql "$1" <<'SQL'
 WITH objs AS (
@@ -1754,6 +1777,7 @@ if [ -n "$OLD_LIB" ]; then
     check "after the restart the installed candidate C library serves the $BASELINE_VERSION SQL" "by-name writer" "$(writer_probe "")"
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
+acl_entries "$OLD" >"$WORK/acl_entries.before"
 
 # Anchor generated query functions to the released 1.1 state. The direct v1.1 path captures the
 # pristine fixture. The v1.0 path uses a sibling clone upgraded only through immutable 1.0--1.1.
@@ -3157,6 +3181,9 @@ check "extversion after update" "$NEW_VERSION" "$(q "$OLD" "SELECT extversion FR
 
 # ---------------------------------------------------------------------------------------------
 section "$NEW_VERSION structure after upgrade" "not meaningful (dependent)"
+FRESH_ACL_REF=${PREFIX}_fresh_aclref
+new_db "$FRESH_ACL_REF" "$EXT_ROOT"
+printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$NEW_VERSION" | sql "$FRESH_ACL_REF" >/dev/null
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
@@ -3168,7 +3195,42 @@ if [ "$BASELINE_VERSION" = 1.0 ]; then
     else fail "v1.0 ACL digest unchanged: mirrored and direct derived grants survive"; fi
 else
     # Source handling: only the 1.0 path normalizes derived grants; 1.1 and 1.2 sources keep every ACL.
-    check "pristine v$BASELINE_VERSION ACL digest is preserved by the $NEW_VERSION update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
+    if [ "$NEW_VERSION" = 1.2 ]; then
+        check "pristine v$BASELINE_VERSION ACL digest is preserved by the $NEW_VERSION update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
+    else
+        # Adapted for 1.3 (coordinator-approved normalization, tmp/v13_upgrade_harness/logs/acl_digest_probe.log):
+        # the expected entry set is the baseline's, unchanged, plus exactly the documented changes:
+        #   1.1 only: add_system_versioning's 7-argument signature replaced by the 8-argument one (1.2 contract);
+        #   new PUBLIC EXECUTE routines, each only where the baseline lacks it, as a fresh 1.3 install grants them:
+        #   regular_fk_check_c(), __internal_current_view_clock(oid), __internal_current_view_now(oid,regtype),
+        #   sync_all_history_policies() (exact regprocedure identities, checked against a fresh 1.3 install). Every other added, lost or changed entry (named roles, grant options) fails.
+        ASV7_ENTRY="fn sql_saga.add_system_versioning(regclass,name,name,name,name,name,name)|PUBLIC|EXECUTE"
+        ASV8_ENTRY="fn sql_saga.add_system_versioning(regclass,name,name,name,name,name,name,boolean)|PUBLIC|EXECUTE"
+        if [ "$BASELINE_VERSION" = 1.1 ]; then
+            grep -vFx "$ASV7_ENTRY" "$WORK/acl_entries.before" >"$WORK/acl_entries.expected"
+            grep -qFx "$ASV7_ENTRY" "$WORK/acl_entries.before" && echo "$ASV8_ENTRY" >>"$WORK/acl_entries.expected"
+        else
+            cp "$WORK/acl_entries.before" "$WORK/acl_entries.expected"
+        fi
+        # Exact per-baseline addition map of routines that release lacks (never inferred from a missing ACL row:
+        # an existing routine with a site REVOKE must keep it).
+        NEW_ROUTINES="sql_saga.regular_fk_check_c() sql_saga.__internal_current_view_clock(oid) sql_saga.__internal_current_view_now(oid,regtype)"
+        [ "$BASELINE_VERSION" = 1.1 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.sync_all_history_policies()"
+        for routine in $NEW_ROUTINES; do
+            entry="fn $routine|PUBLIC|EXECUTE"
+            if [ "$(q "$FRESH_ACL_REF" "SELECT count(*) FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = to_regprocedure('$routine') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE'")" = 1 ]; then
+                echo "$entry" >>"$WORK/acl_entries.expected"
+            fi
+        done
+        LC_ALL=C sort -o "$WORK/acl_entries.expected" "$WORK/acl_entries.expected"
+        acl_entries "$OLD" >"$WORK/acl_entries.after"
+        if diff -u "$WORK/acl_entries.expected" "$WORK/acl_entries.after" >"$WORK/acl_entries.diff"; then
+            ok "pristine v$BASELINE_VERSION ACL entries are preserved by the $NEW_VERSION update (baseline plus exactly the documented 1.3 additions)"
+        else
+            fail "pristine v$BASELINE_VERSION ACL entries differ from baseline plus documented 1.3 additions: $(grep -c '^[-+][^-+]' "$WORK/acl_entries.diff") lines (see $WORK/acl_entries.diff)"
+            grep '^[-+][^-+]' "$WORK/acl_entries.diff" | head -6 | sed 's/^/          /'
+        fi
+    fi
 fi
 check "direct derived grants to saga_up_none were removed" "f|f|f" \
     "$(q "$OLD" "SELECT EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'sv_with_history'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'sv_with_history'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT proacl FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure), acldefault('f', (SELECT proowner FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'EXECUTE')" | sed 's/true/t/g; s/false/f/g')"
