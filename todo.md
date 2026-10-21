@@ -2,7 +2,7 @@
 
 A living document of upcoming tasks.
 
-## Current Priority - Version 1.3 release in progress
+## Released - Version 1.3 (tag v1.3 at 102e0df, 2026-10-21)
 
 Completed and regression-tested on the development branch:
 - [x] Preserve XOR unique-key constraint order and pair foreign-key columns in that order
