@@ -190,7 +190,7 @@ class Historical(unittest.TestCase):
         self.assertIn("Install the sql_saga 1.3 native library", out)
         self.assertEqual(self.g.reverse_historical(out, name.replace("sql_saga--", "").replace(".sql", "")), src)
         # Independent check: only explicitly allowed lines differ (first line dropped; rest is line-for-line).
-        if name == "sql_saga--1.0--1.2.sql":  # ACL replay omission: line mapping in HistoricalAclReplay
+        if name == "sql_saga--1.0--1.2.sql":  # ACL guard insertion: line mapping in HistoricalAclGuard
             return out
         src_lines, out_lines = src.split("\n")[1:], out.split("\n")
         self.assertEqual(len(src_lines), len(out_lines))
@@ -242,6 +242,20 @@ class Historical(unittest.TestCase):
 
 ACL_REPLAY_GRANTS_10 = ["GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;\n",
                         "GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;\n"]
+# The exact 1.0 signatures of the routines the historical 1.0--1.1 grants touch (released sql_saga--1.0.sql).
+ACL_GUARD_ROUTINES_10 = [
+    "sql_saga.for_portion_of_trigger()",
+    "sql_saga.current_view_trigger()",
+    "sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],"
+    "sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)",
+    "sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,"
+    "sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)",
+    "sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)",
+    "sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,"
+    "text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)",
+    "sql_saga.temporal_merge_drop_temp_tables()",
+    "sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)",
+]
 
 
 def acl_replay_do_10(src):  # authentic: the exact DO $grant_temporal_merge$ statement from frozen 1.0--1.2
@@ -250,71 +264,136 @@ def acl_replay_do_10(src):  # authentic: the exact DO $grant_temporal_merge$ sta
     return src[start:end]
 
 
-class HistoricalAclReplay(unittest.TestCase):
-    """1.0 path: CREATE OR REPLACE keeps routine ACLs, so the 1.0--1.1 PUBLIC re-grants must not be replayed."""
+def acl_guard_10(out):
+    """The single read-only guard statement the 1.0 copy inserts directly before the first historical grant."""
+    first = ACL_REPLAY_GRANTS_10[0]
+    i = out.index("\n" + first) + 1
+    head = out[:i]
+    start = head.rindex("\nDO $") + 1
+    tag = head[start + 3:head.index("$", start + 4) + 1]
+    return tag, head[start:]
+
+
+class HistoricalAclGuard(unittest.TestCase):
+    """1.0 path: released 1.0 records no pg_init_privs for the 8 routines, and a historical in-extension GRANT
+    records the then-current ACL as their initial privileges, so pg_dump would drop any site grant. The 1.0
+    copy therefore keeps the three historical grants and refuses, immediately before the first of them, unless
+    all 8 routines carry exactly the canonical ACL (owner EXECUTE + PUBLIC EXECUTE, granted by the owner,
+    without grant option). The refusal rolls the whole ALTER EXTENSION back."""
     def setUp(self):
         self.g = load()
         self.src10 = read("sql_saga--1.0--1.2.sql")
         self.src11 = read("sql_saga--1.1--1.2.sql")
         self.anchors = ACL_REPLAY_GRANTS_10 + [acl_replay_do_10(self.src10)]
+        self.out = self.g.transform_historical(self.src10, "1.0--1.2")
 
     def test_frozen_anchors_once(self):  # authentic
         for a in self.anchors:
             self.assertEqual(self.src10.count(a), 1, a[:60])
             self.assertEqual(self.src11.count(a.split("\n")[0]), 0, a[:60])
 
-    def test_10_omits_exact_acl_replay(self):
-        out = self.g.transform_historical(self.src10, "1.0--1.2")
-        self.assertNotIn("$grant_temporal_merge$", out)
-        self.assertNotIn("GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC", out)
-        self.assertNotIn("GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC", out)
-        self.assertEqual(self.g.reverse_historical(out, "1.0--1.2"), self.src10)
-        # Statement neighbours of the omitted block survive.
-        self.assertIn("DROP TRIGGER system_versioning_grant_query_functions ON sql_saga.system_versioning;", out)
-
-    def test_10_retains_new_helper_acl(self):
-        out = self.g.transform_historical(self.src10, "1.0--1.2")
-        for line in self.src10.split("\n"):
-            if re.match(r"^(GRANT|REVOKE) ", line) and not any(line + "\n" == a for a in ACL_REPLAY_GRANTS_10):
-                self.assertEqual(out.count("\n" + line + "\n"), self.src10.count("\n" + line + "\n"), line)
-        self.assertIn("GRANT EXECUTE ON FUNCTION sql_saga.__internal_installation_token() TO PUBLIC;", out)
-        self.assertIn("REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() FROM PUBLIC;", out)
-        self.assertIn("GRANT SELECT ON TABLE sql_saga.installation TO PUBLIC;", out)
-
-    def test_10_only_acl_anchors_and_existing_retargets_differ(self):
-        out = self.g.transform_historical(self.src10, "1.0--1.2")
-        stripped = self.src10
+    def test_10_keeps_all_three_historical_grants_verbatim(self):
         for a in self.anchors:
-            stripped = stripped.replace(a, "", 1)
-        expected_wo_retargets = stripped.split("\n", 1)[1]
-        self.assertEqual(len([l for l in out.split("\n") if "grant_temporal_merge" in l]), 0)
-        # every surviving line maps 1:1 except the existing gate/guard/hint retargets
+            self.assertEqual(self.out.count(a), 1, a[:60])
+        self.assertEqual(self.g.reverse_historical(self.out, "1.0--1.2"), self.src10)
+
+    def test_10_guard_directly_before_first_grant(self):
+        tag, guard = acl_guard_10(self.out)
+        self.assertTrue(guard.endswith(tag + ";\n"), guard[-80:])
+        self.assertEqual(self.out.count("DO " + tag + "\n"), 1)
+        self.assertNotIn(tag, self.src10)
+        g = self.out.index(guard)
+        for a in self.anchors:
+            self.assertLess(g, self.out.index(a))
+        self.assertEqual(self.out.index(guard) + len(guard), self.out.index(ACL_REPLAY_GRANTS_10[0]))
+
+    def test_10_guard_checks_exact_eight_signatures(self):
+        _, guard = acl_guard_10(self.out)
+        flat = re.sub(r"\s+", "", guard)
+        for sig in ACL_GUARD_ROUTINES_10:
+            self.assertIn("'" + sig.replace(" ", "") + "'", flat, sig)
+        # The ACL comparison targets exact regprocedure signatures. The only name-based selection is the
+        # refusal of any extra routine the frozen DO $grant_temporal_merge$ loop would also reach.
+        loop_names = re.search(r"p\.proname IN \(([^)]*)\)", acl_replay_do_10(self.src10)).group(1)
+        names = sorted(re.findall(r"'(\w+)'", loop_names))
+        self.assertEqual(len(names), 6)
+        m = re.search(r"proname\s+IN\s*\(([^)]*)\)", guard)
+        self.assertIsNotNone(m, "guard must refuse extra overloads of the historical loop names")
+        self.assertEqual(sorted(re.findall(r"'(\w+)'", m.group(1))), names)
+        self.assertEqual(len(re.findall(r"\bproname\b", guard)), 1)
+        self.assertGreaterEqual(guard.count("RAISE EXCEPTION"), 2)  # non-canonical ACL and extra overload
+
+    def test_10_guard_compares_full_normalized_acl(self):
+        _, guard = acl_guard_10(self.out)
+        self.assertIn("aclexplode", guard)
+        self.assertIn("acldefault", guard)  # NULL proacl normalizes to the owner's default
+        for col in ["grantor", "grantee", "privilege_type", "is_grantable"]:
+            self.assertIn(col, guard, col)
+        self.assertNotIn("has_function_privilege", guard)  # PUBLIC is not a role; read the ACL itself
+
+    def test_10_guard_is_read_only_and_raises(self):
+        _, guard = acl_guard_10(self.out)
+        body = guard.upper()
+        for forbidden in ["GRANT ", "REVOKE ", "CASCADE", "SET_CONFIG", "CURRENT_SETTING", "ALTER ", "CREATE ",
+                          "INSERT ", "UPDATE ", "DELETE ", "PG_INIT_PRIVS"]:
+            self.assertNotIn(forbidden, re.sub(r"'(?:[^']|'')*'", "''", body), forbidden)
+        self.assertIn("RAISE EXCEPTION", body)
+        self.assertIn("ERRCODE", body)
+        self.assertIn("HINT", body)
+        self.assertEqual(len(self.g.split_sql(guard)), 1)
+
+    def test_10_guard_message_names_routine_and_owner_recipe(self):
+        _, guard = acl_guard_10(self.out)
+        self.assertRegex(guard, r"RAISE EXCEPTION '[^']*%")  # names the exact routine (and its ACL)
+        hints = re.findall(r"HINT = '((?:[^']|'')*)'", guard)
+        self.assertGreaterEqual(len(hints), 2)
+        for h in hints:
+            self.assertIn("ALTER EXTENSION sql_saga UPDATE TO ''1.3''", h)
+            self.assertIn("doc/upgrade.md", h)
+            self.assertNotIn("listed routines", h)  # each error reports one routine
+        acl_hints = [h for h in hints if "routine owner and PUBLIC" in h]
+        self.assertEqual(len(acl_hints), 1)  # the owner's own grant stays; nothing generic like CASCADE
+        hint = acl_hints[0]
+        self.assertIn("pg_dump", hint)  # explains why the site ACL cannot be carried through the update
+        self.assertIn("outside the extension", hint)
+        overload_hints = [h for h in hints if h is not hint]
+        self.assertTrue(any("rename" in h for h in overload_hints))  # owner's choice, never automatic
+
+    def test_10_only_guard_and_existing_retargets_differ(self):
+        _, guard = acl_guard_10(self.out)
+        out_wo_guard = self.out.replace(guard, "", 1)
+        src_lines, out_lines = self.src10.split("\n")[1:], out_wo_guard.split("\n")
+        self.assertEqual(len(src_lines), len(out_lines))
         allowed = [GATE, "<> '1.2'", "extension update version 1.2", "sql_saga 1.2 native library",
                    "UPDATE TO ''1.2'';"]
-        src_lines, out_lines = expected_wo_retargets.split("\n"), out.split("\n")
-        extra = len(out_lines) - len(src_lines)
-        self.assertGreaterEqual(extra, 0)
-        self.assertLessEqual(extra, 3)  # at most one explanatory comment line per omitted anchor
-        ia = 0
-        for b in out_lines:
-            if b.startswith("-- sql_saga 1.3: ") and b != "-- sql_saga 1.3: the 1.2 integrity gate runs at the end of this update instead":
-                continue
-            a = src_lines[ia]
-            ia += 1
+        for a, b in zip(src_lines, out_lines):
             if a != b:
                 self.assertTrue(any(x in a for x in allowed), a)
-        self.assertEqual(ia, len(src_lines))
+
+    def test_10_retains_new_helper_acl(self):
+        for line in self.src10.split("\n"):
+            if re.match(r"^(GRANT|REVOKE) ", line):
+                self.assertEqual(self.out.count("\n" + line + "\n"), self.src10.count("\n" + line + "\n"), line)
 
     def test_11_unchanged_by_acl_rule(self):
         out = self.g.transform_historical(self.src11, "1.1--1.2")
         self.assertEqual(len(out.split("\n")), len(self.src11.split("\n")) - 1)
         self.assertEqual(self.g.reverse_historical(out, "1.1--1.2"), self.src11)
+        for sig in ACL_GUARD_ROUTINES_10[2:]:
+            self.assertNotIn(sig, out)
 
     def test_acl_anchor_missing_or_duplicated_fails_closed(self):  # authentic input mutated
         for a in self.anchors:
             for mutated in [self.src10.replace(a, "", 1), self.src10.replace(a, a + a, 1)]:
                 with self.assertRaises(self.g.GeneratorError, msg=a[:60]):
                     self.g.transform_historical(mutated, "1.0--1.2")
+
+    def test_guard_text_already_present_fails_closed(self):  # authentic input mutated
+        tag, guard = acl_guard_10(self.out)
+        first = ACL_REPLAY_GRANTS_10[0]
+        mutated = self.src10.replace(first, guard + first, 1)
+        with self.assertRaises(self.g.GeneratorError):
+            self.g.transform_historical(mutated, "1.0--1.2")
 
 
 class AclAndSignatures(unittest.TestCase):
