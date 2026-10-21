@@ -190,6 +190,8 @@ class Historical(unittest.TestCase):
         self.assertIn("Install the sql_saga 1.3 native library", out)
         self.assertEqual(self.g.reverse_historical(out, name.replace("sql_saga--", "").replace(".sql", "")), src)
         # Independent check: only explicitly allowed lines differ (first line dropped; rest is line-for-line).
+        if name == "sql_saga--1.0--1.2.sql":  # ACL replay omission: line mapping in HistoricalAclReplay
+            return out
         src_lines, out_lines = src.split("\n")[1:], out.split("\n")
         self.assertEqual(len(src_lines), len(out_lines))
         allowed = [GATE, "<> '1.2'", "extension update version 1.2", "sql_saga 1.2 native library",
@@ -293,8 +295,6 @@ class HistoricalAclReplay(unittest.TestCase):
         extra = len(out_lines) - len(src_lines)
         self.assertGreaterEqual(extra, 0)
         self.assertLessEqual(extra, 3)  # at most one explanatory comment line per omitted anchor
-        out_core = [l for l in out_lines if not l.startswith("-- sql_saga 1.3: ") or l == GATE]
-        self.assertEqual(len(out_core), len(src_lines) - 1 + 1 if False else len(out_core))
         ia = 0
         for b in out_lines:
             if b.startswith("-- sql_saga 1.3: ") and b != "-- sql_saga 1.3: the 1.2 integrity gate runs at the end of this update instead":
