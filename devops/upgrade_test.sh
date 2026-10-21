@@ -1514,6 +1514,50 @@ run_preflight() {  # run_preflight <db>: prints output, returns psql status
     psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f "$PREFLIGHT" 2>&1
 }
 
+# The 8 routines released 1.0 created without pg_init_privs and that the 1.0--1.1 part grants to PUBLIC
+# (exact regprocedure identities; devops/test_generate_update_scripts.py ACL_GUARD_ROUTINES_10).
+CANON10_ROUTINES="sql_saga.for_portion_of_trigger()
+sql_saga.current_view_trigger()
+sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)
+sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)
+sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)
+sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)
+sql_saga.temporal_merge_drop_temp_tables()
+sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)"
+canon10_grants() { local r; printf '%s\n' "$CANON10_ROUTINES" | while IFS= read -r r; do echo "GRANT EXECUTE ON ROUTINE $r TO PUBLIC;"; done; }
+# acl10_refusal <db> <label> <routine named first>: the 1.0 update refuses a noncanonical routine ACL, atomically,
+# with the frozen guard text (tmp/v13_acl_replay/guard_proto.sql sha256 2edefcdd, devops/test_generate_update_scripts.py).
+ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '1.3', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
+acl10_refusal() {
+    local db=$1 label=$2 routine=$3 before out acl
+    acl=$(q "$db" "SELECT coalesce(proacl::text, '<missing>') FROM pg_proc WHERE oid = to_regprocedure('$routine')")
+    before="$(ext_snapshot "$db" | md5)|$(dump_schema "$db" | md5)|$(acl_digest "$db")"
+    out=$(printf "\\set VERBOSITY verbose\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$db" 2>&1 | sed -e 's/^psql:[^ ]*:[0-9]*: //')
+    check "$label: the update refuses with the exact guard message" \
+        "ERROR:  55000: sql_saga: routine $routine has privileges $acl that differ from the standard sql_saga privileges (EXECUTE for its owner and PUBLIC); the update from 1.0 cannot carry them over" \
+        "$(printf '%s\n' "$out" | grep -m1 '^ERROR:')"
+    check "$label: the HINT gives the exact owner recipe" "HINT:  $ACL10_HINT" "$(printf '%s\n' "$out" | grep -m1 '^HINT:')"
+    check "$label: refusal leaves extversion 1.0" "1.0" "$(v13_version "$db")"
+    check "$label: refusal leaves extension objects, schema and ACLs unchanged" "$before" \
+        "$(ext_snapshot "$db" | md5)|$(dump_schema "$db" | md5)|$(acl_digest "$db")"
+}
+# health10_route <statements after the restore, before COMMIT>: one owner transaction on a released 1.0 database
+# whose sql_saga_health_checks refuses GRANTs once a history table has an explicit ACL: record its mode, disable
+# ONLY that event trigger, grant the canonical ACL, restore the exact prior mode, then the given statements.
+health10_route() {
+    printf "BEGIN;
+SELECT set_config('upgrade_test.health_checks_mode', (SELECT evtenabled::text FROM pg_event_trigger WHERE evtname = 'sql_saga_health_checks'), true);
+ALTER EVENT TRIGGER sql_saga_health_checks DISABLE;
+%s
+DO \$restore\$ BEGIN
+    EXECUTE format('ALTER EVENT TRIGGER sql_saga_health_checks %%s', CASE current_setting('upgrade_test.health_checks_mode')
+        WHEN 'O' THEN 'ENABLE' WHEN 'A' THEN 'ENABLE ALWAYS' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'D' THEN 'DISABLE' END);
+END \$restore\$;
+%s
+COMMIT;\n" "$(canon10_grants)" "$1"
+}
+v13_version() { q "$1" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'"; }
+
 # =============================================================================================
 trap cleanup EXIT
 command -v psql >/dev/null || die "psql not found"
@@ -1775,6 +1819,38 @@ fi
 psql -X -q -d postgres -c "ALTER DATABASE $OLD RESET dynamic_library_path" >>"$LOG" 2>&1
 if [ -n "$OLD_LIB" ]; then
     check "after the restart the installed candidate C library serves the $BASELINE_VERSION SQL" "by-name writer" "$(writer_probe "")"
+fi
+if [ "$BASELINE_VERSION" = 1.0 ] && [ "$NEW_VERSION" != 1.2 ]; then
+    # The core fixture is hardened (default privileges revoke PUBLIC EXECUTE), so released 1.0 created the 8
+    # routines owner-only and the 1.3 update refuses (fail closed, no guess). The owner then applies the
+    # canonical ACL explicitly, before the update, and every later section (clones included) runs on that.
+    section "hardened 1.0 routine ACL: the update refuses, the owner grants the canonical ACL explicitly" "expected RED"
+    # The refusal is probed on a clone, so a missing guard (RED) cannot move the core fixture itself to 1.3.
+    ACL10_PROBE=${PREFIX}_acl10_core_probe
+    createdb -T "$OLD" "$ACL10_PROBE" >>"$LOG" 2>&1 || die "createdb $ACL10_PROBE from $OLD"
+    CREATED_DBS+=("$ACL10_PROBE")
+    psql -X -q -d postgres -c "ALTER DATABASE $ACL10_PROBE SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $ACL10_PROBE"
+    acl10_refusal "$ACL10_PROBE" "hardened 1.0 core fixture" "sql_saga.for_portion_of_trigger()"
+    # The documented recovery, in ONE owner transaction on the refused clone. First with an injected late error:
+    # everything rolls back (version, health_checks mode, routine ACLs). Then for real: 1.3 and integrity.
+    acl10_probe_state="SELECT (SELECT extversion FROM pg_extension WHERE extname = 'sql_saga') || '|' || (SELECT evtenabled::text FROM pg_event_trigger WHERE evtname = 'sql_saga_health_checks') || '|' || (SELECT md5(string_agg(coalesce(p.proacl::text, ''), ',' ORDER BY p.oid)) FROM pg_proc AS p WHERE p.pronamespace = 'sql_saga'::regnamespace)"
+    acl10_probe_before=$(q "$ACL10_PROBE" "$acl10_probe_state")
+    check "hardened 1.0 core fixture: a late error rolls the one-transaction recovery back" "ERROR:  division by zero" \
+        "$(health10_route "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION';
+SELECT 1/0;" | sql "$ACL10_PROBE" | grep -m1 '^ERROR')"
+    check "hardened 1.0 core fixture: the rollback restores version, health_checks mode and routine ACLs" "$acl10_probe_before" \
+        "$(q "$ACL10_PROBE" "$acl10_probe_state")"
+    check "hardened 1.0 core fixture: the one-transaction recovery (health_checks off, canonical GRANT, exact mode back, UPDATE) succeeds" "" \
+        "$(health10_route "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION';" | sql "$ACL10_PROBE" | grep -m1 '^ERROR')"
+    check "hardened 1.0 core fixture: the recovered clone is at $NEW_VERSION and passes check_integrity" "$NEW_VERSION|" \
+        "$(v13_version "$ACL10_PROBE")|$(q "$ACL10_PROBE" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
+    # Fixture precondition (not the recovery proof, which is the clone above): the core fixture itself gets the
+    # canonical ACL committed now, through the same route without the UPDATE, so its clones and the main update
+    # section below start from the state the recovery produces.
+    check "hardened 1.0 core fixture (precondition): canonical ACL committed through the health_checks route" "" \
+        "$(health10_route "" | sql "$OLD" | grep -m1 '^ERROR')"
+    check "hardened 1.0 core fixture: sql_saga_health_checks is back in its prior mode" "O" \
+        "$(q "$OLD" "SELECT evtenabled FROM pg_event_trigger WHERE evtname = 'sql_saga_health_checks'")"
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
 acl_entries "$OLD" >"$WORK/acl_entries.before"
@@ -2888,7 +2964,6 @@ v13_db() {  # v13_db <db> <setup sql>: a baseline database with btree_gist + sql
     return 0
 }
 v13_restart() { psql -X -q -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"; }
-v13_version() { q "$1" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'"; }
 v13_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
 
 # ---------------------------------------------------------------------------------------------
@@ -3122,24 +3197,88 @@ v13_db "$ACL_DB" "REVOKE EXECUTE ON FUNCTION $FPO FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION $FPO TO ${PREFIX}_fpo;"
 fpo_before=$(asv_acl "$ACL_DB" "$FPO")
 v13_restart "$ACL_DB"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    # 1.0: refused; the owner normalizes the fixture's exact change, updates and replays it outside the extension,
+    # in one transaction (explicit statements, no CASCADE).
+    acl10_refusal "$ACL_DB" "custom routine ACL (1.0)" "$FPO"
+    check "custom routine ACL: the update succeeds" "" "$(printf 'BEGIN;
+REVOKE EXECUTE ON FUNCTION %s FROM %s;
+GRANT EXECUTE ON FUNCTION %s TO PUBLIC;
+ALTER EXTENSION sql_saga UPDATE TO '\''%s'\'';
+REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION %s TO %s;
+COMMIT;\n' "$FPO" "${PREFIX}_fpo" "$FPO" "$NEW_VERSION" "$FPO" "$FPO" "${PREFIX}_fpo" | sql "$ACL_DB" | grep -m1 '^ERROR')"
+else
 check "custom routine ACL: the update succeeds" "" "$(q "$ACL_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+fi
 check "custom routine ACL: reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$ACL_DB")"
 check "custom routine ACL: for_portion_of_trigger keeps exactly the site's grants (no PUBLIC replay)" "$fpo_before" "$(asv_acl "$ACL_DB" "$FPO")"
 check "custom routine ACL: pg_dump still repeats the site's change" "1" \
     "$(dump_schema "$ACL_DB" | grep -c "^REVOKE ALL ON FUNCTION sql_saga.for_portion_of_trigger() FROM PUBLIC;")"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    # 1.0 site ACL with a grant-option holder and its leaf grantee: refused, then normalized leaf first (as the
+    # grantor), updated and replayed in one transaction; the exact ACL survives a real dump and restore.
+    new_role "${PREFIX}_fpo_leaf"
+    ACL_X=${PREFIX}_acl_fpo_x
+    v13_db "$ACL_X" "REVOKE EXECUTE ON FUNCTION $FPO FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION $FPO TO ${PREFIX}_fpo WITH GRANT OPTION;
+SET ROLE ${PREFIX}_fpo;
+GRANT EXECUTE ON FUNCTION $FPO TO ${PREFIX}_fpo_leaf;
+RESET ROLE;"
+    fpo_x_before=$(q "$ACL_X" "SELECT proacl::text FROM pg_proc WHERE oid = '$FPO'::regprocedure")
+    v13_restart "$ACL_X"
+    acl10_refusal "$ACL_X" "custom routine ACL with grant option (1.0)" "$FPO"
+    check "custom routine ACL with grant option (1.0): normalize, update and replay in one transaction" "" "$(printf 'BEGIN;
+SET ROLE %s;
+REVOKE EXECUTE ON FUNCTION %s FROM %s;
+RESET ROLE;
+REVOKE EXECUTE ON FUNCTION %s FROM %s;
+GRANT EXECUTE ON FUNCTION %s TO PUBLIC;
+ALTER EXTENSION sql_saga UPDATE TO '\''%s'\'';
+REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION %s TO %s WITH GRANT OPTION;
+SET ROLE %s;
+GRANT EXECUTE ON FUNCTION %s TO %s;
+RESET ROLE;
+COMMIT;\n' "${PREFIX}_fpo" "$FPO" "${PREFIX}_fpo_leaf" "$FPO" "${PREFIX}_fpo" "$FPO" "$NEW_VERSION" "$FPO" "$FPO" "${PREFIX}_fpo" "${PREFIX}_fpo" "$FPO" "${PREFIX}_fpo_leaf" | sql "$ACL_X" | grep -m1 '^ERROR')"
+    check "custom routine ACL with grant option (1.0): reaches $NEW_VERSION" "$NEW_VERSION" "$(v13_version "$ACL_X")"
+    check "custom routine ACL with grant option (1.0): the exact ACL (holder X*, leaf granted by it) is kept" "$fpo_x_before" \
+        "$(q "$ACL_X" "SELECT proacl::text FROM pg_proc WHERE oid = '$FPO'::regprocedure")"
+    check "custom routine ACL with grant option (1.0): the site ACL is a user delta, not an initial privilege" "0" \
+        "$(q "$ACL_X" "SELECT count(*) FROM pg_init_privs AS i, aclexplode(i.initprivs) AS a WHERE i.objoid = '$FPO'::regprocedure AND i.classoid = 'pg_proc'::regclass AND a.grantee IN ('${PREFIX}_fpo'::regrole, '${PREFIX}_fpo_leaf'::regrole)")"
+    if pg_dump -Fc -d "$ACL_X" -f "$WORK/acl_x.dump" 2>>"$LOG"; then
+        ACL_XR=${PREFIX}_acl_fpo_x_rt
+        new_db "$ACL_XR" "$EXT_ROOT"
+        if pg_restore --exit-on-error -d "$ACL_XR" "$WORK/acl_x.dump" >"$WORK/acl_x.restore.log" 2>&1; then
+            check "custom routine ACL with grant option (1.0): the restored database has the exact ACL" "$fpo_x_before" \
+                "$(q "$ACL_XR" "SELECT proacl::text FROM pg_proc WHERE oid = '$FPO'::regprocedure")"
+        else
+            fail "custom routine ACL with grant option (1.0): restore failed: $(grep -m1 -E 'ERROR|error:' "$WORK/acl_x.restore.log")"
+        fi
+    else
+        fail "custom routine ACL with grant option (1.0): pg_dump failed"
+    fi
+fi
 HARDU=${PREFIX}_hard_up
 new_db "$HARDU" "$EXT_ROOT" "$OLD_LIB"
 out=$(printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$HARDU")
 printf '%s\n' "$out" | grep -q '^ERROR' && die "hardened upgrade fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
 v13_restart "$HARDU"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    acl10_refusal "$HARDU" "hardened routines (1.0)" "sql_saga.for_portion_of_trigger()"
+    check "hardened routines: the update succeeds" "" \
+        "$(printf 'BEGIN;\n%s\nALTER EXTENSION sql_saga UPDATE TO '\''%s'\'';\nCOMMIT;\n' "$(canon10_grants)" "$NEW_VERSION" | sql "$HARDU" | grep -m1 '^ERROR')"
+else
 check "hardened routines: the update succeeds" "" "$(q "$HARDU" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+fi
 HARDF=${PREFIX}_hard_fresh
 new_db "$HARDF" "$EXT_ROOT"
 out=$(printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$NEW_VERSION" | sql "$HARDF")
 if printf '%s\n' "$out" | grep -q '^ERROR'; then
     fail "hardened routines: fresh hardened $NEW_VERSION install failed: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
 else
-    q "$HARDF" "$ROUTINE_ACL_SQL" >"$WORK/hard_fresh.acl"; q "$HARDU" "$ROUTINE_ACL_SQL" >"$WORK/hard_up.acl"
+    # Full transport (q keeps only the first line of the aggregated inventory).
+    printf '%s;\n' "$ROUTINE_ACL_SQL" | sql "$HARDF" >"$WORK/hard_fresh.acl"; printf '%s;\n' "$ROUTINE_ACL_SQL" | sql "$HARDU" >"$WORK/hard_up.acl"
     if diff -u "$WORK/hard_fresh.acl" "$WORK/hard_up.acl" >"$WORK/hard_acl.diff"; then ok "hardened routines: every sql_saga routine's EXECUTE set equals a fresh hardened install"
     else fail "hardened routines: EXECUTE sets differ from a fresh hardened install ($(grep -c '^[-+][^-+]' "$WORK/hard_acl.diff") lines, $WORK/hard_acl.diff)"; fi
     # Explicit deny, by name: every private __internal routine executable by PUBLIC after the update is
@@ -3152,14 +3291,28 @@ else
     HARDB=${PREFIX}_hard_base
     new_db "$HARDB" "$EXT_ROOT" "$OLD_LIB"
     printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$HARDB" >/dev/null
-    q "$HARDB" "$ROUTINE_ACL_SQL" | sed 's/=.*//' | LC_ALL=C sort >"$WORK/hard_base.names"
+    printf '%s;\n' "$ROUTINE_ACL_SQL" | sql "$HARDB" | sed 's/=.*//' | LC_ALL=C sort >"$WORK/hard_base.names"
     # The listed new 1.3 private pairing helpers: they must exist and be closed to PUBLIC (grant option included).
     for helper in "sql_saga.__internal_foreign_key_mispairing(name)" "sql_saga.__internal_foreign_key_mispairing_report(name)"; do
         check "hardened routines: listed private helper $helper exists after the update and denies PUBLIC" "exists|denied" \
             "$(q "$HARDU" "SELECT CASE WHEN to_regprocedure('$helper') IS NULL THEN 'missing' ELSE 'exists|' || CASE WHEN EXISTS (SELECT FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = to_regprocedure('$helper') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE') THEN 'public' ELSE 'denied' END END")"
     done
-    check "hardened routines: no private helper new in $NEW_VERSION is executable by PUBLIC" "" \
-        "$(grep '^sql_saga\.__internal' "$WORK/hard_up.acl" | grep -E '=([^=]*,)?PUBLIC\*?(,|$)' | sed 's/=.*//' | LC_ALL=C sort | LC_ALL=C comm -23 - "$WORK/hard_base.names" | paste -sd' ' -)"
+    # Fixed allowlist: private helpers new since the baseline that are PUBLIC by reviewed design (sql/117
+    # integrity_v11_public_function: the two 1.3 current-view clock helpers, and on 1.0 the seven 1.1 history
+    # helpers). Any other new PUBLIC private helper fails.
+    NEW_PUBLIC_HELPERS="sql_saga.__internal_current_view_clock(oid)
+sql_saga.__internal_current_view_now(oid,regtype)"
+    [ "$BASELINE_VERSION" = 1.0 ] && NEW_PUBLIC_HELPERS="$NEW_PUBLIC_HELPERS
+sql_saga.__internal_deny_history(oid)
+sql_saga.__internal_history_copy_name(name)
+sql_saga.__internal_history_policies_synchronized(oid,oid)
+sql_saga.__internal_history_policy_copies(oid)
+sql_saga.__internal_history_policy_drift(oid,oid)
+sql_saga.__internal_installation_token()
+sql_saga.__internal_is_managed_history_policy(name)"
+    printf '%s\n' "$NEW_PUBLIC_HELPERS" | LC_ALL=C sort >"$WORK/new_public_helpers.allowed"
+    check "hardened routines: no private helper new in $NEW_VERSION is executable by PUBLIC (beyond the fixed reviewed allowlist)" "" \
+        "$(grep '^sql_saga\.__internal' "$WORK/hard_up.acl" | grep -E '=([^=]*,)?PUBLIC\*?(,|$)' | sed 's/=.*//' | LC_ALL=C sort | LC_ALL=C comm -23 - "$WORK/hard_base.names" | LC_ALL=C comm -23 - "$WORK/new_public_helpers.allowed" | paste -sd' ' -)"
 fi
 
 # ---------------------------------------------------------------------------------------------
