@@ -36,17 +36,22 @@ Release gates still open:
   - [x] Independently review and execute the actual three assembled migrations, including exact CHECK attribution and absence/ambiguity refusals
   - [x] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did (independent final-fragment audit, including final preamble-only correction)
   - [ ] Prove all-baseline routine/family ACL parity, original event-trigger firing modes and atomic rollback on every refusal
-  - [ ] Retain the healthy 1.0 base-GRANT-before-managed-views bootstrap regression in the maintained tag matrix (independent RED and bounded preamble fix already verified)
+  - [x] Retain the healthy 1.0 base-GRANT-before-managed-views bootstrap regression in the maintained tag matrix (46dcf17, independently reviewed; all three focused baseline probes pass)
+  - [ ] Preserve the original custom current-function binding during managed-view ADD/DROP/TYPE rebuilds and current-view writes (actual released-tag matrix reproduces an unqualified-function failure; RED135 and independent G2 in progress)
+  - [ ] Correct the maintained matrix's empty-trigger-attribute renderer and construct both XOR foreign keys before any sorting DDL; independently review the fixture corrections
+  - [ ] Classify released-1.2 user-policy and tampered-helper refusal diagnostics without weakening atomicity or actionable-error checks
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
 - [ ] Finish 1.3 API/runbook documentation and full assembled-package regression/native tests
   - [x] Review and commit the 1.3 runbook contract, preserving the old-dump restore block verbatim (3cd6315)
   - [x] Run reviewed-source native unit tests (5/5)
-  - [ ] Pass the complete real-1.3 regression and benchmark suite in an isolated snapshot
+  - [x] Pass the complete real-1.3 regression and benchmark suite in an isolated snapshot before the binding fix (132/132, tmp/coord/full13_0004/test_all_green.log)
+  - [ ] Rerun focused and full assembled-package regression after the binding fix and any subsequent source correction
   - [x] Integrate the eight reviewed intentional benchmark102 native-FK NOTICE lines and immediately rerun the affected test (f5cd490, 001/102 2/2)
   - [ ] Reconcile documentation and generated API output with actual migration/restore outcomes
   - [x] Integrate reviewed bounded two-session FK concurrency harness in Makefile and disposable CI (d4bba39, c8c2862; independent 35/35 plus timeout/signal/poisoned-environment controls; Ubuntu CI execution awaits push approval)
+  - [x] Execute the public Makefile concurrency target on the integrated candidate (35/35, tmp/v13_designBtests/rfc_make_run.log)
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
   - [x] Obtain Fable's source/test coverage map with missing execution evidence explicitly distinguished from defects
   - [ ] Update that map after actual released-tag upgrade and restore acceptance
