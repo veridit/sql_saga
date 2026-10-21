@@ -72,7 +72,9 @@ The statements are a proposal. Confirm that the pairing is the one you intended 
 ### Privileges
 
 - Routines whose signature is unchanged keep their privileges, including site-specific `GRANT` and `REVOKE`. The update does not replay grants.
-- Routines new in 1.3 get explicit privileges, the same as in a fresh 1.3 installation. The new private helpers are revoked from `PUBLIC`. The new trigger function `sql_saga.regular_fk_check_c()` is granted `EXECUTE` to `PUBLIC` explicitly, because creating the trigger, as `pg_restore` does when it restores as the table owner, needs `EXECUTE`. The function only enforces the foreign key that its trigger arguments name.
+- Routines new in 1.3 get explicit privileges, the same as in a fresh 1.3 installation. The new private helpers are revoked from `PUBLIC`, with three deliberate exceptions that are granted `EXECUTE` to `PUBLIC` explicitly, also where default privileges revoke it:
+  - `sql_saga.regular_fk_check_c()`, the trigger function of regular foreign keys. Creating the trigger, as `pg_restore` does when it restores as the table owner, needs `EXECUTE`. The function only enforces the foreign key that its trigger arguments name.
+  - `sql_saga.__internal_current_view_clock(oid)` and `sql_saga.__internal_current_view_now(oid, regtype)`, which give a `current` view's trigger the clock that view is bound to. The trigger runs as whoever writes through the view, so they are called as that writer. They are `SECURITY INVOKER` with a fixed `search_path`, and they only read and evaluate the clock expression PostgreSQL already parsed into the view's rule.
 - A routine whose signature changes is replaced, and the replacement cannot carry changed privileges over (see the next section).
 
 ### Changed privileges on `add_system_versioning`
