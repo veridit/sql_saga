@@ -417,6 +417,16 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: MATCH PARTIAL is not supported for regular foreign keys'
             USING ERRCODE = 'feature_not_supported';
     END IF;
+    IF delete_action IN ('SET NULL', 'SET DEFAULT') THEN
+        RAISE EXCEPTION 'sql_saga: ON DELETE % is not supported for regular foreign keys', delete_action
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Use NO ACTION, RESTRICT or CASCADE.';
+    END IF;
+    IF update_action NOT IN ('NO ACTION', 'RESTRICT') THEN
+        RAISE EXCEPTION 'sql_saga: ON UPDATE % is not supported for regular foreign keys', update_action
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Use NO ACTION or RESTRICT.';
+    END IF;
     IF fk_helper_function IS NOT NULL THEN
         RAISE EXCEPTION 'sql_saga: fk_helper_function is no longer used: since 1.3 a regular foreign key has no helper function'
             USING ERRCODE = 'feature_not_supported',
@@ -632,6 +642,15 @@ DECLARE
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    IF delete_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') OR update_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') THEN
+        RAISE EXCEPTION 'sql_saga: ON % % is not supported for temporal foreign keys',
+            CASE WHEN delete_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') THEN 'DELETE' ELSE 'UPDATE' END,
+            CASE WHEN delete_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') THEN delete_action ELSE update_action END
+            USING ERRCODE = 'feature_not_supported',
+                  DETAIL = 'PostgreSQL does not support referential actions on foreign keys using PERIOD.',
+                  HINT = 'Use NO ACTION or RESTRICT. ON DELETE CASCADE is supported for foreign keys from a regular table.';
     END IF;
 
     /* Always serialize operations on our catalogs */

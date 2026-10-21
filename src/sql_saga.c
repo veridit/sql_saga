@@ -142,6 +142,7 @@ typedef struct FkValidationPlan
 	Oid			argtypes[MAX_FK_COLS + 2]; /* FK cols + range start/end */
 	int			param_attnums[MAX_FK_COLS + 2]; /* attnums in heap tuple */
 	SPIPlanPtr	key_plan;	/* regular FK, referenced side: does the key still exist in the parent? */
+	SPIPlanPtr	cascade_plan;	/* regular FK, ON DELETE CASCADE: delete the children of a vanished key */
 } FkValidationPlan;
 
 /*
@@ -1234,8 +1235,8 @@ regular_fk_prepare_key_plan(const char *uk_schema_name, const char *uk_table_nam
  * included too). In READ COMMITTED each lookup takes a fresh snapshot anyway.
  */
 static uint64
-regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
-							bool detect_new_rows)
+regular_fk_execute_as_owner_ex(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
+							   bool detect_new_rows, int expected_ret, long tcount)
 {
 	HeapTuple	proc_tuple;
 	Oid			function_owner;
@@ -1263,8 +1264,13 @@ regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *val
 						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
 	PG_TRY();
 	{
+		/*
+		 * read_only false; fire_triggers false for the lookups (as before) and true for the cascading
+		 * DELETE, so the child's own triggers (system versioning, its own foreign keys) run, as they do
+		 * for a native ON DELETE CASCADE.
+		 */
 		ret = SPI_execute_snapshot(plan, values, nulls, test_snapshot, crosscheck_snapshot,
-								   false, false, 1);
+								   false, expected_ret != SPI_OK_SELECT, tcount);
 	}
 	PG_FINALLY();
 	{
@@ -1272,9 +1278,16 @@ regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *val
 	}
 	PG_END_TRY();
 
-	if (ret != SPI_OK_SELECT)
+	if (ret != expected_ret)
 		elog(ERROR, "SPI_execute_plan for regular foreign key lookup returned %s", SPI_result_code_string(ret));
 	return SPI_processed;
+}
+
+static uint64
+regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
+							bool detect_new_rows)
+{
+	return regular_fk_execute_as_owner_ex(fcinfo, plan, values, nulls, detect_new_rows, SPI_OK_SELECT, 1);
 }
 
 static void
@@ -1324,13 +1337,53 @@ regular_fk_child_reference_query(const char *fk_schema_name, const char *fk_tabl
 }
 
 /*
+ * ON DELETE CASCADE for the referenced side of a regular foreign key: delete every child row that
+ * references the key, comparing with the same equality operators as the referencing side. Uses the
+ * foreign key's index on the child columns, like the reference lookup.
+ */
+static SPIPlanPtr
+regular_fk_prepare_cascade_plan(const char *fk_schema_name, const char *fk_table_name,
+								Datum *fk_col_datums, int ncols, Oid *argtypes)
+{
+	StringInfoData buf;
+	SPIPlanPtr	plan;
+	int			i;
+
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "DELETE FROM ONLY %s.%s AS fk WHERE ",
+					 quote_identifier(fk_schema_name), quote_identifier(fk_table_name));
+	for (i = 0; i < ncols; i++)
+	{
+		char	   *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+
+		if (i > 0)
+			appendStringInfoString(&buf, " AND ");
+		appendStringInfo(&buf, "fk.%s %s $%d",
+						 quote_identifier(fkc), regular_fk_equality_operator(argtypes[i]), i + 1);
+	}
+
+	plan = SPI_prepare(buf.data, ncols, argtypes);
+	if (plan == NULL)
+		elog(ERROR, "SPI_prepare for regular foreign key cascade failed: %s", SPI_result_code_string(SPI_result));
+	if (SPI_keepplan(plan))
+		elog(ERROR, "SPI_keepplan for regular foreign key cascade failed");
+	pfree(buf.data);
+	return plan;
+}
+
+/*
  * The referenced side of a regular foreign key, after OLD's key went away (deleted, or changed by an
  * update): refuse when a child row references OLD's key and no parent row has that key any more.
  * values/nulls hold OLD's key columns.
+ *
+ * With ON DELETE CASCADE (cascade_plan not NULL) the child rows of the vanished key are deleted
+ * instead of refusing, under the same rule: only when no parent row has the key any more. The delete
+ * runs as the function owner like the lookups, so the parent's writer needs no rights on the child
+ * (native ON DELETE CASCADE behaves the same way).
  */
 static void
 regular_fk_check_referenced_key(FunctionCallInfo fcinfo, SPIPlanPtr reference_plan, SPIPlanPtr key_plan,
-								Datum *values, const char *nulls, char **tgargs)
+								SPIPlanPtr cascade_plan, Datum *values, const char *nulls, char **tgargs)
 {
 	/*
 	 * The child table is read as the function owner too: the parent's writer needs no rights on it. Both
@@ -1342,6 +1395,12 @@ regular_fk_check_referenced_key(FunctionCallInfo fcinfo, SPIPlanPtr reference_pl
 
 	if (regular_fk_execute_as_owner(fcinfo, key_plan, values, nulls, true) > 0)
 		return;
+
+	if (cascade_plan != NULL)
+	{
+		regular_fk_execute_as_owner_ex(fcinfo, cascade_plan, values, nulls, true, SPI_OK_DELETE, 0);
+		return;
+	}
 
 	ereport(ERROR,
 			(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
@@ -1855,6 +1914,9 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		char *query;
 		int i;
 
+		plan_entry->key_plan = NULL;
+		plan_entry->cascade_plan = NULL;
+
 		/* Get column name arrays */
 		if (namearray_input_func_oid == InvalidOid)
 		{
@@ -2021,6 +2083,11 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 			/* ... is a violation only when no parent row has the key any more. */
 			plan_entry->key_plan = regular_fk_prepare_key_plan(uk_schema_name, uk_table_name, uk_col_datums,
 															   num_uk_cols, plan_entry->argtypes);
+			/* tgargs[15] is delete_action: with CASCADE the vanished key's children are deleted instead. */
+			plan_entry->cascade_plan = strcmp(tgargs[15], "CASCADE") == 0
+				? regular_fk_prepare_cascade_plan(fk_schema_name, fk_table_name, fk_col_datums,
+												  num_uk_cols, plan_entry->argtypes)
+				: NULL;
 		}
 		
 		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
@@ -2062,7 +2129,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 
 		if (strcmp(fk_type, "temporal_to_temporal") != 0)
 		{
-			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, values, nulls, tgargs);
+			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, plan_entry->cascade_plan,
+											values, nulls, tgargs);
 			SPI_finish();
 			return PointerGetDatum(rettuple);
 		}
@@ -2456,7 +2524,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				values[i] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
 				nulls[i] = isnull ? 'n' : ' ';
 			}
-			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, values, nulls, tgargs);
+			/* ON UPDATE CASCADE is not supported: an update of the referenced key is checked, never cascaded. */
+			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, NULL, values, nulls, tgargs);
 			SPI_finish();
 			return PointerGetDatum(rettuple);
 		}

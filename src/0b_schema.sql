@@ -177,7 +177,10 @@ CREATE TABLE sql_saga.foreign_keys (
     -- No longer possible to have a direct FK to sql_saga.era
     FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys ON DELETE CASCADE,
 
-    CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
+    -- ON DELETE CASCADE is supported for regular_to_temporal keys only (since 1.4): the child row goes
+    -- when the last parent row with its key does. PostgreSQL 18 refuses it on PERIOD keys.
+    CHECK (delete_action NOT IN ('SET NULL', 'SET DEFAULT')),
+    CHECK (delete_action <> 'CASCADE' OR type = 'regular_to_temporal'),
     CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
 
     CHECK (
