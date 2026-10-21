@@ -28,14 +28,15 @@ Release gates still open:
 - [x] Freeze the original tagged 1.2 install and direct-update artifacts without changing released files
 - [x] Accept released 1.2 in the read-only preflight, with independent frozen-layout and unchanged-fingerprint validation (effc130)
 - [x] Package the real 1.3 control/native version and verify install/native/safeguard tests plus all direct paths (e994fe0, private 3/3)
-- [ ] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts
+- [x] Build direct 1.0, 1.1 and 1.2 to 1.3 update scripts (58c76bd, independent actual three-baseline G4)
   - [x] Authenticate frozen inputs and test deterministic generation, SQL splitting and signature checks (5c3b0ad, independent G4, 43/43 and GNU make wiring)
   - [x] Generate unchanged-signature replacements without ACL replay and require explicit new-routine privileges (actual upgraded ACL parity remains an acceptance gate)
-  - [ ] Preserve managed-view identity, grants and extension membership when repairing stale views during UPDATE
-- [ ] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
-  - [ ] Independently review and execute the actual three assembled migrations, including exact CHECK attribution and absence/ambiguity refusals
-  - [ ] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did
+  - [x] Preserve 1.1/1.2 stale-prefix managed-view identity, grants, comments, dependents and extension membership during UPDATE; refuse 1.0 user dependents precisely
+- [x] Order XOR/view/FK repairs and the catalog-format migration before the final integrity gate
+  - [x] Independently review and execute the actual three assembled migrations, including exact CHECK attribution and absence/ambiguity refusals
+  - [x] Verify every automatic repair/create/drop NOTICE describes exactly what the migration did (independent final-fragment audit, including final preamble-only correction)
   - [ ] Prove all-baseline routine/family ACL parity, original event-trigger firing modes and atomic rollback on every refusal
+  - [ ] Retain the healthy 1.0 base-GRANT-before-managed-views bootstrap regression in the maintained tag matrix (independent RED and bounded preamble fix already verified)
 - [ ] Test old dumps at their own version, wrong-version restore rejection, orphan refusal and atomic upgrade rollback
 - [ ] Validate tag-built StatBus-shaped databases through upgrade, single-transaction restore and split parallel restore
 - [x] Measure native cache correctness-check cost with actual matched builds: one-row merges +0.4165ms (+7.61%);1000-row medians +2.12% with wider noise (documented limits)
@@ -43,8 +44,9 @@ Release gates still open:
   - [x] Review and commit the 1.3 runbook contract, preserving the old-dump restore block verbatim (3cd6315)
   - [x] Run reviewed-source native unit tests (5/5)
   - [ ] Pass the complete real-1.3 regression and benchmark suite in an isolated snapshot
+  - [x] Integrate the eight reviewed intentional benchmark102 native-FK NOTICE lines and immediately rerun the affected test (f5cd490, 001/102 2/2)
   - [ ] Reconcile documentation and generated API output with actual migration/restore outcomes
-  - [ ] Run the deterministic two-session FK concurrency harness in the Makefile and CI on an explicitly identified disposable cluster
+  - [x] Integrate reviewed bounded two-session FK concurrency harness in Makefile and disposable CI (d4bba39, c8c2862; independent 35/35 plus timeout/signal/poisoned-environment controls; Ubuntu CI execution awaits push approval)
 - [ ] Obtain independent final coverage review, close known defects and clean up private test clusters
   - [x] Obtain Fable's source/test coverage map with missing execution evidence explicitly distinguished from defects
   - [ ] Update that map after actual released-tag upgrade and restore acceptance
