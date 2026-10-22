@@ -28,8 +28,12 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
 - [x] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2). DONE, test 139 part 5
 
 **Correctness.**
-- [ ] F4: partitioned child tables: no `ONLY` for a partitioned child (native rule) in cascade, reference lookup and
+- [x] F4: partitioned child tables: no `ONLY` for a partitioned child (native rule) in cascade, reference lookup and
       TRUNCATE check; decide inheritance children (refuse or ONLY consistently). Tests
+      DONE: add_foreign_key refuses a partitioned referencing table (cloned triggers, unvalidated ATTACH; sql_saga
+      supports no partitioned tables); a partition may reference. ONLY on both sides everywhere (lookups, cascade,
+      TRUNCATE, add-time validation), as native: inheritance children not covered. Test 141.
+      UPGRADE: the 1.4 update must refuse (name them) existing regular FKs whose referencing table is partitioned
 - [ ] F5: predicated unique keys: include the predicate in key lookups, or refuse add_regular_foreign_key against
       predicated keys. Test
 - [ ] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE

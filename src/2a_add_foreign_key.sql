@@ -408,6 +408,18 @@ BEGIN
     FROM pg_catalog.pg_attribute AS a
     WHERE a.attrelid = fk_table_oid AND a.attnum > 0 AND NOT a.attisdropped;
 
+    /*
+     * A partitioned table would get the referencing trigger cloned onto its partitions, which ATTACH PARTITION does
+     * not validate, and sql_saga supports no partitioned tables. A partition can reference by itself. Like a native
+     * foreign key, a regular foreign key covers only its own tables, not inheritance children (ONLY on both sides).
+     */
+    IF (SELECT c.relkind FROM pg_catalog.pg_class AS c WHERE c.oid = fk_table_oid) = 'p' THEN
+        RAISE EXCEPTION 'table "%" is partitioned; a regular foreign key cannot reference from a partitioned table',
+            sql_saga.__internal_display_name(fk_table_oid)
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Add the foreign key to each partition instead.';
+    END IF;
+
     -- Verify that the referencing table is NOT temporal.
     IF EXISTS (
         SELECT 1 FROM sql_saga.era e
@@ -645,9 +657,9 @@ BEGIN
         ) AS eq;
 
         EXECUTE format('SELECT EXISTS( ' ||
-            'SELECT 1 FROM %1$I.%2$I AS fk ' ||
+            'SELECT 1 FROM ONLY %1$I.%2$I AS fk ' ||
             'WHERE %3$s AND NOT EXISTS ( ' ||
-            '  SELECT 1 FROM %4$I.%5$I AS uk WHERE %6$s' ||
+            '  SELECT 1 FROM ONLY %4$I.%5$I AS uk WHERE %6$s' ||
             '))',
             fk_schema_name,       -- %1$I
             fk_table_name,        -- %2$I

@@ -1,0 +1,16 @@
+\set ECHO none
+--- part 1: a partitioned referencing table is refused
+add_foreign_key on a partitioned table | 0A000: table "rip.pnote" is partitioned; a regular foreign key cannot reference from a partitioned table
+catalogued foreign keys | 0
+triggers on pnote and its partition | 0
+--- part 2: a partition can reference; rows routed to it are checked and cascaded
+insert through the partitioned table, key present | ok
+insert through the partitioned table, key missing | 23503: insert or update on table "rip.pnote_1" violates foreign key constraint "pnote_1_fk"
+pnote rows after deleting key 1 (cascade) | 0
+--- part 3: inheritance children are not covered, on either side, as natively
+insert into the inheritance child, key missing (not checked) | ok
+after deleting key 2: note rows | 0, note_sub rows | 2
+NO ACTION: delete key 3, referenced only from the inheritance child | ok
+key only in an inheritance child of the parent, new row | 23503: insert or update on table "rip.tag" violates foreign key constraint "tag_fk"
+key only in an inheritance child of the parent, existing row | 23503: insert or update on table "rip.late" violates foreign key constraint "late_fk"
+integrity | ok

@@ -1257,7 +1257,7 @@ regular_fk_prepare_key_plan(const char *uk_schema_name, const char *uk_table_nam
 	int			i;
 
 	initStringInfo(&buf);
-	appendStringInfo(&buf, "SELECT 1 FROM %s.%s AS uk WHERE ",
+	appendStringInfo(&buf, "SELECT 1 FROM ONLY %s.%s AS uk WHERE ",
 					 quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
 	for (i = 0; i < ncols; i++)
 	{
@@ -1482,7 +1482,7 @@ regular_fk_child_reference_query(const char *fk_schema_name, const char *fk_tabl
 	int			i;
 
 	initStringInfo(&buf);
-	appendStringInfo(&buf, "SELECT 1 FROM %s.%s AS fk WHERE ",
+	appendStringInfo(&buf, "SELECT 1 FROM ONLY %s.%s AS fk WHERE ",
 					 quote_identifier(fk_schema_name), quote_identifier(fk_table_name));
 	for (i = 0; i < ncols; i++)
 	{
