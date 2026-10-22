@@ -2,7 +2,61 @@
 
 A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
 
-## In parallel - Upstream PostgreSQL work on the parallel-restore bug (delegated to other agents; unlocked by the 1.3 release, 2026-10-21)
+## Now - Version 1.4: fix the security and correctness defects found in review, ship CASCADE and TRUNCATE (2026-10-22)
+
+1.3 is tagged and stays. 1.4 is the follow-up release that fixes what review found. StatBus runs 1.0 and moves to
+1.4 directly. Order: security first, then correctness, then re-review, then packaging and acceptance, then ship.
+Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journal.md`.
+
+**Security (release-blocking).**
+- [ ] F1: every sql_saga FK trigger function (uk_delete, uk_update, uk_truncate, regular_fk_check, fk_insert/update)
+      verifies it is a managed trigger before acting: catalog row exists, trigger name/table/child table match, args
+      equal the canonical args. Otherwise 42501. Also validate column counts against MAX_FK_COLS. Negative test with a
+      forged trigger (delete path and the read oracle). Reproduced: attacker deleted another role's row; 1.3 NO ACTION
+      args give a key-existence oracle on unreadable tables
+- [ ] F2: run the cascade DELETE (and prepare its plan) as the child table's owner, as native RI does; child triggers
+      then fire as the child owner. Test: child trigger records current_user = child owner. Reproduced: fired as postgres
+- [ ] F3: every SECURITY DEFINER DDL API checks the caller owns the table it changes (pg_has_role(caller, relowner,
+      'USAGE'), as add_system_versioning does), plus REFERENCES on the referenced table for FKs. Affects add/drop era,
+      unique key, foreign key, for_portion_of/current views, synchronize trigger. Present since 1.0. Test with a
+      non-owner role. Document the behavior change in doc/upgrade.md
+- [ ] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2); fresh-backend test
+
+**Correctness.**
+- [ ] F4: partitioned child tables: no `ONLY` for a partitioned child (native rule) in cascade, reference lookup and
+      TRUNCATE check; decide inheritance children (refuse or ONLY consistently). Tests
+- [ ] F5: predicated unique keys: include the predicate in key lookups, or refuse add_regular_foreign_key against
+      predicated keys. Test
+- [ ] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE
+      regular FK references the target, or document exactly. Test
+- [ ] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording
+- [ ] F10 nits: error text "lookup" for the DELETE; wrong "as native" comments; lazy cascade-plan preparation
+
+**Review and release.**
+- [ ] Second independent review of all 1.4 changes (security fixes included) until APPROVE
+- [ ] 1.4 packaging: control and native version 1.4, freeze 1.3 artifacts in versions/, catalog_format decision,
+      direct update scripts from 1.0, 1.1, 1.2 and 1.3 (generator), catalog CHECK and uk_truncate_trigger migration
+      with triggers created for existing regular FKs
+- [ ] doc/upgrade.md for 1.4 (ownership behavior change, new triggers, CASCADE)
+- [ ] Acceptance: full suite incl. benchmarks, generator and native units, upgrade matrix from released tags
+      1.0/1.1/1.2/1.3, restore matrix with split 20/20, two-session concurrency
+- [ ] Push, green Linux CI, tag v1.4
+- [ ] StatBus: upgrade from 1.0 to 1.4, switch six addendum FKs to CASCADE, test 142 asserts it
+
+**Done toward 1.4 (local, not pushed).**
+- [x] ON DELETE CASCADE core, concurrency, restore, benchmark, docs (d076080..f46579f)
+- [x] TRUNCATE of a referenced parent refused like native FKs (73e61d2, test 138, fast 123/123)
+- [x] Independent review: BLOCK with F1-F10; F1, F2, F3 reproduced on a private cluster
+
+## Backlog (after 1.4)
+- [ ] Upstream parallel-restore report and patch (section below)
+- [ ] Automate README.md example testing (literate programming approach)
+- [ ] Improve test documentation for complex/expected-failure cases
+- [ ] Package with pgxman for easier distribution
+- [ ] Optional: fail closed on direct history-table reads between a parallel restore and its final
+      `sync_all_history_policies()`; owner judged it likely unnecessary
+
+## Backlog detail - Upstream PostgreSQL work on the parallel-restore bug (after 1.4, by delegated agents)
 
 Parallel `pg_restore -j` of a database using sql_saga fails intermittently because `pg_dump` does not record the
 load order of extension configuration tables that reference each other (`doc/decision-log.md`, 2026-10-13 decision).
@@ -19,41 +73,13 @@ failure so an upstream fix is noticed.
       (`tmp/upstream_pg_dump_check_order.md`, draft not sent). No longer affects sql_saga 1.3, which uses constraint
       triggers; owner decides whether to send it
 
-## In progress - ON DELETE CASCADE for regular foreign keys (requested by StatBus, 2026-10-21)
+## Reference - the StatBus ON DELETE CASCADE request (2026-10-21; work tracked under Version 1.4 above)
 
 **Need.** A non-temporal child row that is an addendum to a temporal parent (it has no meaning without the parent) should go with the parent. StatBus has three such tables, `external_ident`, `tag_for_unit` and `unit_notes`, which reference `legal_unit.id` and `establishment.id` (temporal, unique only with the validity range). From sql_saga 1.3 they use `add_foreign_key` (regular-to-temporal), because 1.3's child-side constraint trigger is what makes `pg_dump`/`pg_restore --single-transaction` work (STATBUS-524). Their references to plain tables already use native `FOREIGN KEY ... ON DELETE CASCADE`. For the temporal parents, the only options today are `NO ACTION`/`RESTRICT`, so StatBus ships `NO ACTION` until this exists.
 
 **Today.** `sql_saga.fk_actions` lists `CASCADE`, `SET NULL` and `SET DEFAULT`, but the `sql_saga.foreign_keys` catalog refuses them for both `update_action` and `delete_action` (`CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))`, `sql_saga--1.3.sql`). The parent side is the `uk_delete` trigger (`sql_saga.uk_delete_check_c()`, `src/sql_saga.c`). It refuses a `DELETE` only when a child still references the key and no other parent row has it, so `temporal_merge` and plain DML may reshape a parent's timeline.
 
-**Done on master (not yet released; d076080, d79f715, 1e80fa7, 0ca559a and the docs commit).**
-- [x] Cascade point: a child is deleted when the **last** parent row carrying its key is deleted; deleting one timeline row while another row of the key remains keeps it (owner confirmed 2026-10-21; test 137)
-- [x] `delete_action => 'CASCADE'` on `add_foreign_key`/`add_regular_foreign_key` for `regular_to_temporal`, recorded in `sql_saga.foreign_keys`, catalog CHECK relaxed for that case only. `temporal_to_temporal` refuses it with 0A000 (PostgreSQL 18 refuses actions on `PERIOD` keys). `SET NULL`/`SET DEFAULT` and every `ON UPDATE` action other than `NO ACTION`/`RESTRICT` refused with 0A000 (test 137)
-- [x] Implemented in C in the existing `uk_delete_check_c`: one cached `DELETE FROM ONLY child WHERE key = $1` through the child FK index, run as the extension owner with child triggers firing. Rust rejected (cost is in the lookups, which are the same from either language)
-- [x] `temporal_merge` reshaping a timeline does not cascade; `DELETE_MISSING_ENTITIES` does (test 137)
-- [x] Composite natural key with MATCH FULL: exactly the vanished key's children go, NULL keys are kept. StatBus shape (two nullable MATCH SIMPLE references, exactly one set, same id in both parents): only the matching column's children go (test 137 parts 3 and 7). A multi-column MATCH SIMPLE key with a partial NULL is not tested separately; such a row references nothing, so neither check nor cascade touches it
-- [x] Deferred timing: by default the cascade runs at the end of the DELETE (as native CASCADE). After `SET CONSTRAINTS ... DEFERRED` it runs at the check point, and a key re-inserted before then keeps its children. This differs from native CASCADE, which is never deferred; documented in README (test 137 part 7)
-- [x] Concurrency: six two-session races in `devops/test_regular_fk_concurrency.sh`, never an orphan; REPEATABLE READ refuses with 40001 like native CASCADE (58/58 checks)
-- [x] Interactions: `disable_temporal_triggers` and replica role skip it; child and parent column renames keep it; `drop_foreign_key` removes it; a writer without rights on the child can delete the parent; child triggers, system versioning and native cascades below the child fire; `check_integrity` reports a catalog/trigger action mismatch (test 137 and verified by hand)
-- [x] Dump/restore: a CASCADE child that sorts before its parent loads fully and still cascades after serial, single-transaction, no-owner, clean, psql clean and split (20/20) restores (`devops/restore_roundtrip.sh` regular_fk_order)
-- [x] `update_action => 'CASCADE'` stays refused (StatBus ids are identity columns)
-- [x] Benchmark: 10,000 keys, CASCADE 214.8 ms when every key goes, 133.1 ms when keys survive (NO ACTION 141.5 ms), native PostgreSQL CASCADE 51.8 ms; 50,000 keys 1,308 ms (linear). Recorded in `doc/decision-log.md`
-- [x] Documented in README, `doc/api.md` (regenerated) and `doc/decision-log.md`
-- [x] Full fast suite 122/122
-
-**Still open before StatBus can use it.**
-- [ ] Owner decision: release as 1.4. Needs 1.3->1.4 (and 1.0/1.1/1.2->1.4) update scripts for the catalog CHECK change, a version bump, and the released-tag upgrade matrix and Linux CI
-- [ ] Owner decision: `TRUNCATE` of a parent leaves regular children (CASCADE or NO ACTION) without a parent, because TRUNCATE fires no row triggers. Pre-existing in 1.3, documented in README. Option: refuse TRUNCATE of a referenced parent with a statement-level TRUNCATE trigger, as native FKs do
-
 **StatBus follow-up once released.** StatBus switches its six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x `legal_unit_id`, `establishment_id`) from `NO ACTION` to `CASCADE` in a migration, and test 142 asserts the cascade.
-
-## Medium Priority - Refactoring & API Improvements
-- [ ] Automate README.md example testing (literate programming approach)
-- [ ] Improve test documentation for complex/expected-failure cases
-
-## Future Work & New Features
-- [ ] Package with pgxman for easier distribution
-- [ ] Optional: fail closed on direct history-table reads between a parallel restore and its final
-      `sync_all_history_policies()` (restrictive pending policy); not built, owner judged it likely unnecessary
 
 # Done
 
