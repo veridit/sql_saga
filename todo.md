@@ -9,18 +9,20 @@ A living document of upcoming tasks. Planned work is listed first; finished work
 Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journal.md`.
 
 **Security (release-blocking).**
-- [ ] F1: every sql_saga FK trigger function (uk_delete, uk_update, uk_truncate, regular_fk_check, fk_insert/update)
+- [x] F1: every sql_saga FK trigger function (uk_delete, uk_update, uk_truncate, regular_fk_check, fk_insert/update)
       verifies it is a managed trigger before acting: catalog row exists, trigger name/table/child table match, args
       equal the canonical args. Otherwise 42501. Also validate column counts against MAX_FK_COLS. Negative test with a
       forged trigger (delete path and the read oracle). Reproduced: attacker deleted another role's row; 1.3 NO ACTION
-      args give a key-existence oracle on unreadable tables
-- [ ] F2: run the cascade DELETE (and prepare its plan) as the child table's owner, as native RI does; child triggers
-      then fire as the child owner. Test: child trigger records current_user = child owner. Reproduced: fired as postgres
+      args give a key-existence oracle on unreadable tables. DONE: regular_fk_verify_trigger in all four regular-FK
+      trigger functions; temporal fk_insert/update_check_c run with caller rights (no escalation). Test 139
+- [x] F2: run the cascade DELETE (and prepare its plan) as the child table's owner, as native RI does; child triggers
+      then fire as the child owner. Test: child trigger records current_user = child owner. Reproduced: fired as postgres.
+      DONE: every lookup/cascade planned and run as the queried table's owner, fire_triggers false (native). Test 139
 - [ ] F3: every SECURITY DEFINER DDL API checks the caller owns the table it changes (pg_has_role(caller, relowner,
       'USAGE'), as add_system_versioning does), plus REFERENCES on the referenced table for FKs. Affects add/drop era,
       unique key, foreign key, for_portion_of/current views, synchronize trigger. Present since 1.0. Test with a
       non-owner role. Document the behavior change in doc/upgrade.md
-- [ ] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2); fresh-backend test
+- [x] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2). DONE, test 139 part 5
 
 **Correctness.**
 - [ ] F4: partitioned child tables: no `ONLY` for a partitioned child (native rule) in cascade, reference lookup and
