@@ -18,10 +18,13 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
 - [x] F2: run the cascade DELETE (and prepare its plan) as the child table's owner, as native RI does; child triggers
       then fire as the child owner. Test: child trigger records current_user = child owner. Reproduced: fired as postgres.
       DONE: every lookup/cascade planned and run as the queried table's owner, fire_triggers false (native). Test 139
-- [ ] F3: every SECURITY DEFINER DDL API checks the caller owns the table it changes (pg_has_role(caller, relowner,
+- [x] F3: every SECURITY DEFINER DDL API checks the caller owns the table it changes (pg_has_role(caller, relowner,
       'USAGE'), as add_system_versioning does), plus REFERENCES on the referenced table for FKs. Affects add/drop era,
       unique key, foreign key, for_portion_of/current views, synchronize trigger. Present since 1.0. Test with a
       non-owner role. Document the behavior change in doc/upgrade.md
+      DONE: C require_owner/require_references (outer user, role membership, ACL_REFERENCES) in every management
+      function; drop_unique_key/drop_era CASCADE still remove dependent FKs of other owners (native DROP CASCADE).
+      Test 140; README "Who may manage a table"; doc/upgrade.md "What changes in 1.4"
 - [x] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2). DONE, test 139 part 5
 
 **Correctness.**

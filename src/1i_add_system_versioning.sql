@@ -416,6 +416,7 @@ BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'add_system_versioning');
 
     PERFORM sql_saga.__internal_serialize(table_oid);
 

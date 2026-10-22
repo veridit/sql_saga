@@ -107,3 +107,18 @@ AS 'sql_saga', 'current_view_clock'
 LANGUAGE c STRICT STABLE SECURITY INVOKER SET search_path = pg_catalog, pg_temp;
 
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_current_view_clock(oid) TO PUBLIC;
+
+-- 1.4 (review finding F3): the API functions are SECURITY DEFINER and change user tables as the extension owner, so
+-- each first requires the role that called it (the outer user) to own the table, and a foreign key REFERENCES on the
+-- referenced table, as the native commands do. Private: only sql_saga's own functions call them.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_owner(table_oid regclass, purpose text DEFAULT NULL)
+RETURNS void
+AS 'sql_saga', 'require_owner'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_owner(regclass, text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_references(table_oid regclass)
+RETURNS void
+AS 'sql_saga', 'require_references'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_references(regclass) FROM PUBLIC;

@@ -3110,3 +3110,65 @@ current_view_clock(PG_FUNCTION_ARGS)
 	relation_close(rel, AccessShareLock);
 	PG_RETURN_TEXT_P(cstring_to_text(clock));
 }
+
+/*
+ * __internal_require_owner(table_oid regclass, purpose text) -- refuse unless the role that called sql_saga's API
+ * owns the table (1.4, review finding F3).
+ *
+ * sql_saga's API functions are SECURITY DEFINER, so inside them current_user is the extension owner. The role that
+ * called them is the outer user (session user, or the role chosen by SET ROLE), which SQL code cannot change from
+ * inside a SECURITY DEFINER function. PostgreSQL requires ownership for ALTER TABLE, CREATE TRIGGER and constraints;
+ * this is the same rule for the changes sql_saga makes on the caller's behalf: the outer user must be a member of the
+ * table owner's role (has_privs_of_role, as pg_has_role(..., 'USAGE')). Superusers pass, as natively.
+ */
+PG_FUNCTION_INFO_V1(require_owner);
+Datum
+require_owner(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+	Oid			caller = GetOuterUserId();
+	HeapTuple	tup;
+	Form_pg_class classform;
+	char	   *relname;
+	Oid			owner;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("no table name specified")));
+	relid = PG_GETARG_OID(0);
+	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("relation with OID %u does not exist", relid)));
+	classform = (Form_pg_class) GETSTRUCT(tup);
+	owner = classform->relowner;
+	relname = pstrdup(NameStr(classform->relname));
+	ReleaseSysCache(tup);
+
+	if (!has_privs_of_role(caller, owner))
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be owner of table %s", relname),
+				 PG_ARGISNULL(1) ? 0 : errdetail("%s changes the table, which needs the rights of its owner.",
+												 text_to_cstring(PG_GETARG_TEXT_PP(1)))));
+	PG_RETURN_VOID();
+}
+
+/*
+ * __internal_require_references(table_oid regclass) -- refuse unless the role that called sql_saga's API has
+ * REFERENCES on the table, as ALTER TABLE ... ADD FOREIGN KEY requires for the referenced table.
+ */
+PG_FUNCTION_INFO_V1(require_references);
+Datum
+require_references(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("no table name specified")));
+	relid = PG_GETARG_OID(0);
+	if (pg_class_aclcheck(relid, GetOuterUserId(), ACL_REFERENCES) != ACLCHECK_OK)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied for table %s", get_rel_name(relid)),
+				 errdetail("A foreign key needs the REFERENCES privilege on the referenced table.")));
+	PG_RETURN_VOID();
+}

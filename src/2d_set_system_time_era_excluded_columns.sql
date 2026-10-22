@@ -13,6 +13,7 @@ DECLARE
     table_schema name;
     table_name name;
 BEGIN
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'set_system_time_era_excluded_columns');
     SELECT n.nspname, c.relname
     INTO table_schema, table_name
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace

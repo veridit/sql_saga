@@ -25,6 +25,14 @@ BEGIN
     IF table_oid IS NULL AND era_name IS NOT NULL THEN
         RAISE EXCEPTION 'cannot specify era name without table name';
     END IF;
+    /* Without a table this drops the views of every table: each of them must be the caller's. */
+    IF table_oid IS NOT NULL THEN
+        PERFORM sql_saga.__internal_require_owner(table_oid, 'drop_for_portion_of_view');
+    ELSE
+        PERFORM sql_saga.__internal_require_owner(pg_catalog.to_regclass(pg_catalog.format('%I.%I', v.table_schema, v.table_name)), 'drop_for_portion_of_view')
+        FROM sql_saga.updatable_view AS v
+        WHERE v.view_type = 'for_portion_of' AND pg_catalog.to_regclass(pg_catalog.format('%I.%I', v.table_schema, v.table_name)) IS NOT NULL;
+    END IF;
 
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);

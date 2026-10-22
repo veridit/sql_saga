@@ -24,6 +24,17 @@ Do not run an older update script (to 1.1 or 1.2) while the 1.3 native library i
 
 The package also ships the earlier update scripts to 1.1 and 1.2. They are released artifacts and are never changed; with the 1.3 libraries loaded, only the direct updates to 1.3 apply.
 
+## What changes in 1.4
+
+### Management functions check table ownership
+
+The management functions are `SECURITY DEFINER`. Up to 1.3 they changed a table for any role allowed to call them. From 1.4 they require the rights of the DDL they stand for:
+
+- the caller must own the table, directly or through role membership;
+- a foreign key also needs `REFERENCES` on the referenced table.
+
+Otherwise they fail with `42501`. Before updating, check that your migrations and deploy jobs call them as the table owner (or a superuser), not as a separate deploy role that only has `EXECUTE`. The owner of a referenced table can still drop dependent foreign keys owned by other roles through `drop_unique_key` or `drop_era` with `CASCADE`, as native `DROP ... CASCADE` allows.
+
 ## What changes in 1.3
 
 ### Regular foreign keys: the referencing side becomes a constraint trigger

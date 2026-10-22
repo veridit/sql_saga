@@ -1,0 +1,35 @@
+\set ECHO none
+--- part 1: a role with only SELECT is refused by every function, and nothing changes
+add_era | 42501: must be owner of table bare
+drop_era | 42501: must be owner of table parent
+set_era_ephemeral_columns | 42501: must be owner of table parent
+add_unique_key | 42501: must be owner of table parent
+drop_unique_key | 42501: must be owner of table parent
+drop_unique_key_by_name | 42501: must be owner of table parent
+add_foreign_key onto a table it does not own | 42501: must be owner of table child
+add_regular_foreign_key | 42501: must be owner of table child
+drop_foreign_key | 42501: must be owner of table child
+drop_foreign_key_by_name | 42501: must be owner of table child
+add_for_portion_of_view | 42501: must be owner of table parent
+drop_for_portion_of_view | 42501: must be owner of table parent
+add_current_view | 42501: must be owner of table parent
+drop_current_view | 42501: must be owner of table parent
+add_synchronize_temporal_columns_trigger | 42501: must be owner of table parent
+drop_synchronize_temporal_columns_trigger | 42501: must be owner of table parent
+add_system_versioning | 42501: must be owner of table child
+drop_system_versioning | 42501: must be owner of table sv
+drop_system_time_era | 42501: must be owner of table sv
+set_system_time_era_excluded_columns | 42501: must be owner of table sv
+rebuild_system_versioning_views | 42501: must be owner of table sv
+nothing changed on ow_owner's tables | true
+--- part 2: a member of the owner role passes the ownership check
+add_era as a member of the owner role | ok
+set_era_ephemeral_columns as a member | ok
+--- part 3: a foreign key needs REFERENCES on the referenced table
+own child, parent without REFERENCES | 42501: permission denied for table parent
+own child, parent with REFERENCES | ok
+--- part 4: as native DROP ... CASCADE, the parent owner removes a dependent foreign key owned by another role
+drop the referencing key directly, not owning it | 42501: must be owner of table child
+drop_era CASCADE (views, keys, dependent foreign keys) | ok
+foreign keys left | (none)
+regular foreign key triggers left on ow_o.child | 0

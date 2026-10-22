@@ -1,7 +1,14 @@
-CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
+/*
+ * The worker behind drop_foreign_key_by_name. require_owner is false only where sql_saga drops a foreign key as the
+ * dependant of something the caller has already been checked to own: drop_unique_key_by_name(..., 'CASCADE') removes
+ * the foreign keys that reference the key, as native DROP ... CASCADE lets the referenced table's owner do, whoever
+ * owns the referencing tables. Private.
+ */
+CREATE FUNCTION sql_saga.__internal_drop_foreign_key_by_name(
     table_oid regclass,
     key_name name,
-    drop_index boolean DEFAULT true)
+    drop_index boolean,
+    require_owner boolean)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -96,6 +103,11 @@ BEGIN
     LOOP
         native_constraint_attributable := foreign_key_row.native_constraint_attributable;
 
+        /* As ALTER TABLE ... DROP CONSTRAINT: the caller must own the referencing table (also when found by name). */
+        IF require_owner AND foreign_key_row.fk_table_oid IS NOT NULL THEN
+            PERFORM sql_saga.__internal_require_owner(foreign_key_row.fk_table_oid, 'drop_foreign_key');
+        END IF;
+
         -- Delete the metadata record first, so the drop_protection trigger doesn't fire on the main objects.
         DELETE FROM sql_saga.foreign_keys AS fk
         WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
@@ -170,4 +182,19 @@ BEGIN
 
     RETURN true;
 END;
+$function$;
+REVOKE ALL ON FUNCTION sql_saga.__internal_drop_foreign_key_by_name(regclass, name, boolean, boolean) FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
+    table_oid regclass,
+    key_name name,
+    drop_index boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+    /* As ALTER TABLE ... DROP CONSTRAINT: the caller must own the referencing table (also when found by name). */
+    SELECT sql_saga.__internal_drop_foreign_key_by_name(table_oid, key_name, drop_index, require_owner => true);
 $function$;

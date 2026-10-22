@@ -14,6 +14,7 @@ BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'table_oid must not be NULL';
     END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'add_for_portion_of_view');
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
 

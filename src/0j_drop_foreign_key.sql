@@ -19,6 +19,7 @@ DECLARE
     fk_table_name name;
     v_era_name name := era_name;
 BEGIN
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'drop_foreign_key');
     SELECT n.nspname, c.relname
     INTO fk_schema_name, fk_table_name
     FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid

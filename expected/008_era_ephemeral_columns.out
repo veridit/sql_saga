@@ -100,7 +100,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     ephemeral_columns => ARRAY['no_such_column']::name[]
 );
 ERROR:  column "no_such_column" does not exist in table ephemeral_test
-CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 27 at RAISE
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 28 at RAISE
 ROLLBACK TO test3;
 -- =============================================================================
 \echo '--- Test 4: Error - system column as ephemeral ---'
@@ -113,7 +113,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     ephemeral_columns => ARRAY['xmin']::name[]
 );
 ERROR:  cannot mark system column "xmin" as ephemeral
-CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 37 at RAISE
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 38 at RAISE
 ROLLBACK TO test4;
 -- =============================================================================
 \echo '--- Test 5: Error - non-existent era ---'
@@ -126,7 +126,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     ephemeral_columns => ARRAY['edit_at']::name[]
 );
 ERROR:  Era "nonexistent" not found on table ephemeral_test
-CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 47 at RAISE
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 48 at RAISE
 ROLLBACK TO test5;
 ROLLBACK;
 \i sql/include/test_teardown.sql

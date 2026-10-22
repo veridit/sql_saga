@@ -25,6 +25,7 @@ BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'drop_unique_key_by_name');
 
     SELECT n.nspname, c.relname
     INTO table_schema, table_name
@@ -96,7 +97,8 @@ BEGIN
                     sql_saga.__internal_display_name(format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass);
             END IF;
 
-            PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);
+            /* As native DROP ... CASCADE: the key's owner (checked above) drops the dependent keys, whoever owns them. */
+            PERFORM sql_saga.__internal_drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name, drop_index => true, require_owner => false);
         END LOOP;
 
         DELETE FROM sql_saga.unique_keys AS uk

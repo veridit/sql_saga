@@ -15,6 +15,7 @@ DECLARE
     v_stored_func_name name;
     v_stored_trg_name name;
 BEGIN
+    PERFORM sql_saga.__internal_require_owner(drop_synchronize_temporal_columns_trigger.table_oid, 'drop_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name
     FROM pg_catalog.pg_class AS c
@@ -465,6 +466,7 @@ DECLARE
     v_table_name name;
     generated record;
 BEGIN
+    PERFORM sql_saga.__internal_require_owner(add_synchronize_temporal_columns_trigger.table_oid, 'add_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name
     FROM pg_catalog.pg_class AS c

@@ -394,6 +394,8 @@ BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
+    /* As ALTER TABLE ... ADD FOREIGN KEY: own the referencing table; REFERENCES on the referenced one (below). */
+    PERFORM sql_saga.__internal_require_owner(fk_table_oid, 'add_foreign_key');
 
     PERFORM sql_saga.__internal_serialize(fk_table_oid);
 
@@ -437,6 +439,7 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
+    PERFORM sql_saga.__internal_require_references(uk_table_oid);
 
     v_fk_index_name := sql_saga.__find_or_create_fk_index(
         fk_table_oid,
@@ -709,6 +712,8 @@ BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
+    /* As ALTER TABLE ... ADD FOREIGN KEY: own the referencing table; REFERENCES on the referenced one (below). */
+    PERFORM sql_saga.__internal_require_owner(fk_table_oid, 'add_foreign_key');
 
     IF delete_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') OR update_action IN ('CASCADE', 'SET NULL', 'SET DEFAULT') THEN
         RAISE EXCEPTION 'sql_saga: ON % % is not supported for temporal foreign keys',
@@ -769,6 +774,7 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name, uk_table_name)::regclass;
+    PERFORM sql_saga.__internal_require_references(uk_table_oid);
 
     /* Check that all the columns match */
     IF array_length(fk_column_names, 1) <> array_length(v_uk_stable_cols, 1) THEN

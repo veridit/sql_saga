@@ -47,6 +47,7 @@ DECLARE
     v_trigger_applies_defaults boolean := add_era.add_defaults;
     boundary_check_constraint name;
 BEGIN
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'add_era');
     -- Parameter validation for explicit user input.
     IF (add_era.valid_from_column_name IS NOT NULL AND add_era.valid_until_column_name IS NULL) OR
        (add_era.valid_from_column_name IS NULL AND add_era.valid_until_column_name IS NOT NULL)

@@ -16,6 +16,7 @@ BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'table_oid must be specified';
     END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'drop_current_view');
 
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
