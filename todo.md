@@ -34,8 +34,10 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
       supports no partitioned tables); a partition may reference. ONLY on both sides everywhere (lookups, cascade,
       TRUNCATE, add-time validation), as native: inheritance children not covered. Test 141.
       UPGRADE: the 1.4 update must refuse (name them) existing regular FKs whose referencing table is partitioned
-- [ ] F5: predicated unique keys: include the predicate in key lookups, or refuse add_regular_foreign_key against
+- [x] F5: predicated unique keys: include the predicate in key lookups, or refuse add_regular_foreign_key against
       predicated keys. Test
+      DONE: add_regular_foreign_key refuses a predicated key (0A000), as the temporal path already does. Test 142.
+      UPGRADE: the 1.4 update must refuse (name them) existing regular FKs that reference a predicated key
 - [ ] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE
       regular FK references the target, or document exactly. Test
 - [ ] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording

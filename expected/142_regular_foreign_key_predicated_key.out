@@ -1,0 +1,8 @@
+\set ECHO none
+--- part 1: a regular foreign key cannot reference a predicated key
+NO ACTION | 0A000: unique key "unit_active_code" is a predicated key; a regular foreign key can only reference a primary or natural key
+CASCADE | 0A000: unique key "unit_active_code" is a predicated key; a regular foreign key can only reference a primary or natural key
+catalogued foreign keys | 0
+triggers on note and unit | 0
+--- part 2: add_foreign_key by columns finds no primary or natural key on code
+by columns | P0001: No primary or natural unique key found on table rpk.unit for columns {code}

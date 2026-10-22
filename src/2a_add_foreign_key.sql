@@ -438,6 +438,16 @@ BEGIN
         RAISE EXCEPTION 'unique key "%" does not exist', unique_key_name;
     END IF;
 
+    /*
+     * A predicated key is unique only among the rows its predicate admits, and the key lookups (child check, the
+     * referenced side's last-row rule, the cascade) do not apply the predicate. A temporal foreign key cannot
+     * reference one either (it has no unique constraint).
+     */
+    IF uk_row.key_type = 'predicated' THEN
+        RAISE EXCEPTION 'unique key "%" is a predicated key; a regular foreign key can only reference a primary or natural key', unique_key_name
+            USING ERRCODE = 'feature_not_supported';
+    END IF;
+
     /* Get the unique key's era */
     SELECT e.* INTO uk_era_row
     FROM sql_saga.era AS e
