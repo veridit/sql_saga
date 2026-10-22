@@ -1,0 +1,33 @@
+\set ECHO none
+--- part 1: TRUNCATE of the parent alone is refused while children reference it
+TRUNCATE legal_unit (note CASCADE, tag NO ACTION) | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "note" references "legal_unit". HINT: Truncate table "note" at the same time.
+nothing truncated | legal_unit 2, note 1, tag 1
+TRUNCATE legal_unit, only the CASCADE child references it | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "note" references "legal_unit". HINT: Truncate table "note" at the same time.
+nothing truncated | legal_unit 2, note 1, tag 0
+TRUNCATE legal_unit, only the NO ACTION child references it | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "tag" references "legal_unit". HINT: Truncate table "tag" at the same time.
+--- part 2: TRUNCATE together with the children succeeds
+TRUNCATE legal_unit, note, tag | ok
+all empty | legal_unit 0, note 0, tag 0
+TRUNCATE tag, note, legal_unit (children first) | ok
+all empty | legal_unit 0, note 0, tag 0
+--- part 3: children without references do not block
+only NULL keys and an empty child | ok
+parent empty, NULL-key note kept | legal_unit 0, note 1, tag 0
+--- part 4: the managed object
+object | note_fk | note_fk_uk_truncate | after truncate for each statement | sql_saga.uk_truncate_check_c() | enabled
+object | tag_fk | tag_fk_uk_truncate | after truncate for each statement | sql_saga.uk_truncate_check_c() | enabled
+check_integrity | ok
+DROP TRIGGER directly | P0001: cannot drop trigger "note_fk_uk_truncate" on table "rft.legal_unit" because it is used in era foreign key "note_fk"
+disable_temporal_triggers | ok
+truncate trigger disabled | D
+check_integrity reports it | P0001: sql_saga: integrity violation for foreign key note_fk: referenced-side trigger note_fk_uk_truncate on table rft.legal_unit is disabled; repair with ALTER TABLE rft.legal_unit ENABLE TRIGGER note_fk_uk_truncate
+TRUNCATE while disabled (as for the delete check) | ok
+after renaming the referenced column, TRUNCATE | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "note" references "legal_unit". HINT: Truncate table "note" at the same time.
+check_integrity | ok
+after renaming the child column, TRUNCATE | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "note" references "legal_unit". HINT: Truncate table "note" at the same time.
+drop_foreign_key note_fk | ok
+truncate triggers left for note_fk | 0
+after drop_foreign_key, only tag blocks | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "tag" references "legal_unit". HINT: Truncate table "tag" at the same time.
+--- part 5: temporal-to-temporal foreign keys are native
+TRUNCATE legal_unit with a temporal child | 0A000: cannot truncate a table referenced in a foreign key constraint DETAIL: Table "stat" references "legal_unit". HINT: Truncate table "stat" at the same time, or use TRUNCATE ... CASCADE.
+check_integrity at the end | ok

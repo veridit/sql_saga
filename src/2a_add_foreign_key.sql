@@ -290,6 +290,69 @@ $__internal_create_regular_fk_child_trigger$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_create_regular_fk_child_trigger(name) FROM PUBLIC;
 
+/*
+ * The TRUNCATE trigger of a regular foreign key on the referenced (parent) table (1.4), from its catalog row:
+ *     CREATE TRIGGER <uk_truncate_trigger> AFTER TRUNCATE ON <parent> FOR EACH STATEMENT
+ *     EXECUTE FUNCTION sql_saga.uk_truncate_check_c(<the same 17 arguments as the other regular FK triggers>)
+ * The one definition, used by add_regular_foreign_key, by the rebuild that follows column renames and by the
+ * update to 1.4.
+ */
+CREATE FUNCTION sql_saga.__internal_create_regular_fk_truncate_trigger(foreign_key_name name)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_create_regular_fk_truncate_trigger$
+#variable_conflict use_variable
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    uk_era sql_saga.era;
+    parent_oid regclass;
+BEGIN
+    SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = foreign_key_name;
+    IF NOT FOUND OR fk.type IS DISTINCT FROM 'regular_to_temporal' THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign key "%" not found', foreign_key_name;
+    END IF;
+    IF fk.uk_truncate_trigger IS NULL OR fk.uk_truncate_trigger = '' THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign key "%" names no TRUNCATE trigger', foreign_key_name;
+    END IF;
+    SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    SELECT e.* INTO uk_era FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+    parent_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+    IF uk_era.era_name IS NULL OR parent_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: referenced table of foreign key "%" not found', foreign_key_name;
+    END IF;
+    IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = parent_oid AND t.tgname = fk.uk_truncate_trigger) THEN
+        RAISE EXCEPTION 'sql_saga: cannot create the TRUNCATE trigger of foreign key %: table % already has a trigger named %',
+            pg_catalog.quote_ident(fk.foreign_key_name), parent_oid, pg_catalog.quote_ident(fk.uk_truncate_trigger)
+            USING ERRCODE = 'duplicate_object';
+    END IF;
+
+    EXECUTE pg_catalog.format($$
+        CREATE TRIGGER %1$I AFTER TRUNCATE ON %4$I.%5$I FOR EACH STATEMENT EXECUTE FUNCTION
+        sql_saga.uk_truncate_check_c(%6$L, %2$L, %3$L, %7$L, '', '', '', %4$L, %5$L, %8$L, %9$L, %10$L, %11$L, %12$L, %13$L, %14$L, 'regular_to_temporal');
+        $$
+        , /* %1$I */ fk.uk_truncate_trigger
+        , /* %2$L */ fk.table_schema
+        , /* %3$L */ fk.table_name
+        , /* %4$I */ uk.table_schema
+        , /* %5$I */ uk.table_name
+        , /* %6$L */ fk.foreign_key_name
+        , /* %7$L */ fk.column_names::text
+        , /* %8$L */ uk.column_names::text
+        , /* %9$L */ uk_era.era_name
+        , /* %10$L*/ coalesce(uk_era.valid_from_column_name::text, 'null')
+        , /* %11$L*/ coalesce(uk_era.valid_until_column_name::text, 'null')
+        , /* %12$L*/ fk.match_type
+        , /* %13$L*/ fk.update_action
+        , /* %14$L*/ fk.delete_action
+    );
+END;
+$__internal_create_regular_fk_truncate_trigger$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_create_regular_fk_truncate_trigger(name) FROM PUBLIC;
+
 
 -- Overloaded function for regular (non-temporal) to temporal foreign keys
 CREATE FUNCTION sql_saga.add_regular_foreign_key(
@@ -534,12 +597,15 @@ BEGIN
     END;
 
     INSERT INTO sql_saga.foreign_keys
-        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger, fk_index_name)
+        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger, uk_truncate_trigger, fk_index_name)
     VALUES
-        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, NULL, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
+        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, NULL, uk_update_trigger, uk_delete_trigger,
+          sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_truncate'), v_fk_index_name);
 
     /* The referencing side, from the catalog row just written (see __internal_create_regular_fk_child_trigger). */
     PERFORM sql_saga.__internal_create_regular_fk_child_trigger(foreign_key_name);
+    /* TRUNCATE of the parent alone is refused while a child row references it (1.4). */
+    PERFORM sql_saga.__internal_create_regular_fk_truncate_trigger(foreign_key_name);
 
 
     /* Validate the constraint on existing data. */

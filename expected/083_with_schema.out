@@ -138,9 +138,9 @@ NOTICE:  sql_saga: No compatible index found for foreign key on table hidden.sta
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |                      fk_table_columns_snapshot                      |  unique_key_name   | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |          fk_index_name           
--------------------------+----------------------+--------------+------------+---------------+-------------+---------------------------------------------------------------------+--------------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+----------------------------------
- staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | {id,valid_range,valid_from,valid_to,valid_until,salary,employee_id} | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     |                     |                    |                   |                   | staff_employee_id_valid_gist_idx
+    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |                      fk_table_columns_snapshot                      |  unique_key_name   | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | uk_truncate_trigger |          fk_index_name           
+-------------------------+----------------------+--------------+------------+---------------+-------------+---------------------------------------------------------------------+--------------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------------+----------------------------------
+ staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | {id,valid_range,valid_from,valid_to,valid_until,salary,employee_id} | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     |                     |                    |                   |                   |                     | staff_employee_id_valid_gist_idx
 (1 row)
 
 -- While sql_saga is active
@@ -246,8 +246,8 @@ NOTICE:  sql_saga: Dropping automatically created index "staff_employee_id_valid
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | uk_truncate_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------------+---------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('exposed.employees', ARRAY['id'], 'valid');

@@ -161,6 +161,10 @@ BEGIN
             IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_delete_trigger) THEN
                 EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger /* %I */, unique_table_oid /* %s */);
             END IF;
+            IF foreign_key_row.uk_truncate_trigger IS NOT NULL
+               AND EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_truncate_trigger) THEN
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_truncate_trigger /* %I */, unique_table_oid /* %s */);
+            END IF;
         END IF;
     END LOOP;
 

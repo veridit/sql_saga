@@ -284,6 +284,8 @@ DECLARE
     update_columns text;
     update_enabled "char";
     delete_enabled "char";
+    truncate_enabled "char";
+    parent_triggers text;
     fk_table_oid regclass;
     child_enabled "char";
     child_is_trigger boolean := false;
@@ -311,6 +313,8 @@ BEGIN
     WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_update_trigger;
     SELECT t.tgenabled INTO delete_enabled FROM pg_catalog.pg_trigger AS t
     WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_delete_trigger;
+    SELECT t.tgenabled INTO truncate_enabled FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_truncate_trigger;
 
     /*
      * The referencing-side constraint trigger (1.3) carries the same arguments, so it is re-created
@@ -326,7 +330,7 @@ BEGIN
 
     /* The empty name matches no trigger, so drop_protection admits the DROP; restored below. */
     UPDATE sql_saga.foreign_keys AS f
-    SET uk_update_trigger = NULL, uk_delete_trigger = NULL,
+    SET uk_update_trigger = NULL, uk_delete_trigger = NULL, uk_truncate_trigger = NULL,
         fk_check_constraint = CASE WHEN child_is_trigger THEN ''::name ELSE f.fk_check_constraint END
     WHERE f.foreign_key_name = fk.foreign_key_name;
 
@@ -350,6 +354,10 @@ BEGIN
     END IF;
     IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_delete_trigger) THEN
         EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.uk_delete_trigger, uk_table_oid);
+    END IF;
+    IF fk.uk_truncate_trigger IS NOT NULL
+       AND EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_truncate_trigger) THEN
+        EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.uk_truncate_trigger, uk_table_oid);
     END IF;
 
     /* Same definitions as add_regular_foreign_key. */
@@ -413,19 +421,32 @@ BEGIN
 
     UPDATE sql_saga.foreign_keys AS f
     SET uk_update_trigger = fk.uk_update_trigger, uk_delete_trigger = fk.uk_delete_trigger,
+        uk_truncate_trigger = fk.uk_truncate_trigger,
         fk_check_constraint = fk.fk_check_constraint
     WHERE f.foreign_key_name = fk.foreign_key_name;
 
+    /* The TRUNCATE trigger (1.4) carries the same arguments, so it follows too, from the restored catalog row. */
+    IF fk.uk_truncate_trigger IS NOT NULL THEN
+        PERFORM sql_saga.__internal_create_regular_fk_truncate_trigger(fk.foreign_key_name);
+        IF truncate_enabled IS DISTINCT FROM 'O' AND truncate_enabled IS NOT NULL THEN
+            EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', uk_table_oid,
+                CASE truncate_enabled WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,
+                fk.uk_truncate_trigger);
+        END IF;
+    END IF;
+
     /* Only reached once every trigger was dropped, recreated and given back its firing mode. */
+    parent_triggers := pg_catalog.concat_ws(', ', pg_catalog.quote_ident(fk.uk_update_trigger), pg_catalog.quote_ident(fk.uk_delete_trigger),
+                                           pg_catalog.quote_ident(fk.uk_truncate_trigger));
     IF child_is_trigger THEN
-        RAISE NOTICE 'sql_saga: Dropped and recreated triggers % on table % and %, % on table % of foreign key % to follow the column rename, keeping their firing modes',
+        RAISE NOTICE 'sql_saga: Dropped and recreated triggers % on table % and % on table % of foreign key % to follow the column rename, keeping their firing modes',
             pg_catalog.quote_ident(fk.fk_check_constraint), pg_catalog.format('%I.%I', fk.table_schema, fk.table_name),
-            pg_catalog.quote_ident(fk.uk_update_trigger), pg_catalog.quote_ident(fk.uk_delete_trigger),
+            parent_triggers,
             pg_catalog.format('%I.%I', uk.table_schema, uk.table_name),
             pg_catalog.quote_ident(fk.foreign_key_name);
     ELSE
-        RAISE NOTICE 'sql_saga: Dropped and recreated triggers %, % on table % of foreign key % to follow the column rename, keeping their firing modes',
-            pg_catalog.quote_ident(fk.uk_update_trigger), pg_catalog.quote_ident(fk.uk_delete_trigger),
+        RAISE NOTICE 'sql_saga: Dropped and recreated triggers % on table % of foreign key % to follow the column rename, keeping their firing modes',
+            parent_triggers,
             pg_catalog.format('%I.%I', uk.table_schema, uk.table_name),
             pg_catalog.quote_ident(fk.foreign_key_name);
     END IF;
@@ -578,7 +599,7 @@ AS $__internal_regular_foreign_key_is_attributable$
     ) END AND NOT EXISTS (
         SELECT FROM pg_catalog.pg_trigger AS t
         WHERE t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
-          AND t.tgname IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+          AND t.tgname IN (fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger)
           AND t.tgargs IS DISTINCT FROM sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name)
     ), false)
     FROM sql_saga.foreign_keys AS fk
@@ -761,7 +782,7 @@ BEGIN
             SELECT col.name FROM pg_catalog.unnest(uk_rec.column_names) WITH ORDINALITY AS col(name, n)
             WHERE col.name <> uk_rec.range_column_name ORDER BY col.n);
         FOR fk_rec IN
-            SELECT fk.foreign_key_name, fk.fk_helper_function, fk.uk_update_trigger, fk.uk_delete_trigger
+            SELECT fk.foreign_key_name, fk.fk_helper_function, fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger
             FROM sql_saga.foreign_keys AS fk
             WHERE fk.unique_key_name = uk_rec.unique_key_name AND fk.type = 'regular_to_temporal'
             ORDER BY fk.foreign_key_name COLLATE "C"
@@ -780,8 +801,9 @@ BEGIN
             IF EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
                 WHERE t.tgrelid = uk_rec.uk_table_oid
-                  AND t.tgname IN (fk_rec.uk_update_trigger, fk_rec.uk_delete_trigger)
-                  AND (t.tgfoid NOT IN ('sql_saga.uk_update_check_c()'::regprocedure, 'sql_saga.uk_delete_check_c()'::regprocedure)
+                  AND t.tgname IN (fk_rec.uk_update_trigger, fk_rec.uk_delete_trigger, fk_rec.uk_truncate_trigger)
+                  AND (t.tgfoid NOT IN ('sql_saga.uk_update_check_c()'::regprocedure, 'sql_saga.uk_delete_check_c()'::regprocedure,
+                                        'sql_saga.uk_truncate_check_c()'::regprocedure)
                        OR t.tgargs IS DISTINCT FROM sql_saga.__internal_regular_fk_trigger_args(fk_rec.foreign_key_name))) THEN
                 RAISE EXCEPTION 'sql_saga: cannot rename a column of unique key "%" on table "%.%": a referenced-side trigger of regular foreign key "%" is not the canonical sql_saga trigger; repair with drop_foreign_key and add_regular_foreign_key first',
                     uk_rec.unique_key_name, uk_rec.table_schema, uk_rec.table_name, fk_rec.foreign_key_name;
@@ -1999,6 +2021,15 @@ BEGIN
                   AND NOT EXISTS (
                     SELECT FROM pg_catalog.pg_trigger AS t
                     WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
+                UNION ALL
+                /* The TRUNCATE trigger of a regular foreign key on the referenced table (1.4). */
+                SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_truncate_trigger AS trigger_name
+                FROM sql_saga.foreign_keys AS fk
+                JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                WHERE fk.uk_truncate_trigger IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT FROM pg_catalog.pg_trigger AS t
+                    WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_truncate_trigger))
                 UNION ALL
                 /* The referencing-side constraint trigger of a regular foreign key (1.3). */
                 SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_check_constraint AS trigger_name

@@ -1197,7 +1197,7 @@ BEGIN
             /* Referenced-side triggers disabled: same style. */
             IF base_oid IS NOT NULL THEN
                 SELECT t.tgname INTO disabled_trigger FROM pg_catalog.pg_trigger AS t
-                WHERE t.tgrelid = base_oid AND t.tgname IN (r.uk_update_trigger, r.uk_delete_trigger) AND t.tgenabled = 'D'
+                WHERE t.tgrelid = base_oid AND t.tgname IN (r.uk_update_trigger, r.uk_delete_trigger, r.uk_truncate_trigger) AND t.tgenabled = 'D'
                 ORDER BY t.tgname = r.uk_delete_trigger, t.tgname COLLATE "C" LIMIT 1;
                 IF FOUND THEN
                     RAISE EXCEPTION 'sql_saga: integrity violation for foreign key %: referenced-side trigger % on table % is disabled; repair with ALTER TABLE % ENABLE TRIGGER %',
@@ -1208,7 +1208,8 @@ BEGIN
             END IF;
             IF base_oid IS NULL
                OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_update_trigger)
-               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger) THEN
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger)
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_truncate_trigger) THEN
                 RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": referenced-side helper trigger is missing; repair with drop_foreign_key and add_regular_foreign_key',
                     r.table_schema, r.table_name;
             END IF;
@@ -1220,6 +1221,13 @@ BEGIN
                     SELECT 1 FROM pg_catalog.pg_trigger AS t
                     WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger
                       AND t.tgfoid = 'sql_saga.uk_delete_check_c()'::regprocedure)
+               OR NOT EXISTS (
+                    /* AFTER TRUNCATE FOR EACH STATEMENT (tgtype 32), the canonical arguments, no WHEN (1.4). */
+                    SELECT 1 FROM pg_catalog.pg_trigger AS t
+                    WHERE t.tgrelid = base_oid AND t.tgname = r.uk_truncate_trigger
+                      AND t.tgfoid = 'sql_saga.uk_truncate_check_c()'::regprocedure
+                      AND t.tgtype = 32 AND t.tgqual IS NULL AND NOT t.tgisinternal
+                      AND t.tgargs = sql_saga.__internal_regular_fk_trigger_args(r.foreign_key_name))
                OR (r.fk_helper_function IS NOT NULL AND NOT EXISTS (
                     SELECT 1 FROM pg_catalog.pg_constraint AS c
                     WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name))

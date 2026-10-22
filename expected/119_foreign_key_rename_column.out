@@ -151,11 +151,12 @@ TABLE fkr.fk_state;
 (2 rows)
 
 TABLE fkr.par_triggers;
-            tgname            |           function           | arg_foreign_key_name 
-------------------------------+------------------------------+----------------------
- rchild_par_id_fkey_uk_delete | sql_saga.uk_delete_check_c() | rchild_par_id_fkey
- rchild_par_id_fkey_uk_update | sql_saga.uk_update_check_c() | rchild_par_id_fkey
-(2 rows)
+             tgname             |            function            | arg_foreign_key_name 
+--------------------------------+--------------------------------+----------------------
+ rchild_par_id_fkey_uk_delete   | sql_saga.uk_delete_check_c()   | rchild_par_id_fkey
+ rchild_par_id_fkey_uk_truncate | sql_saga.uk_truncate_check_c() | rchild_par_id_fkey
+ rchild_par_id_fkey_uk_update   | sql_saga.uk_update_check_c()   | rchild_par_id_fkey
+(3 rows)
 
 TABLE fkr.child_constraints;
  table_name |       conname       | contype |                                            def                                             
@@ -201,11 +202,12 @@ TABLE fkr.fk_state;
 (2 rows)
 
 TABLE fkr.par_triggers;
-            tgname            |           function           | arg_foreign_key_name 
-------------------------------+------------------------------+----------------------
- rchild_par_id_fkey_uk_delete | sql_saga.uk_delete_check_c() | rchild_par_id_fkey
- rchild_par_id_fkey_uk_update | sql_saga.uk_update_check_c() | rchild_par_id_fkey
-(2 rows)
+             tgname             |            function            | arg_foreign_key_name 
+--------------------------------+--------------------------------+----------------------
+ rchild_par_id_fkey_uk_delete   | sql_saga.uk_delete_check_c()   | rchild_par_id_fkey
+ rchild_par_id_fkey_uk_truncate | sql_saga.uk_truncate_check_c() | rchild_par_id_fkey
+ rchild_par_id_fkey_uk_update   | sql_saga.uk_update_check_c()   | rchild_par_id_fkey
+(3 rows)
 
 TABLE fkr.child_constraints;
  table_name |       conname       | contype |                                              def                                              
@@ -339,19 +341,21 @@ BEGIN;
 ALTER TABLE fkr.par DISABLE TRIGGER rchild_par_id_fkey_uk_update;
 ALTER TABLE fkr.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
 TABLE fkr.par_trigger_modes;
-            tgname            | tgenabled 
-------------------------------+-----------
- rchild_par_id_fkey_uk_delete | A
- rchild_par_id_fkey_uk_update | D
-(2 rows)
+             tgname             | tgenabled 
+--------------------------------+-----------
+ rchild_par_id_fkey_uk_delete   | A
+ rchild_par_id_fkey_uk_truncate | O
+ rchild_par_id_fkey_uk_update   | D
+(3 rows)
 
 ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
 TABLE fkr.par_trigger_modes;
-            tgname            | tgenabled 
-------------------------------+-----------
- rchild_par_id_fkey_uk_delete | A
- rchild_par_id_fkey_uk_update | D
-(2 rows)
+             tgname             | tgenabled 
+--------------------------------+-----------
+ rchild_par_id_fkey_uk_delete   | A
+ rchild_par_id_fkey_uk_truncate | O
+ rchild_par_id_fkey_uk_update   | D
+(3 rows)
 
 -- A disabled referenced-side trigger is an integrity violation (reported with its repair); the mode itself survived.
 SAVEPOINT disabled_integrity;
@@ -370,19 +374,21 @@ ROLLBACK;
 BEGIN;
 ALTER TABLE fkr.par ENABLE REPLICA TRIGGER rchild_par_id_fkey_uk_update;
 TABLE fkr.par_trigger_modes;
-            tgname            | tgenabled 
-------------------------------+-----------
- rchild_par_id_fkey_uk_delete | O
- rchild_par_id_fkey_uk_update | R
-(2 rows)
+             tgname             | tgenabled 
+--------------------------------+-----------
+ rchild_par_id_fkey_uk_delete   | O
+ rchild_par_id_fkey_uk_truncate | O
+ rchild_par_id_fkey_uk_update   | R
+(3 rows)
 
 ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
 TABLE fkr.par_trigger_modes;
-            tgname            | tgenabled 
-------------------------------+-----------
- rchild_par_id_fkey_uk_delete | O
- rchild_par_id_fkey_uk_update | R
-(2 rows)
+             tgname             | tgenabled 
+--------------------------------+-----------
+ rchild_par_id_fkey_uk_delete   | O
+ rchild_par_id_fkey_uk_truncate | O
+ rchild_par_id_fkey_uk_update   | R
+(3 rows)
 
 SELECT sql_saga.check_integrity();
  check_integrity 

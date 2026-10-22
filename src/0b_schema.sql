@@ -170,6 +170,9 @@ CREATE TABLE sql_saga.foreign_keys (
     -- These are always on the unique key's table
     uk_update_trigger name,
     uk_delete_trigger name,
+    -- Regular FKs only (1.4): AFTER TRUNCATE FOR EACH STATEMENT, refuses TRUNCATE of the parent alone while a child
+    -- row references it, as PostgreSQL does for native foreign keys. NULL for temporal FKs (native constraints).
+    uk_truncate_trigger name,
     fk_index_name name, -- Stores the name of an index created automatically on the FK table
 
     PRIMARY KEY (foreign_key_name),

@@ -97,7 +97,7 @@ BEGIN
                   SELECT FROM sql_saga.foreign_keys AS fk
                   JOIN sql_saga.unique_keys AS uk USING (unique_key_name)
                   WHERE (uk.table_schema, uk.table_name) = (d.address_names[1], d.address_names[2])
-                    AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger))
+                    AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger))
            OR EXISTS (
                   SELECT FROM sql_saga.foreign_keys AS fk
                   WHERE fk.type = 'regular_to_temporal'
@@ -162,7 +162,7 @@ BEGIN
         FROM dropped AS d
         JOIN sql_saga.foreign_keys AS fk
           ON d.object_type = 'trigger'
-         AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+         AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger)
         JOIN sql_saga.unique_keys AS uk
           ON uk.unique_key_name = fk.unique_key_name
          AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
@@ -360,7 +360,7 @@ BEGIN
                           sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
                           fk.foreign_key_name)
             FROM dropped AS d
-            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger)
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
             WHERE (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
             UNION ALL
@@ -499,7 +499,7 @@ BEGIN
                           sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
                           fk.foreign_key_name)
             FROM dropped AS d
-            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger, fk.uk_truncate_trigger)
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
             WHERE d.object_type = 'trigger'
               AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
@@ -689,6 +689,10 @@ BEGIN
                     END IF;
                     IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_delete_trigger) THEN
                         EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_delete_trigger /* %I */, uk_table_oid /* %s */);
+                    END IF;
+                    IF fk_row.uk_truncate_trigger IS NOT NULL
+                       AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_truncate_trigger) THEN
+                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_truncate_trigger /* %I */, uk_table_oid /* %s */);
                     END IF;
                 END IF;
             END LOOP;

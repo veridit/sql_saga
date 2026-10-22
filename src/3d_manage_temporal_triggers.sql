@@ -14,11 +14,11 @@ BEGIN
         JOIN sql_saga.unique_keys AS uk ON fk.unique_key_name = uk.unique_key_name
         JOIN pg_catalog.pg_namespace AS pn ON pn.nspname = uk.table_schema
         JOIN pg_catalog.pg_class AS pc ON (pc.relnamespace, pc.relname) = (pn.oid, uk.table_name)
-        CROSS JOIN LATERAL (VALUES (1, fk.uk_update_trigger), (2, fk.uk_delete_trigger)) AS trg(n, trigger_name)
+        CROSS JOIN LATERAL (VALUES (1, fk.uk_update_trigger), (2, fk.uk_delete_trigger), (3, fk.uk_truncate_trigger)) AS trg(n, trigger_name)
         WHERE pc.oid = ANY (p_table_oids::oid[]) AND trg.trigger_name IS NOT NULL
         UNION ALL
         -- The referencing-side constraint trigger of a regular foreign key, when its table is listed.
-        SELECT pc.oid::regclass, fk.fk_check_constraint, fk.foreign_key_name, 3
+        SELECT pc.oid::regclass, fk.fk_check_constraint, fk.foreign_key_name, 4
         FROM sql_saga.foreign_keys AS fk
         JOIN pg_catalog.pg_namespace AS pn ON pn.nspname = fk.table_schema
         JOIN pg_catalog.pg_class AS pc ON (pc.relnamespace, pc.relname) = (pn.oid, fk.table_name)

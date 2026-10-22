@@ -57,11 +57,20 @@ RETURNS trigger
 AS 'sql_saga', 'regular_fk_check_c'
 LANGUAGE c;
 
+-- Referenced side of a regular foreign key on TRUNCATE (1.4): refuses TRUNCATE of the parent while a child row
+-- still references it, as PostgreSQL does for native foreign keys.
+CREATE OR REPLACE FUNCTION sql_saga.uk_truncate_check_c()
+RETURNS trigger
+AS 'sql_saga', 'uk_truncate_check_c'
+LANGUAGE c;
+
 -- EXECUTE is granted to PUBLIC explicitly, so it holds also when the extension is created by a role whose default
 -- privileges revoke EXECUTE from PUBLIC. Firing a trigger needs no privilege, but CREATE TRIGGER does: a restore
 -- (pg_restore of the post-data trigger, also --no-owner) creates it as the table owner. The function only checks
 -- the foreign key its trigger arguments name, with lookups run as its owner.
 GRANT EXECUTE ON FUNCTION sql_saga.regular_fk_check_c() TO PUBLIC;
+-- The same holds for the TRUNCATE trigger on the parent (1.4), restored as the parent's owner.
+GRANT EXECUTE ON FUNCTION sql_saga.uk_truncate_check_c() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger

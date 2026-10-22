@@ -714,6 +714,7 @@ PG_FUNCTION_INFO_V1(fk_update_check_c);
 PG_FUNCTION_INFO_V1(uk_delete_check_c);
 PG_FUNCTION_INFO_V1(uk_update_check_c);
 PG_FUNCTION_INFO_V1(regular_fk_check_c);
+PG_FUNCTION_INFO_V1(uk_truncate_check_c);
 PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
 PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
@@ -1837,6 +1838,79 @@ Datum
 fk_update_check_c(PG_FUNCTION_ARGS)
 {
 	return fk_check_c(fcinfo, true);
+}
+
+/*
+ * uk_truncate_check_c -- the referenced side of a regular foreign key on TRUNCATE (1.4): AFTER TRUNCATE FOR EACH
+ * STATEMENT on the parent, with the same 17 arguments as the other regular foreign key triggers.
+ *
+ * TRUNCATE fires no row triggers, so the uk_delete check never sees it. PostgreSQL refuses TRUNCATE of a table
+ * that a native foreign key references unless the referencing table is truncated in the same statement, whatever
+ * the foreign key's delete action. This does the same for a regular foreign key: an AFTER TRUNCATE trigger runs
+ * once every table of the statement is truncated, so the child is empty here exactly when it was truncated too
+ * (or had no reference). A child row references the parent when its key columns are all non-NULL (MATCH SIMPLE)
+ * or any of them is (MATCH FULL), as in regular_fk_check_c. The error has the native message, DETAIL and HINT,
+ * and rolls the TRUNCATE back.
+ */
+Datum
+uk_truncate_check_c(PG_FUNCTION_ARGS)
+{
+	TriggerData *trigdata;
+	char	  **tgargs;
+	Datum	   *fk_col_datums;
+	int			num_fk_cols;
+	StringInfoData buf;
+	SPIPlanPtr	plan;
+	int			i;
+	bool		match_full;
+	uint64		referencing;
+
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "uk_truncate_check_c: not called by trigger manager");
+	trigdata = (TriggerData *) fcinfo->context;
+	if (!TRIGGER_FIRED_AFTER(trigdata->tg_event) || !TRIGGER_FIRED_BY_TRUNCATE(trigdata->tg_event))
+		elog(ERROR, "uk_truncate_check_c: must be fired AFTER TRUNCATE FOR EACH STATEMENT");
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "uk_truncate_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	tgargs = trigdata->tg_trigger->tgargs;
+	match_full = strcmp(tgargs[13], "FULL") == 0;
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	regular_fk_parse_columns(tgargs[3], &fk_col_datums, &num_fk_cols);
+	if (num_fk_cols < 1 || num_fk_cols > MAX_FK_COLS)
+		elog(ERROR, "uk_truncate_check_c: foreign key \"%s\" has %d child columns", tgargs[0], num_fk_cols);
+
+	/* SELECT 1 FROM ONLY child AS fk WHERE (fk.c1 IS NOT NULL AND|OR ...) LIMIT 1 */
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "SELECT 1 FROM ONLY %s.%s AS fk WHERE ",
+					 quote_identifier(tgargs[1]), quote_identifier(tgargs[2]));
+	for (i = 0; i < num_fk_cols; i++)
+	{
+		if (i > 0)
+			appendStringInfoString(&buf, match_full ? " OR " : " AND ");
+		appendStringInfo(&buf, "fk.%s IS NOT NULL", quote_identifier(NameStr(*DatumGetName(fk_col_datums[i]))));
+	}
+	appendStringInfoString(&buf, " LIMIT 1");
+
+	/* Not cached: TRUNCATE is rare, and the plan would be per statement anyway. */
+	plan = SPI_prepare(buf.data, 0, NULL);
+	if (plan == NULL)
+		elog(ERROR, "SPI_prepare for regular foreign key truncate check failed: %s", SPI_result_code_string(SPI_result));
+	referencing = regular_fk_execute_as_owner(fcinfo, plan, NULL, NULL, true);
+	SPI_freeplan(plan);
+	pfree(buf.data);
+	SPI_finish();
+
+	if (referencing > 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot truncate a table referenced in a foreign key constraint"),
+				 errdetail("Table \"%s\" references \"%s\".", tgargs[2], tgargs[8]),
+				 errhint("Truncate table \"%s\" at the same time.", tgargs[2])));
+
+	return PointerGetDatum(NULL);
 }
 
 Datum

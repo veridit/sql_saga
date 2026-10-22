@@ -251,15 +251,17 @@ TABLE e5.era_checks;
 (4 rows)
 
 TABLE e5.triggers;
- table_name |             tgname              | tgenabled |                function                |              update_of               |                uk_args                
-------------+---------------------------------+-----------+----------------------------------------+--------------------------------------+---------------------------------------
- par        | par_valid_sync_temporal_trg     | O         | sql_saga.e5_par_valid_template_sync    | valid_range, valid_from, valid_until | {}
- par        | rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c             |                                      | {"{id}",valid,valid_from,valid_until}
- par        | rchild2_owner_id_fkey_uk_update | R         | sql_saga.uk_update_check_c             | id, valid_from, valid_until          | {"{id}",valid,valid_from,valid_until}
- par        | rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c             |                                      | {"{id}",valid,valid_from,valid_until}
- par        | rchild_par_id_fkey_uk_update    | O         | sql_saga.uk_update_check_c             | id, valid_from, valid_until          | {"{id}",valid,valid_from,valid_until}
- tchild     | tchild_valid_sync_temporal_trg  | A         | sql_saga.e5_tchild_valid_template_sync | valid_range, valid_from, valid_until | {}
-(6 rows)
+ table_name |              tgname               | tgenabled |                function                |              update_of               |                uk_args                
+------------+-----------------------------------+-----------+----------------------------------------+--------------------------------------+---------------------------------------
+ par        | par_valid_sync_temporal_trg       | O         | sql_saga.e5_par_valid_template_sync    | valid_range, valid_from, valid_until | {}
+ par        | rchild2_owner_id_fkey_uk_delete   | O         | sql_saga.uk_delete_check_c             |                                      | {"{id}",valid,valid_from,valid_until}
+ par        | rchild2_owner_id_fkey_uk_truncate | O         | sql_saga.uk_truncate_check_c           |                                      | {"{id}",valid,valid_from,valid_until}
+ par        | rchild2_owner_id_fkey_uk_update   | R         | sql_saga.uk_update_check_c             | id, valid_from, valid_until          | {"{id}",valid,valid_from,valid_until}
+ par        | rchild_par_id_fkey_uk_delete      | A         | sql_saga.uk_delete_check_c             |                                      | {"{id}",valid,valid_from,valid_until}
+ par        | rchild_par_id_fkey_uk_truncate    | O         | sql_saga.uk_truncate_check_c           |                                      | {"{id}",valid,valid_from,valid_until}
+ par        | rchild_par_id_fkey_uk_update      | O         | sql_saga.uk_update_check_c             | id, valid_from, valid_until          | {"{id}",valid,valid_from,valid_until}
+ tchild     | tchild_valid_sync_temporal_trg    | A         | sql_saga.e5_tchild_valid_template_sync | valid_range, valid_from, valid_until | {}
+(8 rows)
 
 TABLE e5.sync_functions;
  table_name |            proname            | names_original_columns | reads_range | reads_from | reads_until 
@@ -357,15 +359,17 @@ TABLE e5.era_checks;
 (4 rows)
 
 TABLE e5.triggers;
- table_name |             tgname              | tgenabled |                function                |               update_of               |                uk_args                 
-------------+---------------------------------+-----------+----------------------------------------+---------------------------------------+----------------------------------------
- par        | par_valid_sync_temporal_trg     | O         | sql_saga.e5_par_valid_template_sync    | period, starts_on, "Ends Before"      | {}
- par        | rchild2_owner_id_fkey_uk_delete | O         | sql_saga.uk_delete_check_c             |                                       | {"{id}",valid,starts_on,"Ends Before"}
- par        | rchild2_owner_id_fkey_uk_update | R         | sql_saga.uk_update_check_c             | id, starts_on, "Ends Before"          | {"{id}",valid,starts_on,"Ends Before"}
- par        | rchild_par_id_fkey_uk_delete    | A         | sql_saga.uk_delete_check_c             |                                       | {"{id}",valid,starts_on,"Ends Before"}
- par        | rchild_par_id_fkey_uk_update    | O         | sql_saga.uk_update_check_c             | id, starts_on, "Ends Before"          | {"{id}",valid,starts_on,"Ends Before"}
- tchild     | tchild_valid_sync_temporal_trg  | A         | sql_saga.e5_tchild_valid_template_sync | child_period, child_from, child_until | {}
-(6 rows)
+ table_name |              tgname               | tgenabled |                function                |               update_of               |                uk_args                 
+------------+-----------------------------------+-----------+----------------------------------------+---------------------------------------+----------------------------------------
+ par        | par_valid_sync_temporal_trg       | O         | sql_saga.e5_par_valid_template_sync    | period, starts_on, "Ends Before"      | {}
+ par        | rchild2_owner_id_fkey_uk_delete   | O         | sql_saga.uk_delete_check_c             |                                       | {"{id}",valid,starts_on,"Ends Before"}
+ par        | rchild2_owner_id_fkey_uk_truncate | O         | sql_saga.uk_truncate_check_c           |                                       | {"{id}",valid,starts_on,"Ends Before"}
+ par        | rchild2_owner_id_fkey_uk_update   | R         | sql_saga.uk_update_check_c             | id, starts_on, "Ends Before"          | {"{id}",valid,starts_on,"Ends Before"}
+ par        | rchild_par_id_fkey_uk_delete      | A         | sql_saga.uk_delete_check_c             |                                       | {"{id}",valid,starts_on,"Ends Before"}
+ par        | rchild_par_id_fkey_uk_truncate    | O         | sql_saga.uk_truncate_check_c           |                                       | {"{id}",valid,starts_on,"Ends Before"}
+ par        | rchild_par_id_fkey_uk_update      | O         | sql_saga.uk_update_check_c             | id, starts_on, "Ends Before"          | {"{id}",valid,starts_on,"Ends Before"}
+ tchild     | tchild_valid_sync_temporal_trg    | A         | sql_saga.e5_tchild_valid_template_sync | child_period, child_from, child_until | {}
+(8 rows)
 
 TABLE e5.sync_functions;
  table_name |            proname            | names_original_columns | reads_range | reads_from | reads_until 
