@@ -1,0 +1,12 @@
+\set ECHO none
+--- part 1: no growth across transactions
+cached plans grew by | 0
+notes, units | 0, 10
+--- part 2: first firing in a subtransaction that rolls back
+ERROR:  insert or update on table "ppc.tag" violates foreign key constraint "tag_fk"
+tags | 6
+--- part 3: transactions that abort inside a trigger, then work again
+ERROR:  insert or update on table "ppc.tag" violates foreign key constraint "tag_fk"
+ERROR:  update or delete on table "ppc.unit" violates foreign key constraint "tag_fk" on table "ppc.tag"
+notes after cascade, units | 0, 9
+cached plans after the run, compared with the first transaction | 0

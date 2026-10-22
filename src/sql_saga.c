@@ -152,11 +152,12 @@ typedef struct FkValidationPlan
  * keyed by trigger OID. Plans are created via SPI_prepare() + SPI_keepplan() on
  * first use, then reused for subsequent trigger firings within the same transaction.
  *
- * Lifecycle: Caches are allocated in CurTransactionContext (line ~130) so they are
- * automatically freed by PostgreSQL's memory context machinery on transaction end.
- * Additionally, cache_cleanup_callback (registered via RegisterXactCallback) explicitly
- * NULLs the static pointers on XACT_EVENT_ABORT and XACT_EVENT_COMMIT, ensuring no
- * dangling references survive across transactions.
+ * Lifecycle: the caches live in TopMemoryContext and the plans in CacheMemoryContext (SPI_keepplan).
+ * cache_cleanup_callback, registered once per backend, frees every plan and destroys the caches at the end of
+ * each top-level transaction (commit, abort or prepare). Up to 1.3 the plans were never freed and the callback was
+ * registered again in every transaction, so a long-lived session grew with every transaction that fired a trigger.
+ * An entry is complete when its main plan is set (it is kept last); one left incomplete by an error caught in a
+ * subtransaction is rebuilt (plan_cache_entry_usable).
  * See: src/backend/access/transam/xact.c — CallXactCallbacks() invocation points.
  *
  * Why transaction-scoped (not session-scoped): FK/UK triggers reference user tables
@@ -172,28 +173,107 @@ typedef struct FkValidationPlan
  * An ALTER on these catalog tables would require DROP/CREATE EXTENSION, which destroys
  * the backend's cached plans anyway.
  */
+#define MAX_UK_UPDATE_PLAN_ARGS (2 * MAX_FK_COLS + 4)
+
+typedef struct UkUpdateValidationPlan
+{
+	Oid			trigger_oid;	/* the hash key; must be first */
+	SPIPlanPtr	plan;
+	int			nargs;
+	Oid			argtypes[MAX_UK_UPDATE_PLAN_ARGS];
+	int			num_uk_cols;
+	int			param_attnums_old[MAX_FK_COLS + 2];
+	int			param_attnums_new[MAX_FK_COLS + 2];
+	SPIPlanPtr	key_plan;	/* regular FK: does the old key still exist in the parent? */
+} UkUpdateValidationPlan;
+
 static HTAB *fk_plan_cache = NULL;
 static HTAB *uk_delete_plan_cache = NULL;
 static HTAB *uk_update_plan_cache = NULL;
 static bool cache_callback_registered = false;
 
+/* Free the kept plans of a transaction's cache and the cache itself. */
+static void
+fk_plan_cache_destroy(HTAB **cache, bool update_entries)
+{
+	HASH_SEQ_STATUS status;
+	void	   *entry;
+
+	if (*cache == NULL)
+		return;
+	hash_seq_init(&status, *cache);
+	while ((entry = hash_seq_search(&status)) != NULL)
+	{
+		SPIPlanPtr	plans[3];
+		int			i;
+
+		if (update_entries)
+		{
+			plans[0] = ((UkUpdateValidationPlan *) entry)->plan;
+			plans[1] = ((UkUpdateValidationPlan *) entry)->key_plan;
+			plans[2] = NULL;
+		}
+		else
+		{
+			plans[0] = ((FkValidationPlan *) entry)->plan;
+			plans[1] = ((FkValidationPlan *) entry)->key_plan;
+			plans[2] = ((FkValidationPlan *) entry)->cascade_plan;
+		}
+		for (i = 0; i < 3; i++)
+			if (plans[i] != NULL)
+				SPI_freeplan(plans[i]);
+	}
+	hash_destroy(*cache);
+	*cache = NULL;
+}
+
 static void
 cache_cleanup_callback(XactEvent event, void *arg)
 {
 	/*
-	 * On transaction end, reset the static pointers to our caches. The memory
-	 * holding the hash tables will be freed automatically because it was
-	 * allocated in CurTransactionContext. If we don't reset these pointers,
-	 * the next transaction will try to use a dangling pointer, leading to a
-	 * crash or other undefined behavior.
+	 * At transaction end, free the plans the triggers kept for the transaction, and the caches. The caches live in
+	 * TopMemoryContext, not in CurTransactionContext: a cache first created in a subtransaction must survive that
+	 * subtransaction's abort, and the kept plans (in CacheMemoryContext) must be freed explicitly, or a long-lived
+	 * session grows by them with every transaction. The callback is registered once per backend.
 	 */
-	if (event == XACT_EVENT_ABORT || event == XACT_EVENT_COMMIT)
+	switch (event)
 	{
-		fk_plan_cache = NULL;
-		uk_delete_plan_cache = NULL;
-		uk_update_plan_cache = NULL;
-		cache_callback_registered = false;
+		case XACT_EVENT_COMMIT:
+		case XACT_EVENT_PARALLEL_COMMIT:
+		case XACT_EVENT_ABORT:
+		case XACT_EVENT_PARALLEL_ABORT:
+		case XACT_EVENT_PREPARE:
+			fk_plan_cache_destroy(&fk_plan_cache, false);
+			fk_plan_cache_destroy(&uk_delete_plan_cache, false);
+			fk_plan_cache_destroy(&uk_update_plan_cache, true);
+			break;
+		default:
+			break;
 	}
+}
+
+/*
+ * Called right after hash_search(HASH_ENTER): true when the entry holds a complete build. A new entry, or one whose
+ * build failed part way (an error caught by a subtransaction; the main plan is kept last), is reset, freeing what
+ * it did keep, so the caller builds it (again). cascade_plan may be NULL for entries without one.
+ */
+static bool
+plan_cache_entry_usable(bool found, SPIPlanPtr *plan, SPIPlanPtr *key_plan, SPIPlanPtr *cascade_plan)
+{
+	if (found && *plan != NULL)
+		return true;
+	if (found)
+	{
+		if (*key_plan != NULL)
+			SPI_freeplan(*key_plan);
+		if (cascade_plan != NULL && *cascade_plan != NULL)
+			SPI_freeplan(*cascade_plan);
+	}
+	*plan = NULL;
+	*key_plan = NULL;
+	if (cascade_plan != NULL)
+		*cascade_plan = NULL;
+	return false;
 }
 
 
@@ -214,9 +294,9 @@ init_fk_plan_cache(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(FkValidationPlan);
-	/* Lifetime of cache is transaction */
-	ctl.hcxt = CurTransactionContext;
-	fk_plan_cache = hash_create("sql_saga fk validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
+	/* Emptied and destroyed at transaction end (cache_cleanup_callback) */
+	ctl.hcxt = TopMemoryContext;
+	fk_plan_cache = hash_create("sql_saga fk validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
 
 static void
@@ -236,23 +316,9 @@ init_uk_delete_plan_cache(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(FkValidationPlan); /* Reusing struct */
-	ctl.hcxt = CurTransactionContext;
-	uk_delete_plan_cache = hash_create("sql_saga uk delete validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
+	ctl.hcxt = TopMemoryContext;
+	uk_delete_plan_cache = hash_create("sql_saga uk delete validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
-
-#define MAX_UK_UPDATE_PLAN_ARGS (2 * MAX_FK_COLS + 4)
-
-typedef struct UkUpdateValidationPlan
-{
-	Oid			trigger_oid;	/* the hash key; must be first */
-	SPIPlanPtr	plan;
-	int			nargs;
-	Oid			argtypes[MAX_UK_UPDATE_PLAN_ARGS];
-	int			num_uk_cols;
-	int			param_attnums_old[MAX_FK_COLS + 2];
-	int			param_attnums_new[MAX_FK_COLS + 2];
-	SPIPlanPtr	key_plan;	/* regular FK: does the old key still exist in the parent? */
-} UkUpdateValidationPlan;
 
 static void
 init_uk_update_plan_cache(void)
@@ -271,8 +337,8 @@ init_uk_update_plan_cache(void)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(UkUpdateValidationPlan);
-	ctl.hcxt = CurTransactionContext;
-	uk_update_plan_cache = hash_create("sql_saga uk update validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
+	ctl.hcxt = TopMemoryContext;
+	uk_update_plan_cache = hash_create("sql_saga uk update validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 }
 
 static SPIPlanPtr get_range_type_plan = NULL;
@@ -1637,15 +1703,13 @@ regular_fk_check_c(PG_FUNCTION_ARGS)
 
 	init_fk_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
-	if (!found)
+	if (!plan_cache_entry_usable(found, &plan_entry->plan, &plan_entry->key_plan, &plan_entry->cascade_plan))
 	{
 		Datum	   *uk_col_datums;
 		Datum	   *fk_col_datums;
 		int			num_uk_cols;
 		int			num_fk_cols;
 
-		plan_entry->plan = NULL;
-		plan_entry->key_plan = NULL;
 		regular_fk_parse_columns(tgargs[9], &uk_col_datums, &num_uk_cols);
 		regular_fk_parse_columns(tgargs[3], &fk_col_datums, &num_fk_cols);
 		if (num_fk_cols != num_uk_cols || num_fk_cols < 1 || num_fk_cols > MAX_FK_COLS)
@@ -1789,7 +1853,7 @@ fk_check_c(FunctionCallInfo fcinfo, bool is_update)
 	init_fk_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 
-	if (!found)
+	if (!plan_cache_entry_usable(found, &plan_entry->plan, &plan_entry->key_plan, &plan_entry->cascade_plan))
 	{
 		char *fk_range_constructor;
 		char *uk_range_constructor;
@@ -2144,7 +2208,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	init_uk_delete_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(uk_delete_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 
-	if (!found)
+	if (!plan_cache_entry_usable(found, &plan_entry->plan, &plan_entry->key_plan, &plan_entry->cascade_plan))
 	{
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;
@@ -2153,9 +2217,6 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		StringInfoData where_buf;
 		char *query;
 		int i;
-
-		plan_entry->key_plan = NULL;
-		plan_entry->cascade_plan = NULL;
 
 		/* Get column name arrays */
 		if (namearray_input_func_oid == InvalidOid)
@@ -2476,7 +2537,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	init_uk_update_plan_cache();
 	plan_entry = (UkUpdateValidationPlan *) hash_search(uk_update_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 
-	if (!found)
+	if (!plan_cache_entry_usable(found, &plan_entry->plan, &plan_entry->key_plan, NULL))
 	{
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;

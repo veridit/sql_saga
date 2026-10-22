@@ -44,7 +44,13 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
       delay_constraints => false keeps only native constraints immediate. Test 137 part 4 (non-overlapping move)
 - [x] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording
       DONE: README names `<fk>_uk_delete` (foreign_keys.uk_delete_trigger)
-- [ ] F10 nits: error text "lookup" for the DELETE; wrong "as native" comments; lazy cascade-plan preparation
+- [x] F10 nits: error text "lookup" for the DELETE; wrong "as native" comments; lazy cascade-plan preparation
+      DONE: error text and comments fixed with F2. Found while checking the plan-leak nit: every transaction that
+      fired a foreign key trigger leaked its kept plans (2.1 GB after 2000 transactions in one session with one
+      FK; pre-existing since 1.0). Plans now freed at transaction end, caches in TopMemoryContext, callback
+      registered once, half-built entries rebuilt. Test 143 (flat after 200 transactions; subtransaction aborts).
+      Not done: lazy cascade-plan preparation (one prepare per transaction, now freed; F2 removed the permission
+      failure it could cause)
 
 **Review and release.**
 - [ ] Second independent review of all 1.4 changes (security fixes included) until APPROVE
