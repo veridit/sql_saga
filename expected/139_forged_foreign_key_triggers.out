@@ -18,3 +18,8 @@ genuine child rows after cascade | none
 genuine child insert of a missing key | 23503: insert or update on table "ff.child" violates foreign key constraint "ff_child_fk"
 genuine TRUNCATE of the parent alone | 0A000: cannot truncate a table referenced in a foreign key constraint
 check_integrity | ok
+--- part 5: identity of the cascade (F2) and no rights needed on the child (F8)
+writer without rights on the child schema deletes parent 2 | ok
+child rows after the cascade | none
+child trigger ran as | ff_child_owner
+that role is a superuser | false

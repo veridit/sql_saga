@@ -125,5 +125,44 @@ SELECT 'genuine child insert of a missing key | ' || ff.outcome('INSERT INTO ff.
 SELECT 'genuine TRUNCATE of the parent alone | ' || ff.outcome('TRUNCATE ff.parent');
 SELECT 'check_integrity | ' || ff.outcome('SELECT sql_saga.check_integrity()');
 
+\echo '--- part 5: identity of the cascade (F2) and no rights needed on the child (F8)'
+/*
+ * The child table is owned by ff_child_owner. A trigger on it records who runs it. As native ON DELETE CASCADE, the
+ * cascaded delete and the child's triggers run as the child table's owner, never as the extension owner. The parent's
+ * writer (ff_writer) has DELETE on the parent and no rights at all on the child or its schema.
+ */
+\o /dev/null
+CREATE ROLE ff_child_owner;
+CREATE ROLE ff_writer;
+CREATE SCHEMA ff_child AUTHORIZATION ff_child_owner;
+GRANT USAGE ON SCHEMA ff TO ff_child_owner, ff_writer;
+GRANT SELECT, REFERENCES ON ff.parent TO ff_child_owner;
+GRANT SELECT, DELETE ON ff.parent TO ff_writer;
+GRANT USAGE ON SCHEMA sql_saga TO ff_child_owner, ff_writer;
+CREATE TABLE ff_child.audit (who text, session text);
+CREATE TABLE ff_child.note (id int PRIMARY KEY, parent_id int);
+ALTER TABLE ff_child.audit OWNER TO ff_child_owner;
+ALTER TABLE ff_child.note OWNER TO ff_child_owner;
+CREATE FUNCTION ff_child.note_deleted() RETURNS trigger LANGUAGE plpgsql AS $note_deleted$
+BEGIN
+    INSERT INTO ff_child.audit VALUES (current_user, session_user);
+    RETURN OLD;
+END;
+$note_deleted$;
+ALTER FUNCTION ff_child.note_deleted() OWNER TO ff_child_owner;
+CREATE TRIGGER note_deleted AFTER DELETE ON ff_child.note FOR EACH ROW EXECUTE FUNCTION ff_child.note_deleted();
+SELECT sql_saga.add_foreign_key('ff_child.note', ARRAY['parent_id'], 'ff.parent', ARRAY['id'],
+    delete_action => 'CASCADE', foreign_key_name => 'ff_note_fk');
+INSERT INTO ff_child.note VALUES (1, 2);
+\o
+SAVEPOINT w;
+SET LOCAL ROLE ff_writer;
+SELECT 'writer without rights on the child schema deletes parent 2 | ' || ff.outcome('DELETE FROM ff.parent WHERE id = 2');
+RESET ROLE;
+SELECT 'child rows after the cascade | ' || coalesce(string_agg(id::text, ','), 'none') FROM ff_child.note;
+SELECT 'child trigger ran as | ' || who FROM ff_child.audit;
+SELECT 'that role is a superuser | ' || rolsuper::text FROM pg_roles WHERE rolname = (SELECT who FROM ff_child.audit);
+ROLLBACK TO SAVEPOINT w;
+
 ROLLBACK;
 \i sql/include/test_teardown.sql

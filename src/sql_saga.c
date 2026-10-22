@@ -1154,6 +1154,60 @@ alter_table_changes_column_shape(PG_FUNCTION_ARGS)
  * same way).
  */
 
+/*
+ * The owner of a table, the identity native referential integrity runs its queries as (ri_PlanCheck,
+ * ri_PerformCheck): the referenced table's owner for a lookup in the referenced table, the referencing table's owner
+ * for a query on the referencing table (does a child reference the key, the ON DELETE CASCADE delete). A role that
+ * owns the queried table needs no rights through the caller, and the caller needs none on it (also not USAGE on its
+ * schema). Neither the extension owner nor the caller lends its rights.
+ */
+static Oid
+regular_fk_table_owner(const char *schema_name, const char *table_name)
+{
+	Oid			nsp = get_namespace_oid(schema_name, false);
+	Oid			relid = get_relname_relid(table_name, nsp);
+	HeapTuple	tup;
+	Oid			owner;
+
+	if (!OidIsValid(relid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_TABLE),
+				 errmsg("relation \"%s.%s\" does not exist", schema_name, table_name)));
+	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
+	owner = ((Form_pg_class) GETSTRUCT(tup))->relowner;
+	ReleaseSysCache(tup);
+	return owner;
+}
+
+/* SPI_prepare + SPI_keepplan as the given role (the owner of the table the query reads or changes). */
+static SPIPlanPtr
+regular_fk_prepare_as(Oid query_owner, const char *sql, int nargs, Oid *argtypes)
+{
+	Oid			saved_userid;
+	int			saved_sec_context;
+	SPIPlanPtr	plan = NULL;
+
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(query_owner,
+						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+	PG_TRY();
+	{
+		plan = SPI_prepare(sql, nargs, argtypes);
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+	if (plan == NULL)
+		elog(ERROR, "SPI_prepare for regular foreign key query failed: %s", SPI_result_code_string(SPI_result));
+	if (SPI_keepplan(plan))
+		elog(ERROR, "SPI_keepplan for regular foreign key query failed");
+	return plan;
+}
+
 /* "OPERATOR(schema.op)" of the default btree equality operator for a column type. */
 static char *
 regular_fk_equality_operator(Oid typid)
@@ -1216,18 +1270,19 @@ regular_fk_prepare_key_plan(const char *uk_schema_name, const char *uk_table_nam
 	}
 	appendStringInfoString(&buf, " LIMIT 1 FOR KEY SHARE OF uk");
 
-	plan = SPI_prepare(buf.data, ncols, argtypes);
-	if (plan == NULL)
-		elog(ERROR, "SPI_prepare for regular foreign key lookup failed: %s", SPI_result_code_string(SPI_result));
-	if (SPI_keepplan(plan))
-		elog(ERROR, "SPI_keepplan for regular foreign key lookup failed");
+	/* Planned as the referenced table's owner, who also runs it (regular_fk_table_owner). */
+	plan = regular_fk_prepare_as(regular_fk_table_owner(uk_schema_name, uk_table_name), buf.data, ncols, argtypes);
 	pfree(buf.data);
 	return plan;
 }
 
 /*
- * Execute a prepared plan as the owner of the calling C function, with row level security not
- * forced on its tables. Returns SPI_processed.
+ * Execute a prepared plan as query_owner (the owner of the table the query reads or changes, see
+ * regular_fk_table_owner), with row level security not forced on its tables. Returns SPI_processed.
+ *
+ * As ri_PerformCheck: fire_triggers is false, so AFTER triggers of the ON DELETE CASCADE delete (the child's own
+ * triggers, system versioning, its own foreign keys) are queued to the end of the outer query instead of firing
+ * inside this trigger, and fire as their usual identity.
  *
  * detect_new_rows: as PostgreSQL's ri_PerformCheck does for the referenced side of a foreign key. In
  * REPEATABLE READ and SERIALIZABLE the transaction snapshot cannot see a referencing row committed
@@ -1236,11 +1291,9 @@ regular_fk_prepare_key_plan(const char *uk_schema_name, const char *uk_table_nam
  * included too). In READ COMMITTED each lookup takes a fresh snapshot anyway.
  */
 static uint64
-regular_fk_execute_as_owner_ex(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
-							   bool detect_new_rows, int expected_ret, long tcount)
+regular_fk_execute_as_ex(Oid query_owner, SPIPlanPtr plan, Datum *values, const char *nulls,
+						 bool detect_new_rows, int expected_ret, long tcount)
 {
-	HeapTuple	proc_tuple;
-	Oid			function_owner;
 	Oid			saved_userid;
 	int			saved_sec_context;
 	int			ret = 0;
@@ -1254,24 +1307,13 @@ regular_fk_execute_as_owner_ex(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *
 		crosscheck_snapshot = GetTransactionSnapshot();
 	}
 
-	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
-	if (!HeapTupleIsValid(proc_tuple))
-		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
-	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
-	ReleaseSysCache(proc_tuple);
-
 	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
-	SetUserIdAndSecContext(function_owner,
+	SetUserIdAndSecContext(query_owner,
 						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
 	PG_TRY();
 	{
-		/*
-		 * read_only false; fire_triggers false for the lookups (as before) and true for the cascading
-		 * DELETE, so the child's own triggers (system versioning, its own foreign keys) run, as they do
-		 * for a native ON DELETE CASCADE.
-		 */
 		ret = SPI_execute_snapshot(plan, values, nulls, test_snapshot, crosscheck_snapshot,
-								   false, expected_ret != SPI_OK_SELECT, tcount);
+								   false, false, tcount);
 	}
 	PG_FINALLY();
 	{
@@ -1280,15 +1322,15 @@ regular_fk_execute_as_owner_ex(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *
 	PG_END_TRY();
 
 	if (ret != expected_ret)
-		elog(ERROR, "SPI_execute_plan for regular foreign key lookup returned %s", SPI_result_code_string(ret));
+		elog(ERROR, "SPI_execute_snapshot for regular foreign key %s returned %s",
+			 expected_ret == SPI_OK_DELETE ? "cascade" : "lookup", SPI_result_code_string(ret));
 	return SPI_processed;
 }
 
 static uint64
-regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *values, const char *nulls,
-							bool detect_new_rows)
+regular_fk_execute_as(Oid query_owner, SPIPlanPtr plan, Datum *values, const char *nulls, bool detect_new_rows)
 {
-	return regular_fk_execute_as_owner_ex(fcinfo, plan, values, nulls, detect_new_rows, SPI_OK_SELECT, 1);
+	return regular_fk_execute_as_ex(query_owner, plan, values, nulls, detect_new_rows, SPI_OK_SELECT, 1);
 }
 
 /*
@@ -1481,11 +1523,8 @@ regular_fk_prepare_cascade_plan(const char *fk_schema_name, const char *fk_table
 						 quote_identifier(fkc), regular_fk_equality_operator(argtypes[i]), i + 1);
 	}
 
-	plan = SPI_prepare(buf.data, ncols, argtypes);
-	if (plan == NULL)
-		elog(ERROR, "SPI_prepare for regular foreign key cascade failed: %s", SPI_result_code_string(SPI_result));
-	if (SPI_keepplan(plan))
-		elog(ERROR, "SPI_keepplan for regular foreign key cascade failed");
+	/* Planned and run as the referencing table's owner, as native ON DELETE CASCADE (ri_triggers.c). */
+	plan = regular_fk_prepare_as(regular_fk_table_owner(fk_schema_name, fk_table_name), buf.data, ncols, argtypes);
 	pfree(buf.data);
 	return plan;
 }
@@ -1497,27 +1536,31 @@ regular_fk_prepare_cascade_plan(const char *fk_schema_name, const char *fk_table
  *
  * With ON DELETE CASCADE (cascade_plan not NULL) the child rows of the vanished key are deleted
  * instead of refusing, under the same rule: only when no parent row has the key any more. The delete
- * runs as the function owner like the lookups, so the parent's writer needs no rights on the child
- * (native ON DELETE CASCADE behaves the same way).
+ * runs as the child table's owner, as native ON DELETE CASCADE does, so the parent's writer needs no rights on
+ * the child and the child's triggers fire with no more rights than its owner has.
  */
 static void
-regular_fk_check_referenced_key(FunctionCallInfo fcinfo, SPIPlanPtr reference_plan, SPIPlanPtr key_plan,
+regular_fk_check_referenced_key(SPIPlanPtr reference_plan, SPIPlanPtr key_plan,
 								SPIPlanPtr cascade_plan, Datum *values, const char *nulls, char **tgargs)
 {
 	/*
-	 * The child table is read as the function owner too: the parent's writer needs no rights on it. Both
-	 * lookups detect rows committed after the transaction snapshot (ri_PerformCheck's detectNewRows): a
-	 * child row another transaction committed meanwhile, and parent rows deleted meanwhile.
+	 * As native referential integrity: the child is read (and the ON DELETE CASCADE delete runs) as the child
+	 * table's owner, the parent is read as the parent table's owner. The parent's writer needs no rights on the
+	 * child. Both lookups detect rows committed after the transaction snapshot (ri_PerformCheck's detectNewRows):
+	 * a child row another transaction committed meanwhile, and parent rows deleted meanwhile.
 	 */
-	if (regular_fk_execute_as_owner(fcinfo, reference_plan, values, nulls, true) == 0)
+	Oid			child_owner = regular_fk_table_owner(tgargs[1], tgargs[2]);
+	Oid			parent_owner = regular_fk_table_owner(tgargs[7], tgargs[8]);
+
+	if (regular_fk_execute_as(child_owner, reference_plan, values, nulls, true) == 0)
 		return;
 
-	if (regular_fk_execute_as_owner(fcinfo, key_plan, values, nulls, true) > 0)
+	if (regular_fk_execute_as(parent_owner, key_plan, values, nulls, true) > 0)
 		return;
 
 	if (cascade_plan != NULL)
 	{
-		regular_fk_execute_as_owner_ex(fcinfo, cascade_plan, values, nulls, true, SPI_OK_DELETE, 0);
+		regular_fk_execute_as_ex(child_owner, cascade_plan, values, nulls, true, SPI_OK_DELETE, 0);
 		return;
 	}
 
@@ -1653,7 +1696,8 @@ regular_fk_check_c(PG_FUNCTION_ARGS)
 				 errmsg("MATCH PARTIAL is not supported for foreign key \"%s\"", foreign_key_name)));
 	}
 
-	if (regular_fk_execute_as_owner(fcinfo, plan_entry->plan, values, nulls, false) == 0)
+	/* The key is looked up in the referenced table as that table's owner, as native RI_FKey_check does. */
+	if (regular_fk_execute_as(regular_fk_table_owner(tgargs[7], tgargs[8]), plan_entry->plan, values, nulls, false) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 				 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
@@ -1983,6 +2027,7 @@ uk_truncate_check_c(PG_FUNCTION_ARGS)
 	int			i;
 	bool		match_full;
 	uint64		referencing;
+	Oid			child_owner;
 
 	if (!CALLED_AS_TRIGGER(fcinfo))
 		elog(ERROR, "uk_truncate_check_c: not called by trigger manager");
@@ -2014,11 +2059,10 @@ uk_truncate_check_c(PG_FUNCTION_ARGS)
 	}
 	appendStringInfoString(&buf, " LIMIT 1");
 
-	/* Not cached: TRUNCATE is rare, and the plan would be per statement anyway. */
-	plan = SPI_prepare(buf.data, 0, NULL);
-	if (plan == NULL)
-		elog(ERROR, "SPI_prepare for regular foreign key truncate check failed: %s", SPI_result_code_string(SPI_result));
-	referencing = regular_fk_execute_as_owner(fcinfo, plan, NULL, NULL, true);
+	/* Not cached: TRUNCATE is rare. Planned and run as the referencing table's owner, as native RI. */
+	child_owner = regular_fk_table_owner(tgargs[1], tgargs[2]);
+	plan = regular_fk_prepare_as(child_owner, buf.data, 0, NULL);
+	referencing = regular_fk_execute_as(child_owner, plan, NULL, NULL, true);
 	SPI_freeplan(plan);
 	pfree(buf.data);
 	SPI_finish();
@@ -2286,9 +2330,16 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 				: NULL;
 		}
 		
-		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
-		if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
-			elog(ERROR, "SPI_prepare/keepplan for validation query failed");
+		if (strcmp(fk_type, "temporal_to_temporal") != 0)
+			/* The child reference lookup, planned as the referencing table's owner who runs it. */
+			plan_entry->plan = regular_fk_prepare_as(regular_fk_table_owner(fk_schema_name, fk_table_name),
+													 query, plan_entry->nargs, plan_entry->argtypes);
+		else
+		{
+			plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
+			if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
+				elog(ERROR, "SPI_prepare/keepplan for validation query failed");
+		}
 
 		pfree(query); pfree(where_buf.data);
 		pfree(DatumGetPointer(uk_column_names_datum)); if (num_uk_cols > 0) pfree(uk_col_datums);
@@ -2325,7 +2376,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 
 		if (strcmp(fk_type, "temporal_to_temporal") != 0)
 		{
-			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, plan_entry->cascade_plan,
+			regular_fk_check_referenced_key(plan_entry->plan, plan_entry->key_plan, plan_entry->cascade_plan,
 											values, nulls, tgargs);
 			SPI_finish();
 			return PointerGetDatum(rettuple);
@@ -2629,9 +2680,16 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 															   num_uk_cols, plan_entry->argtypes);
 		}
 
-		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
-		if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
-			elog(ERROR, "SPI_prepare/keepplan for validation query failed");
+		if (strcmp(fk_type, "temporal_to_temporal") != 0)
+			/* The child reference lookup, planned as the referencing table's owner who runs it. */
+			plan_entry->plan = regular_fk_prepare_as(regular_fk_table_owner(fk_schema_name, fk_table_name),
+													 query, plan_entry->nargs, plan_entry->argtypes);
+		else
+		{
+			plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
+			if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
+				elog(ERROR, "SPI_prepare/keepplan for validation query failed");
+		}
 		
 		pfree(query); pfree(where_buf.data);
 		pfree(DatumGetPointer(uk_column_names_datum)); if (num_uk_cols > 0) pfree(uk_col_datums);
@@ -2723,7 +2781,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				nulls[i] = isnull ? 'n' : ' ';
 			}
 			/* ON UPDATE CASCADE is not supported: an update of the referenced key is checked, never cascaded. */
-			regular_fk_check_referenced_key(fcinfo, plan_entry->plan, plan_entry->key_plan, NULL, values, nulls, tgargs);
+			regular_fk_check_referenced_key(plan_entry->plan, plan_entry->key_plan, NULL, values, nulls, tgargs);
 			SPI_finish();
 			return PointerGetDatum(rettuple);
 		}
