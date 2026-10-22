@@ -1,0 +1,20 @@
+\set ECHO none
+--- part 1: a forged CASCADE delete trigger
+DELETE of bait 42 (forged CASCADE onto the victim) | 42501: trigger "forged_delete" on table "bait" is not a sql_saga foreign key trigger
+victim rows | 42,43
+--- part 2: no existence oracle
+uk_delete, key 43 exists in the victim | 42501: trigger "forged_delete" on table "bait" is not a sql_saga foreign key trigger
+uk_delete, key 98 absent from the victim | 42501: trigger "forged_delete" on table "bait" is not a sql_saga foreign key trigger
+uk_update, key 98 absent | 42501: trigger "forged_update" on table "bait" is not a sql_saga foreign key trigger
+regular_fk_check, key 43 present | 42501: trigger "forged_child" on table "bait_child" is not a sql_saga foreign key trigger
+regular_fk_check, key 98 absent | 42501: trigger "forged_child" on table "bait_child" is not a sql_saga foreign key trigger
+uk_truncate | 42501: trigger "forged_truncate" on table "bait" is not a sql_saga foreign key trigger
+--- part 3: replaying a genuine trigger's arguments on another table
+DELETE with replayed arguments | 42501: trigger "replayed_delete" on table "bait_child" is not a sql_saga foreign key trigger
+genuine child rows | 1
+--- part 4: the genuine triggers still work
+genuine CASCADE, delete parent 1 | ok
+genuine child rows after cascade | none
+genuine child insert of a missing key | 23503: insert or update on table "ff.child" violates foreign key constraint "ff_child_fk"
+genuine TRUNCATE of the parent alone | 0A000: cannot truncate a table referenced in a foreign key constraint
+check_integrity | ok

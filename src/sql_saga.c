@@ -1291,6 +1291,124 @@ regular_fk_execute_as_owner(FunctionCallInfo fcinfo, SPIPlanPtr plan, Datum *val
 	return regular_fk_execute_as_owner_ex(fcinfo, plan, values, nulls, detect_new_rows, SPI_OK_SELECT, 1);
 }
 
+/*
+ * Before a regular foreign key trigger reads or changes anything with its owner's rights, check that it fires as
+ * the trigger sql_saga created for a registered foreign key (1.4, review finding F1). Its lookups and the ON DELETE
+ * CASCADE delete run as the extension owner from the table and column names in the trigger arguments, and any role
+ * can create a trigger calling these functions on a table of its own. Without this check, made-up arguments read
+ * (existence oracle) or deleted rows of tables the role has no rights on.
+ *
+ * Accepted only when sql_saga.foreign_keys has a regular_to_temporal row named by tgargs[0], the firing trigger is
+ * not internal, is on the catalogued table (the parent for 'parent', the child for 'child'), has the catalogued
+ * trigger name for its kind, and its arguments equal __internal_regular_fk_trigger_args() byte for byte. The column
+ * names in the arguments are then those of the registered foreign key. Called after SPI_connect. Runs the catalog
+ * query as the function owner, so it does not depend on the firing role's rights.
+ */
+typedef enum RegularFkTriggerKind
+{
+	REGULAR_FK_CHILD,			/* regular_fk_check_c on the child: fk_check_constraint */
+	REGULAR_FK_PARENT_UPDATE,	/* uk_update_check_c on the parent: uk_update_trigger */
+	REGULAR_FK_PARENT_DELETE,	/* uk_delete_check_c on the parent: uk_delete_trigger */
+	REGULAR_FK_PARENT_TRUNCATE	/* uk_truncate_check_c on the parent: uk_truncate_trigger */
+} RegularFkTriggerKind;
+
+static SPIPlanPtr regular_fk_verify_plan = NULL;
+
+static void
+regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
+{
+	TriggerData *trigdata = (TriggerData *) fcinfo->context;
+	Trigger    *trigger = trigdata->tg_trigger;
+	Datum		values[4];
+	char		nulls[4] = {' ', ' ', ' ', ' '};
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	int			ret = 0;
+	bool		ok = false;
+	static const char *const trigger_column[] = {
+		"fk_check_constraint", "uk_update_trigger", "uk_delete_trigger", "uk_truncate_trigger"
+	};
+
+	if (trigger->tgisinternal)
+		goto refuse;
+
+	if (regular_fk_verify_plan == NULL)
+	{
+		/*
+		 * $1 foreign key name, $2 firing table, $3 trigger name, $4 kind (0 child, 1 update, 2 delete, 3 truncate).
+		 * The trigger is looked up by table and name, and its arguments compared with the canonical ones.
+		 */
+		const char *sql =
+			"SELECT EXISTS ("
+			" SELECT FROM sql_saga.foreign_keys AS fk"
+			" JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name OPERATOR(pg_catalog.=) fk.unique_key_name"
+			" JOIN pg_catalog.pg_trigger AS t ON t.tgrelid OPERATOR(pg_catalog.=) $2 AND t.tgname OPERATOR(pg_catalog.=) $3"
+			" WHERE fk.foreign_key_name OPERATOR(pg_catalog.=) $1 AND fk.type OPERATOR(pg_catalog.=) 'regular_to_temporal'"
+			"   AND NOT t.tgisinternal"
+			"   AND $2 OPERATOR(pg_catalog.=) CASE WHEN $4 OPERATOR(pg_catalog.=) 0"
+			"         THEN pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name))"
+			"         ELSE pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name)) END"
+			"   AND $3 OPERATOR(pg_catalog.=) CASE $4 WHEN 0 THEN fk.fk_check_constraint WHEN 1 THEN fk.uk_update_trigger"
+			"         WHEN 2 THEN fk.uk_delete_trigger ELSE fk.uk_truncate_trigger END"
+			"   AND t.tgargs OPERATOR(pg_catalog.=) sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name))";
+		Oid			argtypes[4] = {NAMEOID, OIDOID, NAMEOID, INT4OID};
+
+		regular_fk_verify_plan = SPI_prepare(sql, 4, argtypes);
+		if (regular_fk_verify_plan == NULL)
+			elog(ERROR, "SPI_prepare for regular foreign key trigger verification failed: %s",
+				 SPI_result_code_string(SPI_result));
+		if (SPI_keepplan(regular_fk_verify_plan))
+			elog(ERROR, "SPI_keepplan for regular foreign key trigger verification failed");
+	}
+
+	if (trigger->tgnargs != 17)
+		goto refuse;
+	values[0] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgargs[0]));
+	values[1] = ObjectIdGetDatum(RelationGetRelid(trigdata->tg_relation));
+	values[2] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgname));
+	values[3] = Int32GetDatum((int32) kind);
+
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(function_owner,
+						   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+	PG_TRY();
+	{
+		ret = SPI_execute_plan(regular_fk_verify_plan, values, nulls, true, 1);
+		if (ret == SPI_OK_SELECT && SPI_processed == 1)
+		{
+			bool		isnull;
+			Datum		d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+
+			ok = !isnull && DatumGetBool(d);
+		}
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "regular foreign key trigger verification returned %s", SPI_result_code_string(ret));
+	if (ok)
+		return;
+
+refuse:
+	ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("trigger \"%s\" on table \"%s\" is not a sql_saga foreign key trigger",
+					trigger->tgname, RelationGetRelationName(trigdata->tg_relation)),
+			 errdetail("%s may only fire as the %s trigger that sql_saga created for a registered regular foreign key, with its arguments.",
+					   get_func_name(fcinfo->flinfo->fn_oid), trigger_column[kind])));
+}
+
 static void
 regular_fk_parse_columns(const char *str, Datum **datums, int *count)
 {
@@ -1472,6 +1590,7 @@ regular_fk_check_c(PG_FUNCTION_ARGS)
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
+	regular_fk_verify_trigger(fcinfo, REGULAR_FK_CHILD);
 
 	init_fk_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
@@ -1877,6 +1996,7 @@ uk_truncate_check_c(PG_FUNCTION_ARGS)
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
+	regular_fk_verify_trigger(fcinfo, REGULAR_FK_PARENT_TRUNCATE);
 
 	regular_fk_parse_columns(tgargs[3], &fk_col_datums, &num_fk_cols);
 	if (num_fk_cols < 1 || num_fk_cols > MAX_FK_COLS)
@@ -1974,6 +2094,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
+	/* Only the trigger sql_saga created for a registered regular foreign key (temporal FKs are native since 1.3). */
+	regular_fk_verify_trigger(fcinfo, REGULAR_FK_PARENT_DELETE);
 
 	init_uk_delete_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(uk_delete_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
@@ -2297,6 +2419,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
+	/* Only the trigger sql_saga created for a registered regular foreign key (temporal FKs are native since 1.3). */
+	regular_fk_verify_trigger(fcinfo, REGULAR_FK_PARENT_UPDATE);
 
 	init_uk_update_plan_cache();
 	plan_entry = (UkUpdateValidationPlan *) hash_search(uk_update_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
