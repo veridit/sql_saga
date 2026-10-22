@@ -122,6 +122,17 @@ BEGIN
 END;
 $merge$;
 
+-- The same merge with delay_constraints => false (the merge's own constraints are then checked as it goes).
+CREATE FUNCTION rfc.merge_undelayed(mode sql_saga.temporal_merge_mode, delete_mode sql_saga.temporal_merge_delete_mode, source_rows text)
+RETURNS text LANGUAGE plpgsql AS $merge_undelayed$
+BEGIN
+    TRUNCATE pg_temp.merge_source;
+    EXECUTE 'INSERT INTO pg_temp.merge_source VALUES ' || source_rows;
+    RETURN rfc.run(format($$CALL sql_saga.temporal_merge('rfc.legal_unit', 'pg_temp.merge_source', ARRAY['id'],
+        mode => %L, delete_mode => %L, delay_constraints => false)$$, mode, delete_mode));
+END;
+$merge_undelayed$;
+
 \o
 \echo '--- part 1: the API'
 SELECT 'regular_to_temporal CASCADE is accepted | '
@@ -196,6 +207,21 @@ SELECT 'REPLACE + DELETE_MISSING_ENTITIES without 1 (cascades 1''s notes) | '
                  $$(1, 2, 'tax', '200', 'a', '2020-01-01', 'infinity'), (2, 3, 'tax', '300', 'a', '2020-01-01', 'infinity'), (3, 4, 'tax', '400', 'a', '2020-01-01', 'infinity')$$);
 SELECT 'legal units | ' || rfc.ids('rfc.legal_unit');
 SELECT 'notes | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+-- A move to a period that does not overlap the old one is a DELETE and an INSERT. Also with
+-- delay_constraints => false the key exists again by the end of the merge, so nothing cascades.
+SELECT 'REPLACE + DELETE_MISSING_TIMELINE moves 3, delayed | '
+    || rfc.merge('MERGE_ENTITY_REPLACE', 'DELETE_MISSING_TIMELINE', $$(1, 3, 'tax', '300', 'm', '2010-01-01', '2011-01-01')$$);
+SELECT 'notes after moving 3, delayed | ' || rfc.ids('rfc.note');
+ROLLBACK TO SAVEPOINT p;
+SELECT 'REPLACE + DELETE_MISSING_TIMELINE moves 3, delay_constraints false | '
+    || rfc.merge_undelayed('MERGE_ENTITY_REPLACE', 'DELETE_MISSING_TIMELINE', $$(1, 3, 'tax', '300', 'm', '2010-01-01', '2011-01-01')$$);
+SELECT 'notes after moving 3, delay_constraints false | ' || rfc.ids('rfc.note');
+SELECT 'ext_ident after moving 3, delay_constraints false | ' || rfc.ids('rfc.ext_ident');
+ROLLBACK TO SAVEPOINT p;
+SELECT 'delay_constraints false, removing 4 still refuses (tag 1, NO ACTION) | '
+    || rfc.merge_undelayed('MERGE_ENTITY_REPLACE', 'DELETE_MISSING_ENTITIES',
+                 $$(1, 1, 'tax', '100', 'a', '2020-01-01', 'infinity'), (2, 2, 'tax', '200', 'a', '2020-01-01', 'infinity'), (3, 3, 'tax', '300', 'a', '2020-01-01', 'infinity')$$);
 ROLLBACK TO SAVEPOINT p;
 
 \echo '--- part 5: NO ACTION still refuses'

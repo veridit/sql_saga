@@ -19,7 +19,8 @@ the **last** parent row with their key is deleted. Deleting one timeline row whi
 same key remains keeps them. This is the rule `NO ACTION` already uses to decide whether a delete orphans
 a child, so the two actions disagree only on what happens at that point: refuse or delete.
 `temporal_merge` defers the parent-side trigger, so reshaping a timeline never cascades. Deleting an
-entity with `DELETE_MISSING_ENTITIES` does.
+entity with `DELETE_MISSING_ENTITIES` does. It defers it also with `delay_constraints => false`, which keeps
+only the native constraints immediate: a regular reference is judged by the timeline the merge leaves.
 
 ### Implementation
 

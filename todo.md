@@ -38,9 +38,12 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
       predicated keys. Test
       DONE: add_regular_foreign_key refuses a predicated key (0A000), as the temporal path already does. Test 142.
       UPGRADE: the 1.4 update must refuse (name them) existing regular FKs that reference a predicated key
-- [ ] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE
+- [x] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE
       regular FK references the target, or document exactly. Test
-- [ ] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording
+      DONE: the referenced-side regular FK triggers on the target are always deferred during the merge;
+      delay_constraints => false keeps only native constraints immediate. Test 137 part 4 (non-overlapping move)
+- [x] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording
+      DONE: README names `<fk>_uk_delete` (foreign_keys.uk_delete_trigger)
 - [ ] F10 nits: error text "lookup" for the DELETE; wrong "as native" comments; lazy cascade-plan preparation
 
 **Review and release.**

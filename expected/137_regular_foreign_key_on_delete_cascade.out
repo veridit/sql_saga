@@ -35,6 +35,12 @@ notes after splitting 1 | 1,2,3,4,5
 REPLACE + DELETE_MISSING_ENTITIES without 1 (cascades 1's notes) | ok
 legal units | 2,3,4
 notes | 3,4,5
+REPLACE + DELETE_MISSING_TIMELINE moves 3, delayed | ok
+notes after moving 3, delayed | 1,2,3,4,5
+REPLACE + DELETE_MISSING_TIMELINE moves 3, delay_constraints false | ok
+notes after moving 3, delay_constraints false | 1,2,3,4,5
+ext_ident after moving 3, delay_constraints false | 1,2,3,4
+delay_constraints false, removing 4 still refuses (tag 1, NO ACTION) | error 23503
 --- part 5: NO ACTION still refuses
 delete legal unit 4 (tag 1, NO ACTION) | error 23503
 tags | 1

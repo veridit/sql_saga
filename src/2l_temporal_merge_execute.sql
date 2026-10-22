@@ -750,7 +750,18 @@ BEGIN
             v_set_constraints_sql text;
             v_old_search_path TEXT;
         BEGIN
-            IF delay_constraints THEN
+            /*
+             * sql_saga's referenced-side regular foreign key triggers on the target are deferred whatever
+             * delay_constraints says: a regular reference only needs the key to exist at some time, so a merge is
+             * judged by the timeline it leaves, and a reshaped timeline (a DELETE then an INSERT) neither refuses
+             * nor cascades (ON DELETE CASCADE). delay_constraints => false keeps the native constraints immediate.
+             */
+            IF delay_constraints OR EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgrelid = target_table AND t.tgconstraint <> 0
+                  AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                   'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure))
+            THEN
                 -- For DELETE-first timeline operations, we create temporary gaps that may violate
                 -- foreign key constraints. We need to defer:
                 -- 1. Unique/exclusion constraints ON the target table (prevents overlaps)
@@ -758,6 +769,7 @@ BEGIN
                 -- 3. sql_saga's own constraint triggers for regular foreign keys (contype 't'): the
                 --    referenced-side triggers on the target, so a reshaped timeline is checked once the
                 --    replacement rows are in, and the referencing-side trigger when the target is a child.
+                -- With delay_constraints => false, only the referenced-side triggers of 3.
                 DECLARE
                     v_intended oid[];
                     v_conflict record;
@@ -767,16 +779,16 @@ BEGIN
                     FROM pg_catalog.pg_constraint AS c
                     WHERE c.condeferrable
                       AND (
-                          (c.conrelid = target_table AND c.contype IN ('u', 'x'))
+                          (delay_constraints AND c.conrelid = target_table AND c.contype IN ('u', 'x'))
                           OR
-                          (c.confrelid = target_table AND c.contype = 'f')
+                          (delay_constraints AND c.confrelid = target_table AND c.contype = 'f')
                           OR
                           (c.conrelid = target_table AND c.contype = 't' AND EXISTS (
                               SELECT FROM pg_catalog.pg_trigger AS t
                               WHERE t.tgconstraint = c.oid
-                                AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
-                                                 'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure,
-                                                 'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure)))
+                                AND (t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                                  'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure)
+                                     OR (delay_constraints AND t.tgfoid = 'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure))))
                       );
 
                     /*
@@ -1176,7 +1188,7 @@ BEGIN
             EXCEPTION
                 WHEN OTHERS THEN
                     -- If an error occurs, ensure constraints and search_path are reset before re-raising.
-                    IF delay_constraints THEN
+                    IF v_old_search_path IS NOT NULL THEN
                         IF v_deferrable_constraints IS NOT NULL THEN
                             v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
                                 array_to_string(v_deferrable_constraints, ', ')
@@ -1190,7 +1202,7 @@ BEGIN
             END;
 
             -- Restore constraints and search_path on successful completion.
-            IF delay_constraints THEN
+            IF v_old_search_path IS NOT NULL THEN
                 IF v_deferrable_constraints IS NOT NULL THEN
                     v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
                         array_to_string(v_deferrable_constraints, ', ')

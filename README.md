@@ -233,9 +233,11 @@ The cascade behaves like PostgreSQL's own `ON DELETE CASCADE`:
 
 One difference from the native action: native `ON DELETE CASCADE` always runs at the end of the `DELETE`
 statement. This cascade is part of the foreign key's `DEFERRABLE INITIALLY IMMEDIATE` trigger, so by default it
-also runs at the end of the statement. After `SET CONSTRAINTS ALL DEFERRED` (or the foreign key's name), it runs
-at the check point, usually `COMMIT`. If the key is inserted again before then, the children are kept, which is
-how `temporal_merge` can delete and re-insert a timeline without cascading.
+also runs at the end of the statement. After `SET CONSTRAINTS ALL DEFERRED`, or `SET CONSTRAINTS <foreign
+key>_uk_delete DEFERRED` (the trigger named in `sql_saga.foreign_keys.uk_delete_trigger`), it runs at the check
+point, usually `COMMIT`. If the key is inserted again before then, the children are kept. `temporal_merge` defers
+it this way during each merge, also with `delay_constraints => false`, so it can delete and re-insert a timeline
+without cascading.
 
 Bulk deletes cost about as much as `NO ACTION` when the key survives. When the key goes, they cost about four
 times a native cascade between plain tables: 214.8 ms against 51.8 ms for 10,000 keys with 2 children each.
