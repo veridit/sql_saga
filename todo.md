@@ -52,8 +52,44 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
       Not done: lazy cascade-plan preparation (one prepare per transaction, now freed; F2 removed the permission
       failure it could cause)
 
+**Review round 2 (`tmp/review_v14_round2.md`, verdict BLOCK at 2c884a4).** F1, F2, F4, F5, F6, F8, F10 confirmed
+fixed. New findings, each fixed test-first:
+- [ ] R1 HIGH: `__internal_add_system_time_era` is PUBLIC-executable SECURITY DEFINER with no owner check (any role
+      adds system-time columns/triggers to any table as superuser; pre-1.4). Add require_owner at entry, REVOKE from
+      PUBLIC. Same for `__internal_reconcile_system_versioning_family`. Then audit EVERY SECURITY DEFINER function
+      in the extension for PUBLIC execute + missing owner check (a test that lists them, so a new one cannot slip in)
+- [ ] R2 MEDIUM: owner check uses GetOuterUserId (session role), not the immediate caller. Looser than native (a
+      SECURITY DEFINER wrapper owned by a non-owner borrows its caller's ownership) and stricter (a wrapper owned by
+      the table owner is refused). Check the immediate caller, as ALTER TABLE does. Tests for both nested cases
+- [ ] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
+      sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
+- [ ] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
+- [ ] R7 LOW/perf: F1 verification costs three catalog lookups per trigger firing. Cache the verified trigger per
+      transaction in the plan-cache entry. Re-run benchmarks (CASCADE 10k, regular FK bulk load) against the 1.3
+      baseline; update README/decision-log numbers
+- [ ] R4 docs: README and decision-log still say TRUNCATE is not checked; decision-log says the cascade runs as the
+      extension owner; test 137 comment says the same; document `uk_truncate_trigger` and the TRUNCATE refusal
+      (data-based: an empty child does not block, unlike native) in README and doc/api.md
+- [ ] R3 upgrade (done in packaging below): partitioned-child regular FKs from 1.3 (cloned triggers now refused,
+      every write would fail), backfill `uk_truncate_trigger` and create the triggers, report/refuse regular FKs to
+      predicated keys
+- [ ] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
+      regular FK to an XOR (mutually_exclusive_columns) natural key: check, last-row rule, cascade
+- [ ] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
+
+**Release gate: behaves exactly like PostgreSQL for every kind of user (owner requirement, 2026-10-23).**
+- [ ] One parity test: each scenario runs through sql_saga and through the native equivalent, and the outcome
+      (allowed / refused with SQLSTATE) must be equal. Roles: superuser, table owner, member of the owner role,
+      NOINHERIT member, role with GRANT ALL but not owner, role with only SELECT, role with no rights, pg_maintain,
+      SECURITY DEFINER wrappers owned by the owner and by a non-owner. Operations: management API vs ALTER TABLE /
+      ADD FOREIGN KEY (REFERENCES); child INSERT/UPDATE and parent DELETE/UPDATE/TRUNCATE vs native FK (writer
+      needs no rights on the other table; checks and cascade run as the table owner); RLS on parent and child
+      (FORCE ROW LEVEL SECURITY included: native RI bypasses RLS, so must we); column privileges; views
+      (for_portion_of/current, security_invoker). Every deliberate difference is listed in README
+- [ ] Third independent review of everything after R1-R7 until APPROVE
+
 **Review and release.**
-- [ ] Second independent review of all 1.4 changes (security fixes included) until APPROVE
+- [x] Second independent review of all 1.4 changes: BLOCK, findings R1-R7 above
 - [ ] 1.4 packaging: control and native version 1.4, freeze 1.3 artifacts in versions/, catalog_format decision,
       direct update scripts from 1.0, 1.1, 1.2 and 1.3 (generator), catalog CHECK and uk_truncate_trigger migration
       with triggers created for existing regular FKs
