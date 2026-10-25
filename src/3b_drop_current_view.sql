@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')
+CREATE FUNCTION sql_saga.__api_drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -45,5 +45,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_current_view(regclass, name, sql_saga.drop_behavior) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_current_view(regclass, name, sql_saga.drop_behavior) IS
 'Drops the "current" view associated with a table and era.';

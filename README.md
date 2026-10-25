@@ -475,14 +475,24 @@ Give such a role table-level SELECT or create a separate application view over t
 ##### Who may manage a table
 
 The management functions (`add_era`, `add_unique_key`, `add_foreign_key`, `add_system_versioning`, the view
-functions and their `drop_` and `set_` counterparts) require the same rights as the DDL they stand for:
+functions, the `sync_*` functions and their `drop_` and `set_` counterparts) allow and refuse exactly what the DDL
+they stand for would:
 
-- The caller must own the table, or be a member of the role that owns it. Otherwise they fail with
-  `42501: must be owner of table ...`.
+- The role that calls them must own the table, or be a member of the owner role with its privileges (an inheriting
+  member, or a `NOINHERIT` member after `SET ROLE`). Superusers pass. Otherwise they fail with
+  `42501: must be owner of table ...`. Privileges on the table's rows (even `GRANT ALL`) are not enough, as for
+  `ALTER TABLE`.
+- "The role that calls them" is the current user at the call, as for native DDL: after `SET ROLE` the role set, and
+  inside a `SECURITY DEFINER` function that function's owner. So a migration function owned by the table owner may
+  call them for another role, and a function owned by someone else cannot borrow its caller's ownership.
 - A foreign key also needs the `REFERENCES` privilege on the referenced table, as `ALTER TABLE ... ADD FOREIGN KEY` does.
 - Dropping a foreign key needs ownership of the referencing table. As with native `DROP ... CASCADE`, the owner of
   the referenced table can still remove the foreign keys that depend on its key with `drop_unique_key` or
   `drop_era` and `CASCADE`, whoever owns the referencing tables.
+
+Each public function is a thin `SECURITY INVOKER` entry point that records the calling role and then runs the
+private worker `sql_saga.__api_<name>`, which has the extension owner's rights and authorizes that role first. The
+workers are not executable by `PUBLIC`.
 
 Before 1.4 these functions did not check the caller, so any role allowed to call them could change another role's
 table.

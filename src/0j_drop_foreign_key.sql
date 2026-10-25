@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_foreign_key(
+CREATE FUNCTION sql_saga.__api_drop_foreign_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT NULL,

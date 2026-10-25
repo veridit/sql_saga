@@ -122,3 +122,10 @@ RETURNS void
 AS 'sql_saga', 'require_references'
 LANGUAGE c STABLE;
 REVOKE ALL ON FUNCTION sql_saga.__internal_require_references(regclass) FROM PUBLIC;
+
+-- The role the running management function acts for (1.4, R2; api_caller in src/sql_saga.c). Private.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_caller()
+RETURNS regrole
+AS 'sql_saga', 'api_caller_sql'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_caller() FROM PUBLIC;

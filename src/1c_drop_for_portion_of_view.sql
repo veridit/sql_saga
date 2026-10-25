@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.__api_drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -63,5 +63,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_for_portion_of_view(regclass, name, sql_saga.drop_behavior, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_for_portion_of_view(regclass, name, sql_saga.drop_behavior, boolean) IS
 'Drops the "for_portion_of" view associated with a table and era.';

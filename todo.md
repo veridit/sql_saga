@@ -54,13 +54,24 @@ Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journ
 
 **Review round 2 (`tmp/review_v14_round2.md`, verdict BLOCK at 2c884a4).** F1, F2, F4, F5, F6, F8, F10 confirmed
 fixed. New findings, each fixed test-first:
-- [ ] R1 HIGH: `__internal_add_system_time_era` is PUBLIC-executable SECURITY DEFINER with no owner check (any role
+- [x] R1 HIGH: `__internal_add_system_time_era` is PUBLIC-executable SECURITY DEFINER with no owner check (any role
       adds system-time columns/triggers to any table as superuser; pre-1.4). Add require_owner at entry, REVOKE from
       PUBLIC. Same for `__internal_reconcile_system_versioning_family`. Then audit EVERY SECURITY DEFINER function
       in the extension for PUBLIC execute + missing owner check (a test that lists them, so a new one cannot slip in)
-- [ ] R2 MEDIUM: owner check uses GetOuterUserId (session role), not the immediate caller. Looser than native (a
+      DONE: four workers revoked from PUBLIC and owner-checked at entry; test 144 part 5 lists every SECURITY
+      DEFINER function with its PUBLIC EXECUTE (only six trigger/event-trigger functions remain PUBLIC: see R1b)
+- [x] R2 MEDIUM: owner check uses GetOuterUserId (session role), not the immediate caller. Looser than native (a
       SECURITY DEFINER wrapper owned by a non-owner borrows its caller's ownership) and stricter (a wrapper owned by
       the table owner is refused). Check the immediate caller, as ALTER TABLE does. Tests for both nested cases
+      DONE: public management functions (24, incl. sync_history_policies/sync_all_history_policies) are C SECURITY
+      INVOKER trampolines (api_trampoline) recording GetUserId() over private __api_<name> workers; nested internal
+      calls inherit the authorized caller. Test 144 parts 2-4 match native ALTER TABLE row by row (owner wrapper,
+      non-owner wrapper, NOINHERIT without/with SET ROLE). Fast 129/129, concurrency, restore 11/11 + splits 3/3
+- [ ] R1b: the system-versioning trigger functions (write_history, generated_always_as_row_start_end,
+      truncate_system_versioning) are SECURITY DEFINER and executable by PUBLIC (needed so a table owner can create
+      the trigger) but, unlike the regular-FK triggers since F1, do not verify that sql_saga created the trigger.
+      Probe: a forged write_history/truncate trigger on an attacker's table whose name collides with a registered
+      family, or on a registered table by a non-owner. Verify like regular_fk_verify_trigger
 - [ ] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
       sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
 - [ ] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
@@ -76,6 +87,10 @@ fixed. New findings, each fixed test-first:
 - [ ] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
       regular FK to an XOR (mutually_exclusive_columns) natural key: check, last-row rule, cascade
 - [ ] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
+- [ ] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
+      (src/3h) over private SECURITY DEFINER workers sql_saga.__api_<name>. The 1.x->1.4 update must create the
+      workers, then CREATE OR REPLACE each public function as the trampoline (keeps its OID, grants and dependants),
+      and revoke the workers. The 1.3-target generator in the dev tree does not know 3h; rework it for 1.4
 
 **Release gate: behaves exactly like PostgreSQL for every kind of user (owner requirement, 2026-10-23).**
 - [ ] One parity test: each scenario runs through sql_saga and through the native equivalent, and the outcome
@@ -86,6 +101,9 @@ fixed. New findings, each fixed test-first:
       needs no rights on the other table; checks and cascade run as the table owner); RLS on parent and child
       (FORCE ROW LEVEL SECURITY included: native RI bypasses RLS, so must we); column privileges; views
       (for_portion_of/current, security_invoker). Every deliberate difference is listed in README
+      Also: no user-defined code (row triggers, CHECK/index/default/generated expressions, domain checks) may run
+      with the extension owner's rights while a management function changes a user table: native DDL by the owner
+      runs it as the owner. Probe every DML/DDL the workers run on user tables; run them as the table owner
 - [ ] Third independent review of everything after R1-R7 until APPROVE
 
 **Review and release.**

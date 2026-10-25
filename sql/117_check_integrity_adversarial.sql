@@ -194,16 +194,17 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- 1.3 additions: __internal_current_view_clock(oid) and __internal_current_view_now(oid, regtype). Every current-view
 -- INSERT/UPDATE/DELETE runs current_view_trigger as the invoker of that DML, and it calls them to evaluate the
 -- clock the view is bound to on a fixed search_path, so PUBLIC must be able to execute them. Both are SECURITY
--- INVOKER and read only the rule of the given view. Everything else must match 1.1 exactly.
+-- INVOKER and read only the rule of the given view.
+-- 1.4 removals (review round 2, R1): four SECURITY DEFINER workers that acted for any caller are no longer executable
+-- by PUBLIC: __internal_add_system_time_era, __internal_ddl_command_affects_managed_object,
+-- __internal_reconcile_system_versioning_family and __internal_sync_history_policies. Everything else must match 1.1.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
-('__internal_add_system_time_era(table_oid regclass, range_column_name name, infinity_check_constraint name, generated_always_trigger name, write_history_trigger name, truncate_trigger name, excluded_column_names name[])'),
 ('__internal_check_history_columns(table_oid oid, history_table_oid oid, without_columns name[])'),
 ('__internal_column_type_sql(type_oid oid, typmod integer, collation_oid oid)'),
 ('__internal_current_view_clock(view_oid oid)'),
 ('__internal_current_view_now(view_oid oid, range_subtype regtype)'),
-('__internal_ddl_command_affects_managed_object()'),
 ('__internal_deny_history(table_oid oid)'),
 ('__internal_display_name(object_name regclass)'),
 ('__internal_generate_pk_consistency_constraints(p_unique_key_name name, p_natural_key_columns name[], p_mutually_exclusive_columns name[], p_primary_key_column name)'),
@@ -225,9 +226,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__internal_qualified_name(rel oid)'),
 ('__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[])'),
 ('__internal_rebuilding_system_versioning_views(table_oid oid)'),
-('__internal_reconcile_system_versioning_family(table_oid regclass, without_columns name[])'),
 ('__internal_serialize(table_name regclass)'),
-('__internal_sync_history_policies(table_oid oid, dropped_base_policies name[])'),
 ('add_current_view(table_oid regclass, era_name name, delete_mode name, current_func_name text)'),
 ('add_era(table_oid regclass, range_column_name name, era_name name, synchronize_columns boolean, valid_from_column_name name, valid_until_column_name name, valid_to_column_name name, create_columns boolean, add_defaults boolean, add_bounds_check boolean, range_type regtype, bounds_check_constraint name, ephemeral_columns name[])'),
 ('add_for_portion_of_view(table_oid regclass, era_name name, ephemeral_columns name[])'),

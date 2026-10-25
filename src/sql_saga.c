@@ -3173,21 +3173,131 @@ current_view_clock(PG_FUNCTION_ARGS)
 }
 
 /*
- * __internal_require_owner(table_oid regclass, purpose text) -- refuse unless the role that called sql_saga's API
- * owns the table (1.4, review finding F3).
+ * The role a management function acts for (1.4, review round 2, R2).
  *
- * sql_saga's API functions are SECURITY DEFINER, so inside them current_user is the extension owner. The role that
- * called them is the outer user (session user, or the role chosen by SET ROLE), which SQL code cannot change from
- * inside a SECURITY DEFINER function. PostgreSQL requires ownership for ALTER TABLE, CREATE TRIGGER and constraints;
- * this is the same rule for the changes sql_saga makes on the caller's behalf: the outer user must be a member of the
- * table owner's role (has_privs_of_role, as pg_has_role(..., 'USAGE')). Superusers pass, as natively.
+ * PostgreSQL authorizes ALTER TABLE, CREATE TRIGGER and ADD CONSTRAINT against the current user at the moment of the
+ * statement: inside a SECURITY DEFINER function that is the function's owner, after SET ROLE the role set. sql_saga's
+ * management functions change tables with the extension owner's rights, so they must authorize that same role, the
+ * one current when they were called. A SECURITY DEFINER PL/pgSQL function cannot see it (fmgr has already switched
+ * to the function owner), so every public management function is a SECURITY INVOKER C entry point,
+ * api_trampoline, which records GetUserId() -- the immediate caller, exactly what native DDL checks -- and then
+ * calls the private SECURITY DEFINER worker sql_saga.__api_<name> with the same arguments. require_owner and
+ * require_references authorize the innermost recorded caller.
+ *
+ * Without a recorded caller (sql_saga's own event triggers, which run as the extension owner for DDL PostgreSQL has
+ * already authorized), the current user is used. A worker that calls another public function goes through that
+ * function's trampoline, which then acts for the same recorded caller (see api_trampoline).
+ */
+#define SQL_SAGA_MAX_API_DEPTH 64
+static Oid	api_caller_stack[SQL_SAGA_MAX_API_DEPTH];
+static int	api_caller_depth = 0;
+
+static Oid
+api_caller(void)
+{
+	return api_caller_depth > 0 ? api_caller_stack[api_caller_depth - 1] : GetUserId();
+}
+
+/*
+ * api_trampoline: the body of every public management function (LANGUAGE c, SECURITY INVOKER). It calls the
+ * function of the same arguments named __api_<own name> in sql_saga, with the caller recorded. The worker is found
+ * by its exact argument types, and its EXECUTE privilege is not needed (only the trampoline is granted).
+ */
+PG_FUNCTION_INFO_V1(api_trampoline);
+Datum
+api_trampoline(PG_FUNCTION_ARGS)
+{
+	Oid			self = fcinfo->flinfo->fn_oid;
+	HeapTuple	proctup;
+	Form_pg_proc procform;
+	char	   *worker_name;
+	oidvector  *argtypes;
+	Oid			worker;
+	FmgrInfo	worker_flinfo;
+	LOCAL_FCINFO(worker_fcinfo, FUNC_MAX_ARGS);
+	Datum		result = (Datum) 0;
+	bool		result_isnull = false;
+	Oid			worker_owner;
+	Oid			caller;
+	int			i;
+
+	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(self));
+	if (!HeapTupleIsValid(proctup))
+		elog(ERROR, "cache lookup failed for function %u", self);
+	procform = (Form_pg_proc) GETSTRUCT(proctup);
+	if (procform->prosecdef)
+		elog(ERROR, "sql_saga.%s must be SECURITY INVOKER", NameStr(procform->proname));
+	worker_name = psprintf("__api_%s", NameStr(procform->proname));
+	argtypes = &procform->proargtypes;
+	/* By name, argument types and namespace, whatever its kind (procedures too). */
+	worker = GetSysCacheOid3(PROCNAMEARGSNSP, Anum_pg_proc_oid, CStringGetDatum(worker_name),
+							 PointerGetDatum(argtypes), ObjectIdGetDatum(procform->pronamespace));
+	ReleaseSysCache(proctup);
+	if (!OidIsValid(worker))
+		elog(ERROR, "sql_saga: worker function sql_saga.%s is missing", worker_name);
+
+	/*
+	 * The role to record. A call from inside a worker (the current user is then the workers' owner, the extension
+	 * owner) acts for the role the outer call was authorized for, so add_foreign_key's delegation to
+	 * add_regular_foreign_key checks the real caller. Any other call records the current user.
+	 */
+	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(worker));
+	if (!HeapTupleIsValid(proctup))
+		elog(ERROR, "cache lookup failed for function %u", worker);
+	worker_owner = ((Form_pg_proc) GETSTRUCT(proctup))->proowner;
+	ReleaseSysCache(proctup);
+	caller = (api_caller_depth > 0 && GetUserId() == worker_owner)
+		? api_caller_stack[api_caller_depth - 1]
+		: GetUserId();
+
+	if (api_caller_depth >= SQL_SAGA_MAX_API_DEPTH)
+		ereport(ERROR, (errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+						errmsg("sql_saga management functions nested too deeply")));
+
+	fmgr_info(worker, &worker_flinfo);
+	InitFunctionCallInfoData(*worker_fcinfo, &worker_flinfo, PG_NARGS(), fcinfo->fncollation,
+							 fcinfo->context, fcinfo->resultinfo);
+	for (i = 0; i < PG_NARGS(); i++)
+	{
+		worker_fcinfo->args[i].value = fcinfo->args[i].value;
+		worker_fcinfo->args[i].isnull = fcinfo->args[i].isnull;
+	}
+
+	api_caller_stack[api_caller_depth++] = caller;
+	PG_TRY();
+	{
+		result = FunctionCallInvoke(worker_fcinfo);
+		result_isnull = worker_fcinfo->isnull;
+	}
+	PG_FINALLY();
+	{
+		api_caller_depth--;
+	}
+	PG_END_TRY();
+
+	fcinfo->isnull = result_isnull;
+	return result;
+}
+
+/* __internal_caller() -- the role the running management function acts for (see api_caller). */
+PG_FUNCTION_INFO_V1(api_caller_sql);
+Datum
+api_caller_sql(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_OID(api_caller());
+}
+
+/*
+ * __internal_require_owner(table_oid regclass, purpose text) -- refuse unless the role the management function acts
+ * for (api_caller) has the privileges of the table's owner, as ALTER TABLE requires (pg_class_ownercheck:
+ * has_privs_of_role; superusers pass).
  */
 PG_FUNCTION_INFO_V1(require_owner);
 Datum
 require_owner(PG_FUNCTION_ARGS)
 {
 	Oid			relid;
-	Oid			caller = GetOuterUserId();
+	Oid			caller = api_caller();
 	HeapTuple	tup;
 	Form_pg_class classform;
 	char	   *relname;
@@ -3226,7 +3336,7 @@ require_references(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(0))
 		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("no table name specified")));
 	relid = PG_GETARG_OID(0);
-	if (pg_class_aclcheck(relid, GetOuterUserId(), ACL_REFERENCES) != ACLCHECK_OK)
+	if (pg_class_aclcheck(relid, api_caller(), ACL_REFERENCES) != ACLCHECK_OK)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied for table %s", get_rel_name(relid)),

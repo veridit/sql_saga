@@ -97,13 +97,14 @@ $function$;
 
 -- Declarative wrapper for creating foreign keys.
 -- This function automatically determines whether to create a temporal or regular FK
--- and looks up the internal unique key name.
-CREATE FUNCTION sql_saga.add_foreign_key(
+-- and looks up the internal unique key name. fk_era_name is only needed to disambiguate
+-- when the FK table has multiple eras.
+CREATE FUNCTION sql_saga.__api_add_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         pk_table_oid regclass,
         pk_column_names name[],
-        fk_era_name name DEFAULT NULL, -- Only needed to disambiguate if FK table has multiple eras
+        fk_era_name name DEFAULT NULL,
         match_type sql_saga.fk_match_types DEFAULT 'SIMPLE',
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
@@ -355,7 +356,7 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_create_regular_fk_truncate_trigger(na
 
 
 -- Overloaded function for regular (non-temporal) to temporal foreign keys
-CREATE FUNCTION sql_saga.add_regular_foreign_key(
+CREATE FUNCTION sql_saga.__api_add_regular_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         unique_key_name name,
@@ -696,8 +697,9 @@ $function_regular_fk$;
 
 -- Original function for temporal-to-temporal FKs
 -- This has been refactored to use native PostgreSQL 18+ temporal foreign keys.
--- The trigger-based implementation has been removed.
-CREATE OR REPLACE FUNCTION sql_saga.add_temporal_foreign_key(
+-- The trigger-based implementation has been removed. uk_update_trigger and uk_delete_trigger are unused
+-- and kept for signature compatibility.
+CREATE OR REPLACE FUNCTION sql_saga.__api_add_temporal_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         fk_era_name name,
@@ -706,8 +708,8 @@ CREATE OR REPLACE FUNCTION sql_saga.add_temporal_foreign_key(
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         foreign_key_name name DEFAULT NULL,
-        uk_update_trigger name DEFAULT NULL, -- unused, for signature compatibility
-        uk_delete_trigger name DEFAULT NULL, -- unused, for signature compatibility
+        uk_update_trigger name DEFAULT NULL,
+        uk_delete_trigger name DEFAULT NULL,
         create_index boolean DEFAULT true)
  RETURNS name
  LANGUAGE plpgsql
@@ -867,11 +869,11 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
 'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000. delete_action NO ACTION (the default) and RESTRICT refuse deleting the last parent row that has a referenced key; CASCADE (since 1.4) deletes the child rows of that key instead. Deleting one timeline row while another row of the same key remains never cascades, and temporal_merge reshaping a timeline does not either. SET NULL and SET DEFAULT, and every update_action other than NO ACTION and RESTRICT, are refused with SQLSTATE 0A000.';
 
-COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, boolean) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
 
-COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS
 'Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name. The two column arrays are paired positionally. The referenced columns may be listed in another order than the registered unique key, provided they name the same set; both arrays are normalized together to the unique key''s order, preserving each child-to-parent pairing.';

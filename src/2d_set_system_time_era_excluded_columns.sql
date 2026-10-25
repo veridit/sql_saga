@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.set_system_time_era_excluded_columns(
+CREATE FUNCTION sql_saga.__api_set_system_time_era_excluded_columns(
     table_oid regclass,
     excluded_column_names name[])
  RETURNS void
@@ -50,5 +50,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.set_system_time_era_excluded_columns(regclass, name[]) IS
+COMMENT ON FUNCTION sql_saga.__api_set_system_time_era_excluded_columns(regclass, name[]) IS
 'Sets the list of columns to be excluded from system versioning. Changes to these columns will not create a new history record.';

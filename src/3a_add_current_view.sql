@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', current_func_name text DEFAULT NULL)
+CREATE FUNCTION sql_saga.__api_add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', current_func_name text DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -161,5 +161,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_current_view(regclass, name, name, text) IS
+COMMENT ON FUNCTION sql_saga.__api_add_current_view(regclass, name, name, text) IS
 'Creates a view that shows only the current state of data, making it ideal for ORMs and REST APIs. It provides a trigger for safe, explicit SCD Type 2 updates and soft-deletes.';

@@ -2,7 +2,7 @@
 -- High-performance table/era-specific synchronization triggers.
 -- Hardcoded logic eliminates JSONB and dynamic SQL overhead (8-9x faster per benchmarks).
 
-CREATE OR REPLACE PROCEDURE sql_saga.drop_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
+CREATE OR REPLACE PROCEDURE sql_saga.__api_drop_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, public
 AS $drop_synchronize_temporal_columns_trigger$
@@ -15,12 +15,12 @@ DECLARE
     v_stored_func_name name;
     v_stored_trg_name name;
 BEGIN
-    PERFORM sql_saga.__internal_require_owner(drop_synchronize_temporal_columns_trigger.table_oid, 'drop_synchronize_temporal_columns_trigger');
+    PERFORM sql_saga.__internal_require_owner(__api_drop_synchronize_temporal_columns_trigger.table_oid, 'drop_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name
     FROM pg_catalog.pg_class AS c
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE c.oid = drop_synchronize_temporal_columns_trigger.table_oid;
+    WHERE c.oid = __api_drop_synchronize_temporal_columns_trigger.table_oid;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Table % does not exist', table_oid;
@@ -30,7 +30,7 @@ BEGIN
     SELECT e.sync_temporal_trg_name, e.sync_temporal_trg_function_name
     INTO v_stored_trg_name, v_stored_func_name
     FROM sql_saga.era AS e
-    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, drop_synchronize_temporal_columns_trigger.era_name);
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_drop_synchronize_temporal_columns_trigger.era_name);
 
     -- Use stored names if available, otherwise compute them for backward compatibility
     IF v_stored_trg_name IS NOT NULL THEN
@@ -49,7 +49,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM pg_catalog.pg_trigger AS t
-        WHERE t.tgrelid = drop_synchronize_temporal_columns_trigger.table_oid::oid
+        WHERE t.tgrelid = __api_drop_synchronize_temporal_columns_trigger.table_oid::oid
           AND t.tgname = sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'template_sync')
     ) THEN
         EXECUTE format($$DROP TRIGGER %1$I ON %2$s$$,
@@ -61,7 +61,7 @@ BEGIN
     IF EXISTS (
         SELECT 1
         FROM pg_catalog.pg_trigger AS t
-        WHERE t.tgrelid = drop_synchronize_temporal_columns_trigger.table_oid::oid
+        WHERE t.tgrelid = __api_drop_synchronize_temporal_columns_trigger.table_oid::oid
           AND t.tgname = v_trg_name
     ) THEN
         EXECUTE format($$DROP TRIGGER %1$I ON %2$s$$,
@@ -81,11 +81,11 @@ BEGIN
     UPDATE sql_saga.era AS e
     SET sync_temporal_trg_name = NULL,
         sync_temporal_trg_function_name = NULL
-    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, drop_synchronize_temporal_columns_trigger.era_name);
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_drop_synchronize_temporal_columns_trigger.era_name);
 END;
 $drop_synchronize_temporal_columns_trigger$;
 
-COMMENT ON PROCEDURE sql_saga.drop_synchronize_temporal_columns_trigger(regclass,name)
+COMMENT ON PROCEDURE sql_saga.__api_drop_synchronize_temporal_columns_trigger(regclass,name)
     IS 'Drops the table-specific sync trigger and its specialized trigger function.';
 
 
@@ -457,7 +457,7 @@ $__internal_synchronize_temporal_columns_sql$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(regclass, name) FROM PUBLIC;
 
-CREATE OR REPLACE PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
+CREATE OR REPLACE PROCEDURE sql_saga.__api_add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, public
 AS $add_synchronize_temporal_columns_trigger$
@@ -466,12 +466,12 @@ DECLARE
     v_table_name name;
     generated record;
 BEGIN
-    PERFORM sql_saga.__internal_require_owner(add_synchronize_temporal_columns_trigger.table_oid, 'add_synchronize_temporal_columns_trigger');
+    PERFORM sql_saga.__internal_require_owner(__api_add_synchronize_temporal_columns_trigger.table_oid, 'add_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name
     FROM pg_catalog.pg_class AS c
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-    WHERE c.oid = add_synchronize_temporal_columns_trigger.table_oid;
+    WHERE c.oid = __api_add_synchronize_temporal_columns_trigger.table_oid;
 
     generated := sql_saga.__internal_synchronize_temporal_columns_sql(table_oid, era_name);
 
@@ -487,9 +487,9 @@ BEGIN
     UPDATE sql_saga.era AS e
     SET sync_temporal_trg_name = generated.trigger_name,
         sync_temporal_trg_function_name = generated.function_name
-    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, add_synchronize_temporal_columns_trigger.era_name);
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_add_synchronize_temporal_columns_trigger.era_name);
 END;
 $add_synchronize_temporal_columns_trigger$;
 
-COMMENT ON PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(regclass,name)
+COMMENT ON PROCEDURE sql_saga.__api_add_synchronize_temporal_columns_trigger(regclass,name)
     IS 'Generator for high-performance table-specific temporal column sync triggers.';

@@ -341,11 +341,8 @@ BEGIN
         RETURN;
     END IF;
 
-    IF NOT pg_catalog.pg_has_role(session_user,
-            (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid), 'USAGE') THEN
-        RAISE EXCEPTION 'must be owner of table %', fam.base_oid::regclass
-            USING ERRCODE = 'insufficient_privilege';
-    END IF;
+    /* The role the running management function acts for, or the current user (R1, R2). */
+    PERFORM sql_saga.__internal_require_owner(fam.base_oid::regclass, 'sync_history_policies');
 
     INSERT INTO sql_saga.history_policy_sync_guard AS g
         (backend_pid, transaction_id, base_schema, base_table, nesting_depth)
@@ -512,35 +509,34 @@ BEGIN
 END;
 $__internal_sync_history_policies$;
 
--- SECURITY INVOKER: the caller must own the history table (it is owned by the base table's owner),
--- because the synchronization runs ALTER TABLE and CREATE/DROP POLICY on it as the caller.
--- (A SECURITY DEFINER function would see its own owner as current_user and could not tell.)
-CREATE FUNCTION sql_saga.sync_history_policies(table_oid regclass)
+-- Public entry: a trampoline (src/3h_api_trampolines.sql) over this worker, so the caller is authorized as for
+-- native DDL (__internal_require_owner in __internal_sync_history_policies), also inside SECURITY DEFINER wrappers.
+CREATE FUNCTION sql_saga.__api_sync_history_policies(table_oid regclass)
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog
 AS $sync_history_policies$
 BEGIN
     IF NOT EXISTS (SELECT FROM sql_saga.__internal_history_family(table_oid) AS f WHERE f.base_oid = table_oid) THEN
         RAISE EXCEPTION 'table % does not have SYSTEM VERSIONING', table_oid;
     END IF;
-    IF NOT pg_catalog.pg_has_role((SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid), 'USAGE') THEN
-        RAISE EXCEPTION 'must be owner of table %', table_oid USING ERRCODE = 'insufficient_privilege';
-    END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'sync_history_policies');
     PERFORM sql_saga.__internal_sync_history_policies(table_oid);
 END;
 $sync_history_policies$;
-COMMENT ON FUNCTION sql_saga.sync_history_policies(regclass) IS
+COMMENT ON FUNCTION sql_saga.__api_sync_history_policies(regclass) IS
 'Makes the row-level security of the history table of a system-versioned table match its base table: one copy per SELECT/ALL policy, FORCE as on the base. sql_saga does this automatically on policy DDL; this function repairs a history whose policies changed while event triggers were off.';
 
 -- The final command of a parallel restore (README, "Backup and Restore"; see
 -- sql_saga.__internal_is_parallel_restore), and the repair after policy DDL with event triggers off.
--- SECURITY INVOKER like sync_history_policies, with the same ownership rule. It refuses before any
+-- A trampoline over this worker like sync_history_policies, with the same ownership rule. It refuses before any
 -- change when the caller does not own every system-versioned table, rather than skipping those: a
 -- restore that leaves some histories unsynchronized must fail visibly, not look finished.
-CREATE FUNCTION sql_saga.sync_all_history_policies()
+CREATE FUNCTION sql_saga.__api_sync_all_history_policies()
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog
 AS $sync_all_history_policies$
 DECLARE
@@ -549,7 +545,7 @@ BEGIN
     SELECT c.oid::regclass INTO table_oid
     FROM sql_saga.system_versioning AS sv
     JOIN pg_catalog.pg_class AS c ON c.oid = pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass
-    WHERE NOT pg_catalog.pg_has_role(c.relowner, 'USAGE')
+    WHERE NOT pg_catalog.pg_has_role(sql_saga.__internal_caller(), c.relowner, 'USAGE')
     ORDER BY sv.table_schema, sv.table_name
     LIMIT 1;
     IF FOUND THEN
@@ -565,7 +561,7 @@ BEGIN
     END LOOP;
 END;
 $sync_all_history_policies$;
-COMMENT ON FUNCTION sql_saga.sync_all_history_policies() IS
+COMMENT ON FUNCTION sql_saga.__api_sync_all_history_policies() IS
 'Runs sync_history_policies for every system-versioned table, in name order. The final command after a parallel pg_restore with sql_saga.parallel_restore = on, which defers that synchronization. Refuses before any change unless the caller owns every system-versioned table.';
 
 /*

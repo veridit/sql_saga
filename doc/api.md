@@ -238,7 +238,7 @@ FUNCTION add_era(
     bounds_check_constraint name DEFAULT NULL::name,
     ephemeral_columns name[] DEFAULT NULL::name[]
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_era
@@ -252,7 +252,7 @@ FUNCTION drop_era(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT false
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### set_era_ephemeral_columns
@@ -272,7 +272,7 @@ FUNCTION set_era_ephemeral_columns(
     era_name name DEFAULT 'valid'::name,
     ephemeral_columns name[] DEFAULT NULL::name[]
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ## Unique Keys
@@ -294,7 +294,7 @@ FUNCTION add_unique_key(
     predicate text DEFAULT NULL::text,
     mutually_exclusive_columns name[] DEFAULT NULL::name[]
 ) RETURNS name
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_unique_key
@@ -309,7 +309,7 @@ FUNCTION drop_unique_key(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_unique_key_by_name
@@ -323,7 +323,7 @@ FUNCTION drop_unique_key_by_name(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ## Foreign Keys
@@ -345,7 +345,7 @@ FUNCTION add_foreign_key(
     foreign_key_name name DEFAULT NULL::name,
     create_index boolean DEFAULT true
 ) RETURNS name
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### add_regular_foreign_key
@@ -367,7 +367,7 @@ FUNCTION add_regular_foreign_key(
     uk_delete_trigger name DEFAULT NULL::name,
     create_index boolean DEFAULT true
 ) RETURNS name
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### add_temporal_foreign_key
@@ -388,7 +388,7 @@ FUNCTION add_temporal_foreign_key(
     uk_delete_trigger name DEFAULT NULL::name,
     create_index boolean DEFAULT true
 ) RETURNS name
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_foreign_key
@@ -401,7 +401,7 @@ FUNCTION drop_foreign_key(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     drop_index boolean DEFAULT true
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_foreign_key_by_name
@@ -412,7 +412,7 @@ FUNCTION drop_foreign_key_by_name(
     key_name name,
     drop_index boolean DEFAULT true
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ## Updatable Views
@@ -428,7 +428,7 @@ FUNCTION add_current_view(
     delete_mode name DEFAULT 'delete_as_cutoff'::name,
     current_func_name text DEFAULT NULL::text
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### add_for_portion_of_view
@@ -442,7 +442,7 @@ FUNCTION add_for_portion_of_view(
     era_name name DEFAULT 'valid'::name,
     ephemeral_columns name[] DEFAULT NULL::name[]
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_current_view
@@ -455,7 +455,7 @@ FUNCTION drop_current_view(
     era_name name DEFAULT 'valid'::name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_for_portion_of_view
@@ -469,7 +469,7 @@ FUNCTION drop_for_portion_of_view(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT false
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ## Bulk Data Loading
@@ -550,7 +550,7 @@ FUNCTION add_system_versioning(
     function_from_to_name name DEFAULT NULL::name,
     history_table_must_exist boolean DEFAULT false
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_system_time_era
@@ -563,7 +563,7 @@ FUNCTION drop_system_time_era(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_system_versioning
@@ -576,7 +576,7 @@ FUNCTION drop_system_versioning(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
 ) RETURNS boolean
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### rebuild_system_versioning_views
@@ -588,7 +588,7 @@ FUNCTION rebuild_system_versioning_views(
     table_oid regclass,
     without_columns name[] DEFAULT '{}'::name[]
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### set_system_time_era_excluded_columns
@@ -600,7 +600,7 @@ FUNCTION set_system_time_era_excluded_columns(
     table_oid regclass,
     excluded_column_names name[]
 ) RETURNS void
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### sync_all_history_policies
@@ -672,7 +672,7 @@ PROCEDURE add_synchronize_temporal_columns_trigger(
     IN table_oid regclass,
     IN era_name name
 )
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_protection
@@ -693,7 +693,7 @@ PROCEDURE drop_synchronize_temporal_columns_trigger(
     IN table_oid regclass,
     IN era_name name
 )
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### get_allen_relation

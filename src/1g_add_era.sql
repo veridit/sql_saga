@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION sql_saga.add_era(
+CREATE OR REPLACE FUNCTION sql_saga.__api_add_era(
     table_oid regclass,
     range_column_name name,
     era_name name DEFAULT 'valid',
@@ -44,13 +44,13 @@ DECLARE
     sync_col_type_oid oid;
     sync_col_is_generated text;
     trigger_name name;
-    v_trigger_applies_defaults boolean := add_era.add_defaults;
+    v_trigger_applies_defaults boolean := __api_add_era.add_defaults;
     boundary_check_constraint name;
 BEGIN
     PERFORM sql_saga.__internal_require_owner(table_oid, 'add_era');
     -- Parameter validation for explicit user input.
-    IF (add_era.valid_from_column_name IS NOT NULL AND add_era.valid_until_column_name IS NULL) OR
-       (add_era.valid_from_column_name IS NULL AND add_era.valid_until_column_name IS NOT NULL)
+    IF (__api_add_era.valid_from_column_name IS NOT NULL AND __api_add_era.valid_until_column_name IS NULL) OR
+       (__api_add_era.valid_from_column_name IS NULL AND __api_add_era.valid_until_column_name IS NOT NULL)
     THEN
         RAISE EXCEPTION 'valid_from_column_name and valid_until_column_name must either both be provided or both be NULL.';
     END IF;
@@ -109,7 +109,7 @@ BEGIN
             range_exists boolean;
             from_exists boolean;
             until_exists boolean;
-            v_range_type regtype := add_era.range_type;
+            v_range_type regtype := __api_add_era.range_type;
             v_range_subtype regtype;
             add_clauses text[] := '{}';
         BEGIN
@@ -359,7 +359,7 @@ BEGIN
             FROM pg_constraint c
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
             WHERE c.conrelid = table_oid AND c.contype = 'p'
-              AND a.attname IN (add_era.range_column_name, add_era.valid_from_column_name, add_era.valid_until_column_name)
+              AND a.attname IN (__api_add_era.range_column_name, __api_add_era.valid_from_column_name, __api_add_era.valid_until_column_name)
         ) INTO v_pk_contains_temporal_col;
 
         IF NOT v_pk_contains_temporal_col AND EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = table_oid AND c.contype = 'p') THEN
@@ -384,9 +384,9 @@ BEGIN
 
     -- Create the unified synchronization trigger if requested.
     DECLARE
-        v_from_col    name := add_era.valid_from_column_name;
-        v_until_col   name := add_era.valid_until_column_name;
-        v_to_col      name := add_era.valid_to_column_name;
+        v_from_col    name := __api_add_era.valid_from_column_name;
+        v_until_col   name := __api_add_era.valid_until_column_name;
+        v_to_col      name := __api_add_era.valid_to_column_name;
         v_create_template_trigger boolean := false;
         v_sync_cols_text text;
         v_trigger_name name;
@@ -474,7 +474,7 @@ BEGIN
         END IF;
 
         INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults, ephemeral_columns, catalog_format)
-        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, add_era.ephemeral_columns, '1.3');
+        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, __api_add_era.ephemeral_columns, '1.3');
 
         IF v_create_template_trigger THEN
             CALL sql_saga.add_synchronize_temporal_columns_trigger(table_oid, era_name);
@@ -510,7 +510,7 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_era IS
+COMMENT ON FUNCTION sql_saga.__api_add_era IS
 'Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.
 
 Parameters:

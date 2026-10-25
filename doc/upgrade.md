@@ -28,12 +28,15 @@ The package also ships the earlier update scripts to 1.1 and 1.2. They are relea
 
 ### Management functions check table ownership
 
-The management functions are `SECURITY DEFINER`. Up to 1.3 they changed a table for any role allowed to call them. From 1.4 they require the rights of the DDL they stand for:
+The management functions change tables with the extension owner's rights. Up to 1.3 they did so for any role allowed to call them. From 1.4 they allow and refuse exactly what the DDL they stand for would:
 
-- the caller must own the table, directly or through role membership;
-- a foreign key also needs `REFERENCES` on the referenced table.
+- the role that calls them must own the table, directly or through role membership, as for `ALTER TABLE`;
+- a foreign key also needs `REFERENCES` on the referenced table;
+- the calling role is the current user at the call, as for native DDL: after `SET ROLE` the role set, inside a `SECURITY DEFINER` function that function's owner.
 
-Otherwise they fail with `42501`. Before updating, check that your migrations and deploy jobs call them as the table owner (or a superuser), not as a separate deploy role that only has `EXECUTE`. The owner of a referenced table can still drop dependent foreign keys owned by other roles through `drop_unique_key` or `drop_era` with `CASCADE`, as native `DROP ... CASCADE` allows.
+Otherwise they fail with `42501`. Before updating, check that your migrations and deploy jobs call them as the table owner, a member of its role, a superuser, or from a `SECURITY DEFINER` function owned by the table owner, and not as a separate deploy role that only has `EXECUTE` or row privileges. The owner of a referenced table can still drop dependent foreign keys owned by other roles through `drop_unique_key` or `drop_era` with `CASCADE`, as native `DROP ... CASCADE` allows.
+
+Each public management function is now a `SECURITY INVOKER` C entry point over a private `SECURITY DEFINER` worker `sql_saga.__api_<name>`. Names, arguments, defaults, results, comments and grants of the public functions are unchanged. Four internal `SECURITY DEFINER` helpers that acted for any caller are no longer executable by `PUBLIC`.
 
 ## What changes in 1.3
 

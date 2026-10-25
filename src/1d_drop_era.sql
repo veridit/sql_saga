@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.__api_drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -216,5 +216,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_era(regclass, name, sql_saga.drop_behavior, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_era(regclass, name, sql_saga.drop_behavior, boolean) IS
 'Deregisters a temporal table, removing all associated constraints, triggers, and metadata.';

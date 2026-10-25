@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_unique_key_by_name(
+CREATE FUNCTION sql_saga.__api_drop_unique_key_by_name(
     table_oid regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
@@ -196,5 +196,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_unique_key_by_name(regclass, name, sql_saga.drop_behavior, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_unique_key_by_name(regclass, name, sql_saga.drop_behavior, boolean) IS
 'Drops a temporal unique key identified by its unique name.';

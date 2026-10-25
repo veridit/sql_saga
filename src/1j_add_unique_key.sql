@@ -45,7 +45,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.add_unique_key(
+CREATE FUNCTION sql_saga.__api_add_unique_key(
         table_oid regclass,
         column_names name[],
         era_name name DEFAULT 'valid',
@@ -118,7 +118,7 @@ BEGIN
     -- constraint will include the temporal column, but our metadata only tracks
     -- the stable part of the key. An explicit check below ensures the user does
     -- not include the range column here.
-    v_stable_cols_to_store := add_unique_key.column_names;
+    v_stable_cols_to_store := __api_add_unique_key.column_names;
 
     -- This is no longer used by native temporal keys, but is still needed for XOR key logic on predicated keys.
     IF era_row.valid_from_column_name IS NOT NULL THEN
@@ -679,5 +679,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_unique_key(regclass, name[], name, sql_saga.unique_key_type, boolean, name, name, name, text, name[]) IS
+COMMENT ON FUNCTION sql_saga.__api_add_unique_key(regclass, name[], name, sql_saga.unique_key_type, boolean, name, name, name, text, name[]) IS
 'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. Can also enforce consistency between a natural key and the primary key.';

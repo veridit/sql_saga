@@ -11,6 +11,8 @@ Datum uk_update_check_c(PG_FUNCTION_ARGS);
 Datum regular_fk_check_c(PG_FUNCTION_ARGS);
 Datum uk_truncate_check_c(PG_FUNCTION_ARGS);
 Datum require_owner(PG_FUNCTION_ARGS);
+Datum api_trampoline(PG_FUNCTION_ARGS);
+Datum api_caller_sql(PG_FUNCTION_ARGS);
 Datum require_references(PG_FUNCTION_ARGS);
 
 Datum generated_always_as_row_start_end(PG_FUNCTION_ARGS);

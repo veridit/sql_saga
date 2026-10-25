@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+CREATE FUNCTION sql_saga.__api_drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -112,5 +112,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_system_versioning(regclass, sql_saga.drop_behavior, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_system_versioning(regclass, sql_saga.drop_behavior, boolean) IS
 'Removes system versioning from a table, dropping the history table and all associated objects.';

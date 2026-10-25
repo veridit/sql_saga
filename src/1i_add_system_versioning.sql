@@ -298,6 +298,8 @@ BEGIN
             USING ERRCODE = 'null_value_not_allowed',
                   HINT = 'Pass a registered base table to sql_saga.__internal_reconcile_system_versioning_family().';
     END IF;
+    /* Private worker; checked here too, so it cannot act for anyone else (R1). */
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'rebuild_system_versioning_views');
     PERFORM sql_saga.__internal_serialize(table_oid);
     SELECT s.* INTO sv FROM sql_saga.system_versioning AS s
     WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
@@ -385,7 +387,7 @@ BEGIN
 END;
 $__internal_reconcile_system_versioning_family$;
 
-CREATE FUNCTION sql_saga.add_system_versioning(
+CREATE FUNCTION sql_saga.__api_add_system_versioning(
     table_oid regclass,
     history_table_name name DEFAULT NULL,
     view_name name DEFAULT NULL,
@@ -567,7 +569,7 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_add_system_versioning(regclass, name, name, name, name, name, name, boolean) IS
 'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes. An existing table named history_table_name in the table''s schema is adopted as the history (reported by a NOTICE); history_table_must_exist => true requires it, as when moving a system-versioned table.';
 
 /*
@@ -612,7 +614,7 @@ FOR EACH ROW EXECUTE FUNCTION sql_saga.__internal_grant_query_functions();
  * qualification used by existing messages. Every relation and function reference in this body is
  * schema-qualified, so public is used only for regclass display.
  */
-CREATE FUNCTION sql_saga.rebuild_system_versioning_views(
+CREATE FUNCTION sql_saga.__api_rebuild_system_versioning_views(
     table_oid regclass,
     without_columns name[] DEFAULT '{}')
 RETURNS void
@@ -626,19 +628,12 @@ DECLARE
     range_column name;
     excluded name;
     previous_rebuild_flag text;
-    caller_role name;
-    authorization_table_name name;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
-    SELECT c.relname INTO authorization_table_name FROM pg_catalog.pg_class AS c
-    WHERE c.oid OPERATOR(pg_catalog.=) table_oid;
-    caller_role := CASE WHEN current_setting('role') = 'none' THEN session_user ELSE current_setting('role') END;
-    IF NOT pg_catalog.pg_has_role(caller_role, (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid OPERATOR(pg_catalog.=) table_oid), 'USAGE') THEN
-        RAISE EXCEPTION 'must be owner of table %', authorization_table_name USING ERRCODE = 'insufficient_privilege';
-    END IF;
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'rebuild_system_versioning_views');
 
     PERFORM sql_saga.__internal_serialize(table_oid);
 
@@ -698,5 +693,5 @@ BEGIN
 END;
 $rebuild_system_versioning_views$;
 
-COMMENT ON FUNCTION sql_saga.rebuild_system_versioning_views(regclass, name[]) IS
+COMMENT ON FUNCTION sql_saga.__api_rebuild_system_versioning_views(regclass, name[]) IS
 'Rebuilds the views and as-of query functions of a system-versioned table from the current base and history columns. Columns are matched by name; history may have additional columns. without_columns temporarily omits named columns so dependent columns can be changed manually.';

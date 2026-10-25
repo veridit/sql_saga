@@ -185,7 +185,7 @@ END;
 $function$;
 REVOKE ALL ON FUNCTION sql_saga.__internal_drop_foreign_key_by_name(regclass, name, boolean, boolean) FROM PUBLIC;
 
-CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
+CREATE FUNCTION sql_saga.__api_drop_foreign_key_by_name(
     table_oid regclass,
     key_name name,
     drop_index boolean DEFAULT true)

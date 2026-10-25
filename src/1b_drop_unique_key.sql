@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_unique_key(
+CREATE FUNCTION sql_saga.__api_drop_unique_key(
         table_oid regclass,
         column_names name[],
         era_name name DEFAULT 'valid',
@@ -91,5 +91,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.drop_unique_key(regclass, name[], name, sql_saga.drop_behavior, boolean) IS
+COMMENT ON FUNCTION sql_saga.__api_drop_unique_key(regclass, name[], name, sql_saga.drop_behavior, boolean) IS
 'Drops a temporal unique key identified by its table, columns, and era.';

@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.set_era_ephemeral_columns(
+CREATE FUNCTION sql_saga.__api_set_era_ephemeral_columns(
     table_class regclass,
     era_name name DEFAULT 'valid',
     ephemeral_columns name[] DEFAULT NULL
@@ -48,9 +48,9 @@ BEGIN
     END IF;
 
     UPDATE sql_saga.era AS e
-    SET ephemeral_columns = set_era_ephemeral_columns.ephemeral_columns
+    SET ephemeral_columns = __api_set_era_ephemeral_columns.ephemeral_columns
     WHERE (e.table_schema, e.table_name) = (table_schema, table_name)
-      AND e.era_name = set_era_ephemeral_columns.era_name;
+      AND e.era_name = __api_set_era_ephemeral_columns.era_name;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Era "%" not found on table %', era_name, table_class;
@@ -58,7 +58,7 @@ BEGIN
 END;
 $set_era_ephemeral_columns$;
 
-COMMENT ON FUNCTION sql_saga.set_era_ephemeral_columns IS
+COMMENT ON FUNCTION sql_saga.__api_set_era_ephemeral_columns IS
 'Sets the list of ephemeral columns for an era. Ephemeral columns are excluded from coalescing
 comparison during temporal_merge operations. These are typically audit columns (e.g., edit_at,
 edit_by_user_id) whose changes should not prevent adjacent periods from being merged.
