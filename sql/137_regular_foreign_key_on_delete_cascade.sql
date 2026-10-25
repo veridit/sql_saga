@@ -219,6 +219,12 @@ SELECT 'REPLACE + DELETE_MISSING_TIMELINE moves 3, delay_constraints false | '
 SELECT 'notes after moving 3, delay_constraints false | ' || rfc.ids('rfc.note');
 SELECT 'ext_ident after moving 3, delay_constraints false | ' || rfc.ids('rfc.ext_ident');
 ROLLBACK TO SAVEPOINT p;
+-- NO ACTION (tag 1 references 4): a non-overlapping move of 4 with delay_constraints => false is a DELETE and an
+-- INSERT too; the key exists again by the end, so it is accepted and the tag is kept.
+SELECT 'NO ACTION, REPLACE + DELETE_MISSING_TIMELINE moves 4, delay_constraints false | '
+    || rfc.merge_undelayed('MERGE_ENTITY_REPLACE', 'DELETE_MISSING_TIMELINE', $$(1, 4, 'tax', '400', 'm', '2010-01-01', '2011-01-01')$$);
+SELECT 'tags after moving 4 | ' || rfc.ids('rfc.tag');
+ROLLBACK TO SAVEPOINT p;
 SELECT 'delay_constraints false, removing 4 still refuses (tag 1, NO ACTION) | '
     || rfc.merge_undelayed('MERGE_ENTITY_REPLACE', 'DELETE_MISSING_ENTITIES',
                  $$(1, 1, 'tax', '100', 'a', '2020-01-01', 'infinity'), (2, 2, 'tax', '200', 'a', '2020-01-01', 'infinity'), (3, 3, 'tax', '300', 'a', '2020-01-01', 'infinity')$$);
@@ -257,7 +263,7 @@ SELECT 'drop_foreign_key | ' || rfc.run($$SELECT sql_saga.drop_foreign_key('rfc.
 SELECT 'after drop_foreign_key, delete 2 | ' || rfc.run($$DELETE FROM rfc.legal_unit WHERE id = 2$$);
 SELECT 'notes (nothing cascaded) | ' || rfc.ids('rfc.note');
 ROLLBACK TO SAVEPOINT p;
--- The cascade runs as the extension owner: the parent's writer needs no rights on the child, as with native CASCADE.
+-- The cascade runs as the child table's owner: the parent's writer needs no rights on the child, as with native CASCADE.
 CREATE ROLE rfc_parent_writer;
 GRANT USAGE ON SCHEMA rfc TO rfc_parent_writer;
 GRANT SELECT, DELETE ON rfc.legal_unit TO rfc_parent_writer;

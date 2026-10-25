@@ -27,7 +27,7 @@ only the native constraints immediate: a regular reference is judged by the time
 The parent-side `uk_delete` trigger (`uk_delete_check_c`, C) already finds the referencing children and
 checks for another parent row with the key, with cached SPI plans and the child foreign-key index. With
 `delete_action = CASCADE` it runs one more cached plan, `DELETE FROM ONLY child WHERE key = $1`, instead
-of raising the violation. Like native referential actions, it runs as the extension owner with child
+of raising the violation. Like native referential actions, it runs as the owner of the child table with child
 triggers firing, so system versioning, the child's own foreign keys and native cascades below it all
 apply. It uses the same snapshot handling as the existing lookups: under `REPEATABLE READ`, a child
 row committed after the snapshot makes the delete fail with 40001 rather than leave an orphan.
@@ -43,8 +43,9 @@ the `temporal_merge` planner and executor.
   foreign key constraint using PERIOD").
 - `SET NULL`, `SET DEFAULT` and `ON UPDATE` actions other than `NO ACTION`/`RESTRICT` stay refused, now
   with an explicit 0A000 error from `add_*_foreign_key` instead of a catalog CHECK violation.
-- `TRUNCATE` fires no row triggers, so it neither checks nor cascades a regular foreign key. This was
-  already true of `NO ACTION` in 1.3 and is documented.
+- `TRUNCATE` fires no row triggers. Up to 1.3 it therefore silently left the children of a regular foreign key
+  without a parent. 1.4 adds a statement-level `AFTER TRUNCATE` trigger per regular foreign key on the parent
+  (`foreign_keys.uk_truncate_trigger`) that refuses, as native foreign keys do, while a child row references it.
 
 ### Measured cost (macOS, PostgreSQL 18.3, best of 3; `tmp/bench_cascade_run.sh`)
 

@@ -247,8 +247,12 @@ A temporal-to-temporal foreign key does not accept `CASCADE`: PostgreSQL does no
 foreign keys that use `PERIOD`. `SET NULL`, `SET DEFAULT` and `ON UPDATE` actions other than `NO ACTION` and
 `RESTRICT` are refused for both kinds.
 
-`TRUNCATE` of a parent table does not fire row triggers, so it neither checks nor cascades regular foreign keys.
-Use `DELETE`, or `TRUNCATE` the children too.
+`TRUNCATE` of a parent table is refused while a child row references it, as PostgreSQL refuses `TRUNCATE` of a
+table referenced by a native foreign key, also one with `ON DELETE CASCADE` (`0A000`, the native message and hint).
+`TRUNCATE` the parent and the children in one statement, or `DELETE` from the parent. Each regular foreign key has
+a statement-level trigger on the parent for this, named in `sql_saga.foreign_keys.uk_truncate_trigger`. One
+difference from native: PostgreSQL refuses from the table graph alone, sql_saga only when a child row actually
+references the parent (all-NULL keys do not count), so a `TRUNCATE` with empty children succeeds.
 
 #### Restoring over an existing database (`--clean`)
 
@@ -681,7 +685,7 @@ A foreign key from `projects.lead_employee_id` to `employees.id` ensures that an
 
 This validation is implemented by a constraint trigger on the regular table (named in `sql_saga.foreign_keys.fk_check_constraint`, `DEFERRABLE INITIALLY IMMEDIATE`, so `SET CONSTRAINTS` can defer it) and by constraint triggers on the temporal table: a key referenced by the regular table can be deleted or changed in the temporal table only while another row of the temporal table still has it. `MATCH SIMPLE` (the default) and `MATCH FULL` are supported, `MATCH PARTIAL` is refused.
 
-A regular foreign key references a primary or natural key; a predicated key is refused (`0A000`), since its uniqueness holds only among the rows its predicate admits. Like a native foreign key, a regular foreign key covers only the two tables it names, not their inheritance children. A partitioned table cannot be the referencing table (`0A000`); add the foreign key to each partition instead. Rows written through the partitioned table are checked, and cascaded, by their partition's foreign key.
+A regular foreign key references a primary or natural key; a predicated key is refused (`0A000`), since its uniqueness holds only among the rows its predicate admits. With `MATCH SIMPLE` (the default), a child row with a NULL in any key column is neither checked nor cascaded, as for native foreign keys; every reference to an XOR key (`mutually_exclusive_columns`) has one, so reference the single identifier column instead. Like a native foreign key, a regular foreign key covers only the two tables it names, not their inheritance children. A partitioned table cannot be the referencing table (`0A000`); add the foreign key to each partition instead. Rows written through the partitioned table are checked, and cascaded, by their partition's foreign key.
 
 #### High-Performance Bulk Data Loading (`temporal_merge`)
 - `temporal_merge(target_table regclass, source_table regclass, identity_columns TEXT[], natural_identity_columns TEXT[], ...)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The API is designed to be orthogonal: `mode` controls the non-destructive merge behavior, and `delete_mode` provides optional, destructive overrides.

@@ -1,0 +1,16 @@
+\set ECHO none
+--- part 1: the child check
+MATCH SIMPLE, (lu 10, NULL) present | ok
+MATCH SIMPLE, (NULL, es 20) present | ok
+MATCH SIMPLE, (lu 30, NULL) present | ok
+MATCH SIMPLE, (lu 99, NULL) is partly NULL, accepted as natively | ok
+MATCH SIMPLE, (lu 10, es 20) absent | 23503: insert or update on table "rxk.note" violates foreign key constraint "note_xor_fk"
+MATCH FULL, (lu 10, NULL) partly NULL | 23503: insert or update on table "rxk.tag" violates foreign key constraint "tag_xor_fk"
+MATCH FULL, (NULL, NULL) | ok
+notes | 1,2,3,4
+--- part 2: MATCH SIMPLE ignores keys with a NULL column, as natively
+one of two rows of (lu 10) deleted, notes | 1,2,3,4
+last row of (lu 10) deleted, notes | 1,2,3,4
+last row of (es 20) deleted, notes | 1,2,3,4
+--- part 3: integrity
+check_integrity | ok

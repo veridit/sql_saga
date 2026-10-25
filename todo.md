@@ -106,14 +106,19 @@ fixed. New findings, each fixed test-first:
       vs 117 ms). Cache verified triggers per transaction, reset on relcache invalidation and at xact end. Now
       within noise of 1.3 (57.9 vs 51.4; 138.7 vs 118.2). Test 139 part 4b (catalog row removed after verification
       plus DDL: refused). decision-log table and README updated with 1.4 and 1.3 columns
-- [ ] R4 docs: README and decision-log still say TRUNCATE is not checked; decision-log says the cascade runs as the
+- [x] R4 docs: README and decision-log still say TRUNCATE is not checked; decision-log says the cascade runs as the
       extension owner; test 137 comment says the same; document `uk_truncate_trigger` and the TRUNCATE refusal
       (data-based: an empty child does not block, unlike native) in README and doc/api.md
+      DONE: README TRUNCATE paragraph (refusal, uk_truncate_trigger, data-based difference), decision-log identity
+      and TRUNCATE, test 137 comment. doc/api.md is generated (functions only), so no table column docs there
 - [ ] R3 upgrade (done in packaging below): partitioned-child regular FKs from 1.3 (cloned triggers now refused,
       every write would fail), backfill `uk_truncate_trigger` and create the triggers, report/refuse regular FKs to
       predicated keys
-- [ ] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
+- [x] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
       regular FK to an XOR (mutually_exclusive_columns) natural key: check, last-row rule, cascade
+      DONE: test 137 (NO ACTION move with delay_constraints false: accepted, tag kept); test 148 (XOR key: check
+      per match type; MATCH SIMPLE ignores partly NULL keys exactly as native FKs to UNIQUE NULLS NOT DISTINCT do,
+      verified natively; documented that an XOR target protects nothing under SIMPLE)
 - [ ] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
 - [ ] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
       (src/3h) over private SECURITY DEFINER workers sql_saga.__api_<name>. The 1.x->1.4 update must create the
