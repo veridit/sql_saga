@@ -4,7 +4,7 @@
 
 CREATE OR REPLACE PROCEDURE sql_saga.__api_drop_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $drop_synchronize_temporal_columns_trigger$
 DECLARE
     v_table_schema name;
@@ -99,7 +99,7 @@ CREATE FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(
     table_oid regclass, era_name name,
     OUT function_name name, OUT trigger_name name, OUT function_sql text, OUT trigger_sql text)
 LANGUAGE plpgsql STABLE
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_synchronize_temporal_columns_sql$
 DECLARE
     v_table_schema name;
@@ -459,7 +459,7 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(regc
 
 CREATE OR REPLACE PROCEDURE sql_saga.__api_add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
 LANGUAGE plpgsql SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $add_synchronize_temporal_columns_trigger$
 DECLARE
     v_table_schema name;

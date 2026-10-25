@@ -1,0 +1,5 @@
+\set ECHO none
+--- part 1: attacker code run with superuser rights
+calls | none
+--- part 2: the clock of a current view
+clock bound to | public.hj_today

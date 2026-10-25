@@ -3,7 +3,7 @@ CREATE OR REPLACE FUNCTION sql_saga.health_checks()
  LANGUAGE plpgsql
  SECURITY DEFINER
  -- Set a safe search path for this SECURITY DEFINER function
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable
@@ -857,7 +857,7 @@ CREATE FUNCTION sql_saga.check_integrity()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $check_integrity$
 DECLARE
     r record;

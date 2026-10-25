@@ -42,6 +42,10 @@ Each public management function is now a `SECURITY INVOKER` C entry point over a
 
 Up to 1.3 the history row of a system-versioned `UPDATE` or `DELETE`, and the history `TRUNCATE`, were written with the extension owner's rights, so triggers, `CHECK` and index expressions on the history table ran as that role (usually a superuser). From 1.4 they run as the owner of the history table, which is the owner of the base table unless you changed it. A trigger on a history table that relied on superuser rights now runs with the table owner's rights.
 
+### Messages name relations schema-qualified
+
+sql_saga's functions that run with the extension owner's rights no longer have `public` on their `search_path`: a role that may create objects in `public` could otherwise shadow an operator or function and have it run with those rights. As a consequence, NOTICE, WARNING and error messages name tables schema-qualified (`public.t` instead of `t`). Scripts that match message text need adjusting.
+
 ## What changes in 1.3
 
 ### Regular foreign keys: the referencing side becomes a constraint trigger

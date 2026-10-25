@@ -55,9 +55,9 @@ CREATE TABLE internals_target (
 SELECT sql_saga.add_era('internals_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-WARNING:  Table "internals_target" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
+WARNING:  Table "public.internals_target" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
-NOTICE:  sql_saga: Created trigger "internals_target_synchronize_temporal_columns_trigger" on table internals_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "internals_target_synchronize_temporal_columns_trigger" on table public.internals_target to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "internals_target_valid_range_gist_idx" on column public.internals_target.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -65,7 +65,7 @@ NOTICE:  sql_saga: Created GIST index "internals_target_valid_range_gist_idx" on
 (1 row)
 
 SELECT sql_saga.add_unique_key('internals_target', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: Added constraints to table internals_target: ADD CONSTRAINT internals_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.internals_target: ADD CONSTRAINT internals_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  internals_target_id_valid

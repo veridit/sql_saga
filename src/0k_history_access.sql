@@ -156,7 +156,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_history_policy_sync_active$
     SELECT EXISTS (
         SELECT 1
@@ -324,7 +324,7 @@ CREATE FUNCTION sql_saga.__internal_sync_history_policies(table_oid oid, dropped
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_sync_history_policies$
 DECLARE
     fam record;
@@ -515,7 +515,7 @@ CREATE FUNCTION sql_saga.__api_sync_history_policies(table_oid regclass)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $sync_history_policies$
 BEGIN
     IF NOT EXISTS (SELECT FROM sql_saga.__internal_history_family(table_oid) AS f WHERE f.base_oid = table_oid) THEN
@@ -537,7 +537,7 @@ CREATE FUNCTION sql_saga.__api_sync_all_history_policies()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $sync_all_history_policies$
 DECLARE
     table_oid regclass;

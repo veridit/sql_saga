@@ -61,7 +61,7 @@ RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
 -- A safe search_path is required
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 DECLARE

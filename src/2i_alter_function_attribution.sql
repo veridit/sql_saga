@@ -2,7 +2,7 @@ CREATE OR REPLACE FUNCTION sql_saga.__internal_set_alter_function_resolved(funct
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 DECLARE

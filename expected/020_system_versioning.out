@@ -362,7 +362,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Correctly rejected: %', SQLERRM;
 END;
 $$;
-NOTICE:  Correctly rejected: relation sv_view is not a table
+NOTICE:  Correctly rejected: relation public.sv_view is not a table
 DROP VIEW sv_view;
 DROP TABLE sv_base_for_view;
 -- Test: Cannot drop system_time era directly (must use drop_system_versioning)

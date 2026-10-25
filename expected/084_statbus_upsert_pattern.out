@@ -65,7 +65,7 @@ CREATE TABLE location (
 SELECT sql_saga.add_era('legal_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table public.legal_unit to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column public.legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -76,7 +76,7 @@ ALTER TABLE legal_unit ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_era('location', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table location to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table public.location to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "location_valid_range_gist_idx" on column public.location.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -92,14 +92,14 @@ TABLE sql_saga.era;
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: Added constraints to table legal_unit: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.legal_unit: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: Added constraints to table location: ADD CONSTRAINT location_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.location: ADD CONSTRAINT location_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  location_id_valid
@@ -113,7 +113,7 @@ TABLE sql_saga.unique_keys;
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
-NOTICE:  sql_saga: No compatible index found for foreign key on table location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON location USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON public.location USING GIST (legal_unit_id, valid_range)
    add_temporal_foreign_key   
 ------------------------------
  location_legal_unit_id_valid

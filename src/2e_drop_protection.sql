@@ -2,7 +2,7 @@ CREATE OR REPLACE FUNCTION sql_saga.drop_protection()
  RETURNS event_trigger
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable

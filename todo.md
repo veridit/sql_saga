@@ -77,6 +77,22 @@ fixed. New findings, each fixed test-first:
       create a table could escalate). Both now run as the history table's owner (C, like native RI; writer still
       needs no history rights; FORCE RLS bypassed as native RI does). Forged triggers on other tables cannot reach a
       registered history (lookup is by the firing table). Test 145. Fast 130/130, restore RLS/SV cases pass
+- [x] R8 HIGH (found 2026-10-25 while probing the parity gate): SECURITY DEFINER workers with
+      `SET search_path = ..., public` resolve unqualified operators/functions in a schema any role may write. A role
+      with CREATE on public defined `public.@>(name[], name[])`; add_unique_key with mutually_exclusive_columns ran it
+      as superuser. Fix: no SECURITY DEFINER function may have a writable schema (public) on its search_path; every
+      worker gets `SET search_path = pg_catalog, sql_saga` (or pg_catalog, pg_temp) and qualifies user objects.
+      Test: the hijack (operators and functions in public shadowing pg_catalog ones for every argument type the
+      workers use) never runs attacker code; extend test 009 to refuse `public` on any SECURITY DEFINER search_path
+      Decision: worker search_path = sql_saga, pg_catalog, pg_temp (only superuser-owned schemas; a public schema
+      owned by the database owner would let the database owner escalate). Consequence: messages print relations
+      schema-qualified (public.t instead of t), the user-visible add_current_view resolution contract is preserved
+      explicitly; note the message change in doc/upgrade.md
+      DONE: every SECURITY DEFINER function's search_path is sql_saga, pg_catalog, pg_temp (54 functions); the
+      trampoline records the caller's search_path (__internal_caller_search_path) for user SQL text; the
+      add_current_view clock keeps its released resolution and is embedded schema-qualified. Test 146 (RED at HEAD:
+      attacker operator ran as superuser; GREEN: none), test 009 guard. 49 outputs changed only by schema
+      qualification in messages (verified mechanically). Fast 131/131, concurrency, restore 11/11 + splits
 - [ ] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
       sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
 - [ ] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed

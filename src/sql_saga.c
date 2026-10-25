@@ -3212,6 +3212,8 @@ current_view_clock(PG_FUNCTION_ARGS)
  */
 #define SQL_SAGA_MAX_API_DEPTH 64
 static Oid	api_caller_stack[SQL_SAGA_MAX_API_DEPTH];
+/* The caller's search_path at the call, in TopMemoryContext: user-supplied SQL text is parsed under it (R8). */
+static char *api_caller_search_path_stack[SQL_SAGA_MAX_API_DEPTH];
 static int	api_caller_depth = 0;
 
 static Oid
@@ -3241,6 +3243,7 @@ api_trampoline(PG_FUNCTION_ARGS)
 	bool		result_isnull = false;
 	Oid			worker_owner;
 	Oid			caller;
+	char	   *search_path;
 	int			i;
 
 	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(self));
@@ -3285,7 +3288,17 @@ api_trampoline(PG_FUNCTION_ARGS)
 		worker_fcinfo->args[i].isnull = fcinfo->args[i].isnull;
 	}
 
-	api_caller_stack[api_caller_depth++] = caller;
+	/*
+	 * The workers run on a fixed search_path without any schema other roles can write (R8); user-supplied SQL text
+	 * (a key predicate, a clock function) is parsed under the caller's search_path, recorded here, as native DDL
+	 * parses it. A nested call keeps the outer caller's path.
+	 */
+	search_path = (api_caller_depth > 0 && GetUserId() == worker_owner)
+		? api_caller_search_path_stack[api_caller_depth - 1]
+		: MemoryContextStrdup(TopMemoryContext, namespace_search_path ? namespace_search_path : "");
+	api_caller_stack[api_caller_depth] = caller;
+	api_caller_search_path_stack[api_caller_depth] = search_path;
+	api_caller_depth++;
 	PG_TRY();
 	{
 		result = FunctionCallInvoke(worker_fcinfo);
@@ -3294,6 +3307,8 @@ api_trampoline(PG_FUNCTION_ARGS)
 	PG_FINALLY();
 	{
 		api_caller_depth--;
+		if (api_caller_depth == 0 || api_caller_search_path_stack[api_caller_depth - 1] != search_path)
+			pfree(search_path);
 	}
 	PG_END_TRY();
 
@@ -3342,6 +3357,16 @@ truncate_as_owner(PG_FUNCTION_ARGS)
 	SPI_finish();
 	pfree(sql);
 	PG_RETURN_VOID();
+}
+
+/* __internal_caller_search_path() -- the search_path of the role that called the running management function. */
+PG_FUNCTION_INFO_V1(api_caller_search_path_sql);
+Datum
+api_caller_search_path_sql(PG_FUNCTION_ARGS)
+{
+	if (api_caller_depth == 0)
+		PG_RETURN_NULL();
+	PG_RETURN_TEXT_P(cstring_to_text(api_caller_search_path_stack[api_caller_depth - 1]));
 }
 
 /* __internal_caller() -- the role the running management function acts for (see api_caller). */

@@ -39,7 +39,7 @@ NOTICE:  sql_saga: Created GIST index "date_shifts_valid_range_gist_idx" on colu
 (1 row)
 
 SELECT sql_saga.add_unique_key('date_shifts', ARRAY['job_id', 'worker_id']);
-NOTICE:  sql_saga: Added constraints to table date_shifts: ADD CONSTRAINT date_shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.date_shifts: ADD CONSTRAINT date_shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
            add_unique_key           
 ------------------------------------
  date_shifts_job_id_worker_id_valid

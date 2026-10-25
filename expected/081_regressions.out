@@ -31,7 +31,7 @@ CREATE TABLE uk(id integer, valid_range int4range NOT NULL, f integer, u integer
 SELECT sql_saga.add_era('uk', 'valid_range', 'p',
     valid_from_column_name => 'f',
     valid_until_column_name => 'u');
-NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on table uk to synchronize columns: f, u
+NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on table public.uk to synchronize columns: f, u
 NOTICE:  sql_saga: Created GIST index "uk_valid_range_gist_idx" on column public.uk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -40,7 +40,7 @@ NOTICE:  sql_saga: Created GIST index "uk_valid_range_gist_idx" on column public
 
 ALTER TABLE uk ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('uk', ARRAY['id'], 'p');
-NOTICE:  sql_saga: Added constraints to table uk: ADD CONSTRAINT uk_id_p_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.uk: ADD CONSTRAINT uk_id_p_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  uk_id_p
@@ -50,7 +50,7 @@ CREATE TABLE fk(id integer, uk_id integer, valid_range int4range NOT NULL, f int
 SELECT sql_saga.add_era('fk', 'valid_range', 'q',
     valid_from_column_name => 'f',
     valid_until_column_name => 'u');
-NOTICE:  sql_saga: Created trigger "fk_synchronize_temporal_columns_trigger" on table fk to synchronize columns: f, u
+NOTICE:  sql_saga: Created trigger "fk_synchronize_temporal_columns_trigger" on table public.fk to synchronize columns: f, u
 NOTICE:  sql_saga: Created GIST index "fk_valid_range_gist_idx" on column public.fk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -59,14 +59,14 @@ NOTICE:  sql_saga: Created GIST index "fk_valid_range_gist_idx" on column public
 
 ALTER TABLE fk ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('fk', ARRAY['id'], 'q');
-NOTICE:  sql_saga: Added constraints to table fk: ADD CONSTRAINT fk_id_q_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.fk: ADD CONSTRAINT fk_id_q_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  fk_id_q
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
-NOTICE:  sql_saga: No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON public.fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -227,7 +227,7 @@ CREATE TABLE t_uk (
 SELECT sql_saga.add_era('t_uk', 'valid_range', 'valid',
     valid_from_column_name => 'valid_after',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "t_uk_synchronize_temporal_columns_trigger" on table t_uk to synchronize columns: valid_after, valid_until
+NOTICE:  sql_saga: Created trigger "t_uk_synchronize_temporal_columns_trigger" on table public.t_uk to synchronize columns: valid_after, valid_until
 NOTICE:  sql_saga: Created GIST index "t_uk_valid_range_gist_idx" on column public.t_uk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -236,7 +236,7 @@ NOTICE:  sql_saga: Created GIST index "t_uk_valid_range_gist_idx" on column publ
 
 ALTER TABLE t_uk ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('t_uk', ARRAY['id']);
-NOTICE:  sql_saga: Added constraints to table t_uk: ADD CONSTRAINT t_uk_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.t_uk: ADD CONSTRAINT t_uk_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  t_uk_id_valid
@@ -252,7 +252,7 @@ CREATE TABLE t_fk (
 SELECT sql_saga.add_era('t_fk', 'valid_range', 'valid',
     valid_from_column_name => 'valid_after',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "t_fk_synchronize_temporal_columns_trigger" on table t_fk to synchronize columns: valid_after, valid_until
+NOTICE:  sql_saga: Created trigger "t_fk_synchronize_temporal_columns_trigger" on table public.t_fk to synchronize columns: valid_after, valid_until
 NOTICE:  sql_saga: Created GIST index "t_fk_valid_range_gist_idx" on column public.t_fk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -265,7 +265,7 @@ NOTICE:  sql_saga: Created GIST index "t_fk_valid_range_gist_idx" on column publ
 -- valid_until_column_name and a column named 'valid_to' exists.
 SAVEPOINT s_fk_error;
 SELECT sql_saga.add_temporal_foreign_key('t_fk', ARRAY['uk_id'], 'valid', 't_uk_id_valid');
-NOTICE:  sql_saga: No compatible index found for foreign key on table t_fk. Creating new index: CREATE INDEX t_fk_uk_id_valid_gist_idx ON t_fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.t_fk. Creating new index: CREATE INDEX t_fk_uk_id_valid_gist_idx ON public.t_fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  t_fk_uk_id_valid
@@ -308,7 +308,7 @@ SELECT sql_saga.add_era('t_uk_gen', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_end_date');
-NOTICE:  sql_saga: Created trigger "t_uk_gen_synchronize_temporal_columns_trigger" on table t_uk_gen to synchronize columns: valid_end_date, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "t_uk_gen_synchronize_temporal_columns_trigger" on table public.t_uk_gen to synchronize columns: valid_end_date, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "t_uk_gen_valid_range_gist_idx" on column public.t_uk_gen.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -316,7 +316,7 @@ NOTICE:  sql_saga: Created GIST index "t_uk_gen_valid_range_gist_idx" on column 
 (1 row)
 
 SELECT sql_saga.add_unique_key('t_uk_gen', ARRAY['id']);
-NOTICE:  sql_saga: Added constraints to table t_uk_gen: ADD CONSTRAINT t_uk_gen_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.t_uk_gen: ADD CONSTRAINT t_uk_gen_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  t_uk_gen_id_valid
@@ -334,7 +334,7 @@ SELECT sql_saga.add_era('t_fk_gen', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_end_date');
-NOTICE:  sql_saga: Created trigger "t_fk_gen_synchronize_temporal_columns_trigger" on table t_fk_gen to synchronize columns: valid_end_date, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "t_fk_gen_synchronize_temporal_columns_trigger" on table public.t_fk_gen to synchronize columns: valid_end_date, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "t_fk_gen_valid_range_gist_idx" on column public.t_fk_gen.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -343,7 +343,7 @@ NOTICE:  sql_saga: Created GIST index "t_fk_gen_valid_range_gist_idx" on column 
 
 -- This should succeed and create a trigger that watches valid_end_date
 SELECT sql_saga.add_temporal_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');
-NOTICE:  sql_saga: No compatible index found for foreign key on table t_fk_gen. Creating new index: CREATE INDEX t_fk_gen_uk_id_valid_gist_idx ON t_fk_gen USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.t_fk_gen. Creating new index: CREATE INDEX t_fk_gen_uk_id_valid_gist_idx ON public.t_fk_gen USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  t_fk_gen_uk_id_valid
@@ -389,7 +389,7 @@ CREATE TABLE legal_unit_bug (
 SELECT sql_saga.add_era('legal_unit_bug', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "legal_unit_bug_synchronize_temporal_columns_trigger" on table legal_unit_bug to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "legal_unit_bug_synchronize_temporal_columns_trigger" on table public.legal_unit_bug to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "legal_unit_bug_valid_range_gist_idx" on column public.legal_unit_bug.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -397,7 +397,7 @@ NOTICE:  sql_saga: Created GIST index "legal_unit_bug_valid_range_gist_idx" on c
 (1 row)
 
 SELECT sql_saga.add_unique_key('legal_unit_bug', ARRAY['id']);
-NOTICE:  sql_saga: Added constraints to table legal_unit_bug: ADD CONSTRAINT legal_unit_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.legal_unit_bug: ADD CONSTRAINT legal_unit_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key      
 -------------------------
  legal_unit_bug_id_valid
@@ -415,7 +415,7 @@ CREATE TABLE establishment_bug (
 SELECT sql_saga.add_era('establishment_bug', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "establishment_bug_synchronize_temporal_columns_trigger" on table establishment_bug to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "establishment_bug_synchronize_temporal_columns_trigger" on table public.establishment_bug to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "establishment_bug_valid_range_gist_idx" on column public.establishment_bug.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -424,7 +424,7 @@ NOTICE:  sql_saga: Created GIST index "establishment_bug_valid_range_gist_idx" o
 
 -- Note: A unique key on 'id' is not strictly necessary for this test but good practice.
 SELECT sql_saga.add_unique_key('establishment_bug', ARRAY['id']); 
-NOTICE:  sql_saga: Added constraints to table establishment_bug: ADD CONSTRAINT establishment_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.establishment_bug: ADD CONSTRAINT establishment_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  establishment_bug_id_valid
@@ -432,7 +432,7 @@ NOTICE:  sql_saga: Added constraints to table establishment_bug: ADD CONSTRAINT 
 
 -- Add the temporal foreign key constraint
 SELECT sql_saga.add_temporal_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid', 'legal_unit_bug_id_valid');
-NOTICE:  sql_saga: No compatible index found for foreign key on table establishment_bug. Creating new index: CREATE INDEX establishment_bug_legal_unit_id_valid_gist_idx ON establishment_bug USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.establishment_bug. Creating new index: CREATE INDEX establishment_bug_legal_unit_id_valid_gist_idx ON public.establishment_bug USING GIST (legal_unit_id, valid_range)
        add_temporal_foreign_key        
 ---------------------------------------
  establishment_bug_legal_unit_id_valid

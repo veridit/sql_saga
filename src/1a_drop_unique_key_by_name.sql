@@ -7,7 +7,7 @@ CREATE FUNCTION sql_saga.__api_drop_unique_key_by_name(
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable

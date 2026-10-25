@@ -171,28 +171,28 @@ SET LOCAL check_function_bodies = off;
 SET LOCAL row_security = off;
 SAVEPOINT a;
 DROP TRIGGER IF EXISTS b_truncate ON public.b; -- fail
-ERROR:  cannot drop trigger "b_truncate" on table "b" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "b_truncate" on table "public.b" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT a;
 DROP FUNCTION IF EXISTS public.b__as_of(timestamp with time zone); -- fail
-ERROR:  cannot drop function "public.b__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "b"
+ERROR:  cannot drop function "public.b__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "public.b"
 ROLLBACK TO SAVEPOINT a;
 DROP POLICY IF EXISTS sql_saga_history_reader_test0001 ON public.b_history; -- fail
-ERROR:  cannot drop or alter policy "sql_saga_history_reader_test0001" on "b_history" because it is managed by sql_saga for table "b"
+ERROR:  cannot drop or alter policy "sql_saga_history_reader_test0001" on "public.b_history" because it is managed by sql_saga for table "public.b"
 ROLLBACK TO SAVEPOINT a;
 DROP POLICY IF EXISTS sql_saga_5d18f5f440ffed66 ON public.b_history; -- fail
-ERROR:  cannot drop or alter policy "sql_saga_5d18f5f440ffed66" on "b_history" because it is managed by sql_saga for table "b"
+ERROR:  cannot drop or alter policy "sql_saga_5d18f5f440ffed66" on "public.b_history" because it is managed by sql_saga for table "public.b"
 ROLLBACK TO SAVEPOINT a;
 DROP VIEW IF EXISTS public.p__for_portion_of_valid; -- fail
 ERROR:  cannot drop view "public.p__for_portion_of_valid", call "sql_saga.drop_for_portion_of_view()" instead
 ROLLBACK TO SAVEPOINT a;
 DROP TRIGGER IF EXISTS current_valid ON public.p__current_valid; -- fail
-ERROR:  cannot drop trigger "current_valid" on view "p__current_valid" because it is part of an updatable view for era "valid" on table "p"
+ERROR:  cannot drop trigger "current_valid" on view "public.p__current_valid" because it is part of an updatable view for era "valid" on table "public.p"
 ROLLBACK TO SAVEPOINT a;
 DROP TRIGGER IF EXISTS r_p_id_fkey_uk_update ON public.p; -- fail
-ERROR:  cannot drop trigger "r_p_id_fkey_uk_update" on table "p" because it is used in era foreign key "r_p_id_fkey"
+ERROR:  cannot drop trigger "r_p_id_fkey_uk_update" on table "public.p" because it is used in era foreign key "r_p_id_fkey"
 ROLLBACK TO SAVEPOINT a;
 ALTER TABLE IF EXISTS ONLY public.c DROP CONSTRAINT IF EXISTS c_pkey; -- fail
-ERROR:  cannot drop constraint "c_pkey" on table "c" because it is used in era unique key "c_id_valid"
+ERROR:  cannot drop constraint "c_pkey" on table "public.c" because it is used in era unique key "c_id_valid"
 ROLLBACK TO SAVEPOINT a;
 ROLLBACK;
 \echo '=== B: the opt-in alone, in a normal session: still refused'
@@ -201,7 +201,7 @@ BEGIN;
 SET LOCAL sql_saga.clean_restore = on;
 SAVEPOINT b;
 DROP TRIGGER IF EXISTS b_truncate ON public.b; -- fail
-ERROR:  cannot drop trigger "b_truncate" on table "b" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "b_truncate" on table "public.b" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT b;
 DROP VIEW IF EXISTS public.p__current_valid; -- fail
 ERROR:  cannot drop view "public.p__current_valid", call "sql_saga.drop_current_view()" instead
@@ -213,7 +213,7 @@ BEGIN;
 SET LOCAL application_name = 'pg_restore';
 SAVEPOINT b;
 DROP TRIGGER IF EXISTS b_truncate ON public.b; -- fail
-ERROR:  cannot drop trigger "b_truncate" on table "b" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "b_truncate" on table "public.b" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT b;
 ROLLBACK;
 \echo '=== D: in a clean-restore session, statements that are not part of the teardown keep every check'
@@ -224,10 +224,10 @@ SET LOCAL row_security = off;
 SET LOCAL sql_saga.clean_restore = on;
 SAVEPOINT d;
 ALTER TABLE b_history DISABLE ROW LEVEL SECURITY; -- fail
-ERROR:  history table "b_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "b"
+ERROR:  history table "public.b_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "public.b"
 ROLLBACK TO SAVEPOINT d;
 ALTER TRIGGER r_p_id_fkey_uk_update ON p RENAME TO r_p_id_fkey_uk_update_renamed; -- fail
-ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_update" on table "p" because it is used in an era foreign key "r_p_id_fkey"
+ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_update" on table "public.p" because it is used in an era foreign key "r_p_id_fkey"
 ROLLBACK TO SAVEPOINT d;
 ROLLBACK;
 \echo '=== E: renaming a regular foreign key''s trigger is refused'
@@ -235,10 +235,10 @@ ROLLBACK;
 BEGIN;
 SAVEPOINT e;
 ALTER TRIGGER r_p_id_fkey_uk_update ON p RENAME TO r_p_id_fkey_uk_update_renamed; -- fail
-ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_update" on table "p" because it is used in an era foreign key "r_p_id_fkey"
+ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_update" on table "public.p" because it is used in an era foreign key "r_p_id_fkey"
 ROLLBACK TO SAVEPOINT e;
 ALTER TRIGGER r_p_id_fkey_uk_delete ON p RENAME TO r_p_id_fkey_uk_delete_renamed; -- fail
-ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_delete" on table "p" because it is used in an era foreign key "r_p_id_fkey"
+ERROR:  cannot drop or rename trigger "r_p_id_fkey_uk_delete" on table "public.p" because it is used in an era foreign key "r_p_id_fkey"
 ROLLBACK TO SAVEPOINT e;
 ROLLBACK;
 -- F: the teardown drops the managed history policies as soon as any non-policy object of the family

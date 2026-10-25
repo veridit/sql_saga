@@ -30,7 +30,7 @@ SET ROLE TO sql_saga_unprivileged_user;
 -- PostgreSQL, but test them anyway.
 CREATE TABLE uk (id integer, valid_range int4range, valid_from integer, valid_until integer, CONSTRAINT uk_pkey PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
 SELECT sql_saga.add_era('uk', 'valid_range', 'p');
-NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on table uk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on table public.uk to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "uk_valid_range_gist_idx" on column public.uk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -39,7 +39,7 @@ NOTICE:  sql_saga: Created GIST index "uk_valid_range_gist_idx" on column public
 
 -- Adopt an existing primary key
 SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
-NOTICE:  sql_saga: Added constraints to table uk: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table public.uk: ALTER COLUMN id SET NOT NULL
  add_unique_key 
 ----------------
  uk_id_p
@@ -60,7 +60,7 @@ DETAIL:  Key (id, valid_range)=(300, [5,11)) conflicts with existing key (id, va
 ROLLBACK TO SAVEPOINT pristine;
 CREATE TABLE fk (id integer, uk_id integer, valid_range int4range, valid_from integer, valid_until integer, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS) DEFERRABLE);
 SELECT sql_saga.add_era('fk', 'valid_range', 'q');
-NOTICE:  sql_saga: Created trigger "fk_synchronize_temporal_columns_trigger" on table fk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "fk_synchronize_temporal_columns_trigger" on table public.fk to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "fk_valid_range_gist_idx" on column public.fk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -71,7 +71,7 @@ SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
     uk_update_trigger => 'uku',
     uk_delete_trigger => 'ukd');
-NOTICE:  sql_saga: No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON public.fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -91,7 +91,7 @@ NOTICE:  sql_saga: Dropping automatically created index "fk_uk_id_q_gist_idx" fo
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
-NOTICE:  sql_saga: No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON public.fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -169,7 +169,7 @@ DROP TABLE uk;
 -- Test primary key creation
 CREATE TABLE pk_test (id integer, valid_range int4range, valid_from integer, valid_until integer);
 SELECT sql_saga.add_era('pk_test', 'valid_range');
-NOTICE:  sql_saga: Created trigger "pk_test_synchronize_temporal_columns_trigger" on table pk_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "pk_test_synchronize_temporal_columns_trigger" on table public.pk_test to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "pk_test_valid_range_gist_idx" on column public.pk_test.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -177,7 +177,7 @@ NOTICE:  sql_saga: Created GIST index "pk_test_valid_range_gist_idx" on column p
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_test', '{id}', key_type => 'primary');
-NOTICE:  sql_saga: Added constraints to table pk_test: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.pk_test: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  pk_test_id_valid
@@ -229,9 +229,9 @@ CREATE TABLE public.simple_pk (
     valid_until date
 );
 SELECT sql_saga.add_era('public.simple_pk', 'valid_range');
-WARNING:  Table "simple_pk" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
+WARNING:  Table "public.simple_pk" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
-NOTICE:  sql_saga: Created trigger "simple_pk_synchronize_temporal_columns_trigger" on table simple_pk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "simple_pk_synchronize_temporal_columns_trigger" on table public.simple_pk to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "simple_pk_valid_range_gist_idx" on column public.simple_pk.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -242,7 +242,7 @@ SAVEPOINT expect_error;
 \echo 'Attempting to add a temporal primary key to a table with a simple primary key (should fail)'
 Attempting to add a temporal primary key to a table with a simple primary key (should fail)
 SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', key_type => 'primary');
-ERROR:  table "simple_pk" has a simple PRIMARY KEY that does not include the temporal range column ("valid_range"); this is incompatible with SCD Type 2 history
+ERROR:  table "public.simple_pk" has a simple PRIMARY KEY that does not include the temporal range column ("valid_range"); this is incompatible with SCD Type 2 history
 CONTEXT:  PL/pgSQL function __api_add_unique_key(regclass,name[],name,unique_key_type,boolean,name,name,name,text,name[]) line 160 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 DROP TABLE public.simple_pk;
@@ -255,11 +255,11 @@ CREATE TABLE public.generated_always (
     valid_until date
 );
 SELECT sql_saga.add_era('public.generated_always', 'valid_range');
-WARNING:  Table "generated_always" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
+WARNING:  Table "public.generated_always" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
-WARNING:  Table "generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"). This schema is incompatible with SCD Type 2 history.
+WARNING:  Table "public.generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"). This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, the identity column must be GENERATED BY DEFAULT AS IDENTITY to allow inserting historical records.
-NOTICE:  sql_saga: Created trigger "generated_always_synchronize_temporal_columns_trigger" on table generated_always to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "generated_always_synchronize_temporal_columns_trigger" on table public.generated_always to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "generated_always_valid_range_gist_idx" on column public.generated_always.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -270,7 +270,7 @@ SAVEPOINT expect_error_2;
 \echo 'Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)'
 Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)
 SELECT sql_saga.add_unique_key('public.generated_always', '{id}', key_type => 'primary');
-ERROR:  table "generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity
+ERROR:  table "public.generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity
 CONTEXT:  PL/pgSQL function __api_add_unique_key(regclass,name[],name,unique_key_type,boolean,name,name,name,text,name[]) line 141 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 DROP TABLE public.generated_always;

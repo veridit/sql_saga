@@ -2,7 +2,7 @@ CREATE FUNCTION sql_saga.__api_add_current_view(table_oid regclass, era_name nam
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable
@@ -60,6 +60,7 @@ BEGIN
             non_temporal_columns_quoted text;
             range_category char;
             now_function text;
+            now_sql text;
             trigger_args text;
             generated_columns name[];
         BEGIN
@@ -82,13 +83,29 @@ BEGIN
             END IF;
 
             -- Validate the function name to prevent SQL injection.
-            -- We allow CURRENT_DATE and now() as special keywords, otherwise it must be a valid function.
+            -- We allow CURRENT_DATE and now() as special keywords, otherwise it must be a valid function. Released
+            -- contract (test 135): an unqualified name resolves on sql_saga, pg_catalog, public, not on the caller's
+            -- path. That path no longer is the worker's (it must not contain a schema other roles can write, R8), so
+            -- it is set for the resolution only, and the view embeds the bound function schema-qualified. This is
+            -- name resolution only: the clock runs with the rights of whoever reads through the view.
+            now_sql := now_function;
             IF lower(now_function) NOT IN ('current_date', 'now()') THEN
+                DECLARE
+                    v_worker_path text := current_setting('search_path');
+                    v_clock regprocedure;
                 BEGIN
-                    PERFORM now_function::regprocedure;
-                EXCEPTION
-                    WHEN OTHERS THEN
-                        RAISE EXCEPTION 'current_func_name must be "CURRENT_DATE", "now()", or a valid function signature, but is "%"', now_function;
+                    PERFORM set_config('search_path', 'sql_saga, pg_catalog, public', true);
+                    BEGIN
+                        v_clock := now_function::regprocedure;
+                    EXCEPTION
+                        WHEN OTHERS THEN
+                            PERFORM set_config('search_path', v_worker_path, true);
+                            RAISE EXCEPTION 'current_func_name must be "CURRENT_DATE", "now()", or a valid function signature, but is "%"', now_function;
+                    END;
+                    PERFORM set_config('search_path', v_worker_path, true);
+                    now_sql := pg_catalog.format('%I.%I()',
+                        (SELECT n.nspname FROM pg_catalog.pg_proc AS p JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace WHERE p.oid = v_clock),
+                        (SELECT p.proname FROM pg_catalog.pg_proc AS p WHERE p.oid = v_clock));
                 END;
             END IF;
 
@@ -135,7 +152,7 @@ BEGIN
             -- The view includes all columns from the base table, but is filtered to only show the current records.
             -- This makes its schema consistent with the for_portion_of view, enabling parameter passing via SET.
             EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_barrier=true, security_invoker=on) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
-                r.schema_name, view_name, r.table_name, r.range_column_name, now_function, r.range_subtype);
+                r.schema_name, view_name, r.table_name, r.range_column_name, now_sql, r.range_subtype);
             EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
             -- security_invoker: the caller's rights on the base decide; the view itself is open.
             EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO PUBLIC', r.schema_name, view_name);

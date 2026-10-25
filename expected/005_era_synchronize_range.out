@@ -37,7 +37,7 @@ Test: Synchronization with an authoritative range column
 SAVEPOINT test_1;
 CREATE TABLE sync_range_default (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 SELECT sql_saga.add_era('sync_range_default', 'valid_range');
-NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_columns_trigger" on table sync_range_default to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_columns_trigger" on table public.sync_range_default to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_range_default_valid_range_gist_idx" on column public.sync_range_default.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -148,7 +148,7 @@ ROLLBACK TO SAVEPOINT test_2;
 SAVEPOINT test_3;
 CREATE TABLE sync_range_custom (id int, start_num int, until_num int, num_range int4range, to_num int);
 SELECT sql_saga.add_era('sync_range_custom', 'num_range', valid_from_column_name := 'start_num', valid_until_column_name := 'until_num', valid_to_column_name := 'to_num');
-NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_columns_trigger" on table sync_range_custom to synchronize columns: to_num, start_num, until_num
+NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_columns_trigger" on table public.sync_range_custom to synchronize columns: to_num, start_num, until_num
 NOTICE:  sql_saga: Created GIST index "sync_range_custom_num_range_gist_idx" on column public.sync_range_custom.num_range for temporal_merge performance
  add_era 
 ---------
@@ -187,7 +187,7 @@ SAVEPOINT test_4;
 CREATE TABLE sync_range_error (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 -- Auto-detects all columns for synchronization
 SELECT sql_saga.add_era('sync_range_error', 'valid_range');
-NOTICE:  sql_saga: Created trigger "sync_range_error_synchronize_temporal_columns_trigger" on table sync_range_error to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_range_error_synchronize_temporal_columns_trigger" on table public.sync_range_error to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_range_error_valid_range_gist_idx" on column public.sync_range_error.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -214,7 +214,7 @@ ROLLBACK TO SAVEPOINT test_4;
 SAVEPOINT test_5;
 CREATE TABLE sync_range_bounds (id int, valid_range daterange, valid_from date, valid_until date);
 SELECT sql_saga.add_era('sync_range_bounds', 'valid_range');
-NOTICE:  sql_saga: Created trigger "sync_range_bounds_synchronize_temporal_columns_trigger" on table sync_range_bounds to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_range_bounds_synchronize_temporal_columns_trigger" on table public.sync_range_bounds to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_range_bounds_valid_range_gist_idx" on column public.sync_range_bounds.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -317,7 +317,7 @@ SAVEPOINT test_7_table_created;
 \echo '--- 7a. sync (defaults on, but not used) ---'
 --- 7a. sync (defaults on, but not used) ---
 SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table public.sync_both to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_both_valid_range_gist_idx" on column public.sync_both.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -352,7 +352,7 @@ ROLLBACK TO SAVEPOINT test_7_table_created;
 \echo '--- 7b. sync_no_defaults ---'
 --- 7b. sync_no_defaults ---
 SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => false);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table public.sync_both to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_both_valid_range_gist_idx" on column public.sync_both.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -398,7 +398,7 @@ ROLLBACK TO SAVEPOINT test_7_table_created;
 \echo '--- 7c. sync_with_defaults ---'
 --- 7c. sync_with_defaults ---
 SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table public.sync_both to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_both_valid_range_gist_idx" on column public.sync_both.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -488,7 +488,7 @@ ROLLBACK TO SAVEPOINT test_7_table_created;
 \echo '--- 7d. Test inconsistent multiple inputs ---'
 --- 7d. Test inconsistent multiple inputs ---
 SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table public.sync_both to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_both_valid_range_gist_idx" on column public.sync_both.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -513,7 +513,7 @@ ROLLBACK TO SAVEPOINT test_7_table_created;
 \echo '--- 7e. Test inconsistent update ---'
 --- 7e. Test inconsistent update ---
 SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table public.sync_both to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_both_valid_range_gist_idx" on column public.sync_both.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -543,8 +543,8 @@ SAVEPOINT test_8a;
 --- 8a. timestamptz ---
 CREATE TABLE sync_continuous_tstz (id int, valid_range tstzrange, valid_from timestamptz, valid_to timestamptz, valid_until timestamptz);
 SELECT sql_saga.add_era('sync_continuous_tstz', 'valid_range');
-WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_tstz.
-NOTICE:  sql_saga: Created trigger "sync_continuous_tstz_synchronize_temporal_columns_trigger" on table sync_continuous_tstz to synchronize columns: valid_from, valid_until
+WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table public.sync_continuous_tstz.
+NOTICE:  sql_saga: Created trigger "sync_continuous_tstz_synchronize_temporal_columns_trigger" on table public.sync_continuous_tstz to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_continuous_tstz_valid_range_gist_idx" on column public.sync_continuous_tstz.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -582,8 +582,8 @@ SAVEPOINT test_8b;
 --- 8b. timestamp ---
 CREATE TABLE sync_continuous_ts (id int, valid_range tsrange, valid_from timestamp, valid_to timestamp, valid_until timestamp);
 SELECT sql_saga.add_era('sync_continuous_ts', 'valid_range');
-WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_ts.
-NOTICE:  sql_saga: Created trigger "sync_continuous_ts_synchronize_temporal_columns_trigger" on table sync_continuous_ts to synchronize columns: valid_from, valid_until
+WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table public.sync_continuous_ts.
+NOTICE:  sql_saga: Created trigger "sync_continuous_ts_synchronize_temporal_columns_trigger" on table public.sync_continuous_ts to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_continuous_ts_valid_range_gist_idx" on column public.sync_continuous_ts.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -621,8 +621,8 @@ SAVEPOINT test_8c;
 --- 8c. numeric ---
 CREATE TABLE sync_continuous_numeric (id int, valid_range numrange, valid_from numeric, valid_to numeric, valid_until numeric);
 SELECT sql_saga.add_era('sync_continuous_numeric', 'valid_range');
-WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_numeric.
-NOTICE:  sql_saga: Created trigger "sync_continuous_numeric_synchronize_temporal_columns_trigger" on table sync_continuous_numeric to synchronize columns: valid_from, valid_until
+WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table public.sync_continuous_numeric.
+NOTICE:  sql_saga: Created trigger "sync_continuous_numeric_synchronize_temporal_columns_trigger" on table public.sync_continuous_numeric to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "sync_continuous_numeric_valid_range_gist_idx" on column public.sync_continuous_numeric.valid_range for temporal_merge performance
  add_era 
 ---------

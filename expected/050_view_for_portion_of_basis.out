@@ -34,7 +34,7 @@ CREATE TABLE products (
 );
 -- Register era and unique key
 SELECT sql_saga.add_era('products', 'valid_range');
-NOTICE:  sql_saga: Created trigger "products_synchronize_temporal_columns_trigger" on table products to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "products_synchronize_temporal_columns_trigger" on table public.products to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "products_valid_range_gist_idx" on column public.products.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -42,7 +42,7 @@ NOTICE:  sql_saga: Created GIST index "products_valid_range_gist_idx" on column 
 (1 row)
 
 SELECT sql_saga.add_unique_key('products', ARRAY['id']);
-NOTICE:  sql_saga: Added constraints to table products: ADD CONSTRAINT products_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.products: ADD CONSTRAINT products_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  products_id_valid

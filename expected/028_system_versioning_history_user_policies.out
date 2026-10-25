@@ -52,8 +52,8 @@ RESET client_min_messages;
 \echo '--- A policy of ones own on the history table is refused, with what to do instead'
 --- A policy of ones own on the history table is refused, with what to do instead
 CREATE POLICY mine ON doc_history FOR SELECT USING (true); -- fail
-ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
-HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+ERROR:  sql_saga: policies on history table "public.doc_history" are managed by sql_saga
+HINT:  Create the policy on "public.doc"; sql_saga copies its SELECT and ALL policies to the history.
 SELECT count(*) AS mine_policies FROM pg_policy WHERE polname = 'mine';
  mine_policies 
 ---------------
@@ -63,14 +63,14 @@ SELECT count(*) AS mine_policies FROM pg_policy WHERE polname = 'mine';
 \echo '--- Any command: a FOR ALL policy of ones own is refused too'
 --- Any command: a FOR ALL policy of ones own is refused too
 CREATE POLICY mine_all ON doc_history FOR ALL USING (true); -- fail
-ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
-HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+ERROR:  sql_saga: policies on history table "public.doc_history" are managed by sql_saga
+HINT:  Create the policy on "public.doc"; sql_saga copies its SELECT and ALL policies to the history.
 \echo '--- Renaming a managed history policy to a name of ones own is refused'
 --- Renaming a managed history policy to a name of ones own is refused
 -- (the managed name ends in the installation token, so it is looked up rather than spelled out)
 \set ECHO none
-ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
-HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+ERROR:  sql_saga: policies on history table "public.doc_history" are managed by sql_saga
+HINT:  Create the policy on "public.doc"; sql_saga copies its SELECT and ALL policies to the history.
 SELECT count(*) AS renamed_policies FROM pg_policy WHERE polname = 'mine_renamed';
  renamed_policies 
 ------------------
@@ -135,8 +135,8 @@ ERROR:  sql_saga: history of doc is not synchronized (0 policy copies missing, 0
 HINT:  Drop the policies not managed by sql_saga on doc_history (define them on doc instead), then run: SELECT sql_saga.sync_history_policies('doc');
 RESET ROLE;
 SELECT sql_saga.sync_history_policies('doc'); -- fail: sql_saga never drops a policy of yours
-ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
-HINT:  Drop policy "sneaky" on "doc_history" and create it on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+ERROR:  sql_saga: policies on history table "public.doc_history" are managed by sql_saga
+HINT:  Drop policy "sneaky" on "public.doc_history" and create it on "public.doc"; sql_saga copies its SELECT and ALL policies to the history.
 DROP POLICY sneaky ON doc_history;
 SELECT sql_saga.sync_history_policies('doc');
  sync_history_policies 

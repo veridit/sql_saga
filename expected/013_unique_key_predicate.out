@@ -34,7 +34,7 @@ CREATE TABLE employees (
     valid_until date
 );
 SELECT sql_saga.add_era('employees', 'valid_range');
-NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table employees to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table public.employees to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "employees_valid_range_gist_idx" on column public.employees.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -49,7 +49,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'department_id IS NOT NULL',
     unique_key_name => 'employees_name_if_department_valid'
 );
-NOTICE:  sql_saga: Added constraints to table employees: ADD CONSTRAINT employees_name_if_department_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table public.employees: ADD CONSTRAINT employees_name_if_department_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
            add_unique_key           
 ------------------------------------
  employees_name_if_department_valid
@@ -143,7 +143,7 @@ CREATE TABLE contractors (
     valid_until date
 );
 SELECT sql_saga.add_era('contractors', 'valid_range');
-NOTICE:  sql_saga: Created trigger "contractors_synchronize_temporal_columns_trigger" on table contractors to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "contractors_synchronize_temporal_columns_trigger" on table public.contractors to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "contractors_valid_range_gist_idx" on column public.contractors.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -178,7 +178,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'agency_id IS NOT NULL',
     unique_key_name => 'contractors_name_if_agency_valid'
 );
-NOTICE:  sql_saga: Added constraints to table contractors: ADD CONSTRAINT contractors_name_if_agency_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table public.contractors: ADD CONSTRAINT contractors_name_if_agency_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
           add_unique_key          
 ----------------------------------
  contractors_name_if_agency_valid

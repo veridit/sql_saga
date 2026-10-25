@@ -87,7 +87,7 @@ CREATE FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(table_o
 RETURNS void
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_refresh_system_time_columns_snapshot$
     UPDATE sql_saga.system_time_era AS ste
     SET table_columns_snapshot = live.column_names
@@ -282,7 +282,7 @@ CREATE FUNCTION sql_saga.__internal_reconcile_system_versioning_family(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_reconcile_system_versioning_family$
 DECLARE
     sv sql_saga.system_versioning;
@@ -399,7 +399,7 @@ CREATE FUNCTION sql_saga.__api_add_system_versioning(
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable
@@ -620,7 +620,7 @@ CREATE FUNCTION sql_saga.__api_rebuild_system_versioning_views(
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, public
+SET search_path = pg_catalog, pg_temp
 AS $rebuild_system_versioning_views$
 DECLARE
     sv sql_saga.system_versioning;

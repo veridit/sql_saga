@@ -37,11 +37,11 @@ DROP TABLE unrelated;
 CREATE UNLOGGED TABLE log (id bigint, valid_range daterange NOT NULL, valid_from date, valid_until date);
 SAVEPOINT s1;
 SELECT sql_saga.add_era('log', 'valid_range', 'p', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until'); -- fails
-ERROR:  table "log" must be persistent
+ERROR:  table "public.log" must be persistent
 ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_range', 'p', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until'); -- passes
-NOTICE:  sql_saga: Created trigger "log_synchronize_temporal_columns_trigger" on table log to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "log_synchronize_temporal_columns_trigger" on table public.log to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "log_valid_range_gist_idx" on column public.log.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -50,7 +50,7 @@ NOTICE:  sql_saga: Created GIST index "log_valid_range_gist_idx" on column publi
 
 SAVEPOINT s2;
 ALTER TABLE log SET UNLOGGED; -- fails
-ERROR:  table "log" must remain persistent because it has an era
+ERROR:  table "public.log" must remain persistent because it has an era
 ROLLBACK TO SAVEPOINT s2;
 DROP TABLE log;
 ROLLBACK;
@@ -135,9 +135,9 @@ RESET ROLE;
 
 --- Test: health check keeps the fixed state of the history objects ---
 ALTER TABLE hc_sysver_history DISABLE ROW LEVEL SECURITY; -- fail
-ERROR:  history table "hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "hc_sysver"
+ERROR:  history table "public.hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "public.hc_sysver"
 ALTER TABLE hc_sysver_history FORCE ROW LEVEL SECURITY; -- fail: hc_sysver is not forced
-ERROR:  history table "hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "hc_sysver"
+ERROR:  history table "public.hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "public.hc_sysver"
 -- The fixed policies' names end in the per-installation token, shown as <token>.
 CREATE FUNCTION pg_temp.try_managed_policy_ddl(stmt_template text, policy_prefix text)
 RETURNS text LANGUAGE plpgsql AS $$
@@ -153,27 +153,27 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 SELECT pg_temp.try_managed_policy_ddl('DROP POLICY %I ON hc_sysver_history', 'sql_saga_history_base_select_') AS drop_base_select; -- fail
-                                                                 drop_base_select                                                                  
----------------------------------------------------------------------------------------------------------------------------------------------------
- cannot drop or alter policy "sql_saga_history_base_select_<token>" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+                                                                        drop_base_select                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ cannot drop or alter policy "sql_saga_history_base_select_<token>" on "public.hc_sysver_history" because it is managed by sql_saga for table "public.hc_sysver"
 (1 row)
 
 SELECT pg_temp.try_managed_policy_ddl('ALTER POLICY %I ON hc_sysver_history USING (true)', 'sql_saga_history_reader_') AS alter_reader; -- fail
-                                                                 alter_reader                                                                 
-----------------------------------------------------------------------------------------------------------------------------------------------
- cannot drop or alter policy "sql_saga_history_reader_<token>" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+                                                                        alter_reader                                                                        
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ cannot drop or alter policy "sql_saga_history_reader_<token>" on "public.hc_sysver_history" because it is managed by sql_saga for table "public.hc_sysver"
 (1 row)
 
 SELECT pg_temp.try_managed_policy_ddl('DROP POLICY %I ON hc_sysver_history', 'sql_saga_history_reader_') AS drop_reader; -- fail
-                                                                 drop_reader                                                                  
-----------------------------------------------------------------------------------------------------------------------------------------------
- cannot drop or alter policy "sql_saga_history_reader_<token>" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+                                                                        drop_reader                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ cannot drop or alter policy "sql_saga_history_reader_<token>" on "public.hc_sysver_history" because it is managed by sql_saga for table "public.hc_sysver"
 (1 row)
 
 ALTER VIEW hc_sysver_with_history SET (security_invoker = off); -- fail
-ERROR:  view "hc_sysver_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "hc_sysver"
+ERROR:  view "public.hc_sysver_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "public.hc_sysver"
 CREATE OR REPLACE VIEW hc_sysver_history_gated AS SELECT * FROM hc_sysver_history; -- fail: the gate would be lost
-ERROR:  view "hc_sysver_history_gated" must keep its access gate because it is used in SYSTEM VERSIONING for table "hc_sysver"
+ERROR:  view "public.hc_sysver_history_gated" must keep its access gate because it is used in SYSTEM VERSIONING for table "public.hc_sysver"
 \echo '--- A hashed policy copy is managed too'
 --- A hashed policy copy is managed too
 ALTER TABLE hc_sysver ENABLE ROW LEVEL SECURITY;
@@ -194,7 +194,7 @@ EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'dropping the copy failed: %', replace(SQLERRM, copy_name, '<copy>');
 END;
 $$;
-NOTICE:  dropping the copy failed: cannot drop or alter policy "<copy>" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+NOTICE:  dropping the copy failed: cannot drop or alter policy "<copy>" on "public.hc_sysver_history" because it is managed by sql_saga for table "public.hc_sysver"
 SELECT count(*) AS copies FROM pg_policy AS p
 WHERE p.polrelid = 'hc_sysver_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{16}$';
  copies 

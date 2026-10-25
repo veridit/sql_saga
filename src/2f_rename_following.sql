@@ -2,7 +2,7 @@ CREATE FUNCTION sql_saga.__internal_refuse_managed_schema_rename(schema_name tex
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_refuse_managed_schema_rename$
 #variable_conflict use_variable
 DECLARE
@@ -150,7 +150,7 @@ CREATE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change(rela
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = sql_saga, pg_catalog, public
+SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_refuse_managed_relation_identity_change$
 #variable_conflict use_variable
 DECLARE
@@ -1316,7 +1316,7 @@ CREATE FUNCTION sql_saga.rename_following()
  LANGUAGE plpgsql
  SECURITY DEFINER
  -- Set a safe search path for this SECURITY DEFINER function
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable

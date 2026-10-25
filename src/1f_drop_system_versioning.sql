@@ -2,7 +2,7 @@ CREATE FUNCTION sql_saga.__api_drop_system_versioning(table_oid regclass, drop_b
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS $function$
 #variable_conflict use_variable
 DECLARE

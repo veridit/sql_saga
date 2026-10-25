@@ -88,7 +88,7 @@ NOTICE:  sql_saga: Created GIST index "native_pkg_target_valid_range_gist_idx" o
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'native_pkg_target'::regclass, column_names => ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: Added constraints to table native_pkg_target: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.native_pkg_target: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  native_pkg_target_id_valid

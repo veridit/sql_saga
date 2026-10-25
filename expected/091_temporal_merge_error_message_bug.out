@@ -40,7 +40,7 @@ SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
-NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table public.target_units to synchronize columns: valid_to, valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on column public.target_units.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -49,7 +49,7 @@ NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on col
 
 ALTER TABLE target_units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], 'valid', key_type => 'primary');
-NOTICE:  sql_saga: Added constraints to table target_units: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table public.target_units: ALTER COLUMN id SET NOT NULL
     add_unique_key     
 -----------------------
  target_units_id_valid
@@ -107,7 +107,7 @@ CREATE TABLE target_units (
 SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table public.target_units to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on column public.target_units.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -117,14 +117,14 @@ NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on col
 -- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_range WITHOUT OVERLAPS).
 ALTER TABLE target_units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], 'valid', key_type => 'primary');
-NOTICE:  sql_saga: Added constraints to table target_units: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table public.target_units: ALTER COLUMN id SET NOT NULL
     add_unique_key     
 -----------------------
  target_units_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
         add_unique_key         
 -------------------------------
  target_units_unit_ident_valid

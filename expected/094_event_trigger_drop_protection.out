@@ -42,7 +42,7 @@ CREATE TABLE dp (
 );
 /* era */
 SELECT sql_saga.add_era('dp', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
-NOTICE:  sql_saga: Created trigger "dp_synchronize_temporal_columns_trigger" on table dp to synchronize columns: s, e
+NOTICE:  sql_saga: Created trigger "dp_synchronize_temporal_columns_trigger" on table public.dp to synchronize columns: s, e
 NOTICE:  sql_saga: Created GIST index "dp_v_gist_idx" on column public.dp.v for temporal_merge performance
  add_era 
 ---------
@@ -81,11 +81,11 @@ ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_for_
 ROLLBACK TO SAVEPOINT s4;
 SAVEPOINT s5;
 DROP TRIGGER for_portion_of_p ON dp__for_portion_of_p;
-ERROR:  cannot drop trigger "for_portion_of_p" on view "dp__for_portion_of_p" because it is part of an updatable view for era "p" on table "dp"
+ERROR:  cannot drop trigger "for_portion_of_p" on view "public.dp__for_portion_of_p" because it is part of an updatable view for era "p" on table "public.dp"
 ROLLBACK TO SAVEPOINT s5;
 SAVEPOINT s6;
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
-ERROR:  table "dp" must have a primary key or a single-column temporal unique key to support its for_portion_of view "dp__for_portion_of_p" for era "p"; drop that view first with sql_saga.drop_for_portion_of_view()
+ERROR:  table "public.dp" must have a primary key or a single-column temporal unique key to support its for_portion_of view "public.dp__for_portion_of_p" for era "p"; drop that view first with sql_saga.drop_for_portion_of_view()
 ROLLBACK TO SAVEPOINT s6;
 SELECT sql_saga.drop_for_portion_of_view('dp', 'p');
  drop_for_portion_of_view 
@@ -102,7 +102,7 @@ CREATE TABLE dp_current (
 );
 ALTER TABLE dp_current ADD CONSTRAINT dp_current_pkey PRIMARY KEY (id, v WITHOUT OVERLAPS);
 SELECT sql_saga.add_era('dp_current', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
-NOTICE:  sql_saga: Created trigger "dp_current_synchronize_temporal_columns_trigger" on table dp_current to synchronize columns: s, e
+NOTICE:  sql_saga: Created trigger "dp_current_synchronize_temporal_columns_trigger" on table public.dp_current to synchronize columns: s, e
 NOTICE:  sql_saga: Created GIST index "dp_current_v_gist_idx" on column public.dp_current.v for temporal_merge performance
  add_era 
 ---------
@@ -121,11 +121,11 @@ ERROR:  cannot drop view "public.dp_current__current_p", call "sql_saga.drop_cur
 ROLLBACK TO SAVEPOINT s_current_view;
 SAVEPOINT s_current_trigger;
 DROP TRIGGER current_p ON dp_current__current_p; -- fails
-ERROR:  cannot drop trigger "current_p" on view "dp_current__current_p" because it is part of an updatable view for era "p" on table "dp_current"
+ERROR:  cannot drop trigger "current_p" on view "public.dp_current__current_p" because it is part of an updatable view for era "p" on table "public.dp_current"
 ROLLBACK TO SAVEPOINT s_current_trigger;
 SAVEPOINT s_current_pkey;
 ALTER TABLE dp_current DROP CONSTRAINT dp_current_pkey; -- fails
-ERROR:  table "dp_current" must have a primary key or a single-column temporal unique key to support its current view "dp_current__current_p" for era "p"; drop that view first with sql_saga.drop_current_view()
+ERROR:  table "public.dp_current" must have a primary key or a single-column temporal unique key to support its current view "public.dp_current__current_p" for era "p"; drop that view first with sql_saga.drop_current_view()
 ROLLBACK TO SAVEPOINT s_current_pkey;
 SELECT sql_saga.drop_current_view('dp_current', 'p');
  drop_current_view 
@@ -158,7 +158,7 @@ SELECT sql_saga.add_unique_key(
 
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
-ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
+ERROR:  cannot drop constraint "u" on table "public.dp" because it is used in era unique key "k"
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails (bounds check constraint)
@@ -173,7 +173,7 @@ CREATE TABLE dp_pk_consistency (
     e date
 );
 SELECT sql_saga.add_era('dp_pk_consistency', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
-NOTICE:  sql_saga: Created trigger "dp_pk_consistency_synchronize_temporal_columns_trigger" on table dp_pk_consistency to synchronize columns: s, e
+NOTICE:  sql_saga: Created trigger "dp_pk_consistency_synchronize_temporal_columns_trigger" on table public.dp_pk_consistency to synchronize columns: s, e
 NOTICE:  sql_saga: Created GIST index "dp_pk_consistency_v_gist_idx" on column public.dp_pk_consistency.v for temporal_merge performance
  add_era 
 ---------
@@ -188,7 +188,7 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => 'dp_pk_consistency_nk_valid'
 );
-NOTICE:  sql_saga: Added constraints to table dp_pk_consistency: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS); ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.dp_pk_consistency: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS); ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  dp_pk_consistency_nk_valid
@@ -196,7 +196,7 @@ NOTICE:  sql_saga: Added constraints to table dp_pk_consistency: ADD CONSTRAINT 
 
 SAVEPOINT expect_error;
 ALTER TABLE dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl; -- fails
-ERROR:  cannot drop constraint "dp_pk_consistency_nk_valid_pk_consistency_excl" on table "dp_pk_consistency" because it is used in era unique key "dp_pk_consistency_nk_valid"
+ERROR:  cannot drop constraint "dp_pk_consistency_nk_valid_pk_consistency_excl" on table "public.dp_pk_consistency" because it is used in era unique key "dp_pk_consistency_nk_valid"
 ROLLBACK TO SAVEPOINT expect_error;
 SELECT sql_saga.drop_unique_key('dp_pk_consistency', ARRAY['nk'], 'p');
 NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl
@@ -216,7 +216,7 @@ SAVEPOINT s11;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
-NOTICE:  sql_saga: Created trigger "dp_ref_synchronize_temporal_columns_trigger" on table dp_ref to synchronize columns: s, e
+NOTICE:  sql_saga: Created trigger "dp_ref_synchronize_temporal_columns_trigger" on table public.dp_ref to synchronize columns: s, e
 NOTICE:  sql_saga: Created GIST index "dp_ref_v_gist_idx" on column public.dp_ref.v for temporal_merge performance
  add_era 
 ---------
@@ -224,7 +224,7 @@ NOTICE:  sql_saga: Created GIST index "dp_ref_v_gist_idx" on column public.dp_re
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
-NOTICE:  sql_saga: No compatible index found for foreign key on table dp_ref. Creating new index: CREATE INDEX dp_ref_id_p_gist_idx ON dp_ref USING GIST (id, v)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.dp_ref. Creating new index: CREATE INDEX dp_ref_id_p_gist_idx ON public.dp_ref USING GIST (id, v)
  add_temporal_foreign_key 
 --------------------------
  f
@@ -298,22 +298,22 @@ ROLLBACK TO SAVEPOINT sv_history_view;
 -- Test that we can't drop the generated_always trigger
 SAVEPOINT sv_gen_trigger;
 DROP TRIGGER dp_sysver_system_time_generated_always ON dp_sysver; -- should fail
-ERROR:  cannot drop trigger "dp_sysver_system_time_generated_always" on table "dp_sysver" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "dp_sysver_system_time_generated_always" on table "public.dp_sysver" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT sv_gen_trigger;
 -- Test that we can't drop the write_history trigger
 SAVEPOINT sv_write_trigger;
 DROP TRIGGER dp_sysver_system_time_write_history ON dp_sysver; -- should fail
-ERROR:  cannot drop trigger "dp_sysver_system_time_write_history" on table "dp_sysver" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "dp_sysver_system_time_write_history" on table "public.dp_sysver" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT sv_write_trigger;
 -- Test that we can't drop the truncate trigger
 SAVEPOINT sv_truncate_trigger;
 DROP TRIGGER dp_sysver_truncate ON dp_sysver; -- should fail
-ERROR:  cannot drop trigger "dp_sysver_truncate" on table "dp_sysver" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop trigger "dp_sysver_truncate" on table "public.dp_sysver" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT sv_truncate_trigger;
 -- Test that we can't drop the infinity check constraint
 SAVEPOINT sv_infinity_check;
 ALTER TABLE dp_sysver DROP CONSTRAINT dp_sysver_system_valid_range_infinity_check; -- should fail
-ERROR:  cannot drop constraint "dp_sysver_system_valid_range_infinity_check" on table "dp_sysver" because it is used in SYSTEM_TIME period
+ERROR:  cannot drop constraint "dp_sysver_system_valid_range_infinity_check" on table "public.dp_sysver" because it is used in SYSTEM_TIME period
 ROLLBACK TO SAVEPOINT sv_infinity_check;
 -- Test proper cleanup works
 SELECT sql_saga.drop_system_versioning('dp_sysver');

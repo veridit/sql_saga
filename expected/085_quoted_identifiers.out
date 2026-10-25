@@ -73,7 +73,7 @@ CREATE TABLE """quoted"" table" (
 SELECT sql_saga.add_era('"""quoted"" table"', '"valid range"',
     valid_from_column_name => '"valid from"',
     valid_until_column_name => '"valid until"');
-NOTICE:  sql_saga: Created trigger ""quoted" table_synchronize_temporal_columns_trigger" on table """quoted"" table" to synchronize columns: "valid from", "valid until"
+NOTICE:  sql_saga: Created trigger ""quoted" table_synchronize_temporal_columns_trigger" on table public."""quoted"" table" to synchronize columns: "valid from", "valid until"
 NOTICE:  sql_saga: Created GIST index ""quoted" table_"valid range"_gist_idx" on column public."""quoted"" table"."""valid range""" for temporal_merge performance
  add_era 
 ---------
@@ -95,7 +95,7 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  sql_saga: Added constraints to table """quoted"" table": ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS); ADD CONSTRAINT """my "" uk""_pk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, """id""" WITH <>)
+NOTICE:  sql_saga: Added constraints to table public."""quoted"" table": ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS); ADD CONSTRAINT """my "" uk""_pk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, """id""" WITH <>)
  add_unique_key 
 ----------------
  "my " uk"
@@ -118,7 +118,7 @@ CREATE TABLE """fk "" test""" (
 SELECT sql_saga.add_era('"""fk "" test"""', '"range"',
     valid_from_column_name => '"from"',
     valid_until_column_name => '"until"');
-NOTICE:  sql_saga: Created trigger ""fk " test"_synchronize_temporal_columns_trigger" on table """fk "" test""" to synchronize columns: "from", "until"
+NOTICE:  sql_saga: Created trigger ""fk " test"_synchronize_temporal_columns_trigger" on table public."""fk "" test""" to synchronize columns: "from", "until"
 NOTICE:  sql_saga: Created GIST index ""fk " test"_"range"_gist_idx" on column public."""fk "" test"""."""range""" for temporal_merge performance
  add_era 
 ---------
@@ -133,7 +133,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table """fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON """fk "" test""" USING GIST ("""ref "" id""", """product""", """range""")
+NOTICE:  sql_saga: No compatible index found for foreign key on table public."""fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON public."""fk "" test""" USING GIST ("""ref "" id""", """product""", """range""")
         add_temporal_foreign_key        
 ----------------------------------------
  "fk " test"_"ref " id"_"product"_valid

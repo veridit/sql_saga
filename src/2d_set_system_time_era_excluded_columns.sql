@@ -4,7 +4,7 @@ CREATE FUNCTION sql_saga.__api_set_system_time_era_excluded_columns(
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
- SET search_path = sql_saga, pg_catalog, public
+ SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
 #variable_conflict use_variable

@@ -99,7 +99,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     era_name => 'valid',
     ephemeral_columns => ARRAY['no_such_column']::name[]
 );
-ERROR:  column "no_such_column" does not exist in table ephemeral_test
+ERROR:  column "no_such_column" does not exist in table public.ephemeral_test
 CONTEXT:  PL/pgSQL function __api_set_era_ephemeral_columns(regclass,name,name[]) line 28 at RAISE
 ROLLBACK TO test3;
 -- =============================================================================
@@ -125,7 +125,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     era_name => 'nonexistent',
     ephemeral_columns => ARRAY['edit_at']::name[]
 );
-ERROR:  Era "nonexistent" not found on table ephemeral_test
+ERROR:  Era "nonexistent" not found on table public.ephemeral_test
 CONTEXT:  PL/pgSQL function __api_set_era_ephemeral_columns(regclass,name,name[]) line 48 at RAISE
 ROLLBACK TO test5;
 ROLLBACK;

@@ -28,7 +28,7 @@ BEGIN;
 -- Test that the overloaded drop_* functions work as expected.
 CREATE TABLE parent(id int, valid int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('parent'::regclass, 'valid', 'p');
-NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table parent to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table public.parent to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "parent_valid_gist_idx" on column public.parent.valid for temporal_merge performance
  add_era 
 ---------
@@ -36,7 +36,7 @@ NOTICE:  sql_saga: Created GIST index "parent_valid_gist_idx" on column public.p
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -50,7 +50,7 @@ TABLE sql_saga.unique_keys;
 
 CREATE TABLE child(id int, parent_id int, valid int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('child'::regclass, 'valid', 'q');
-NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table child to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table public.child to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "child_valid_gist_idx" on column public.child.valid for temporal_merge performance
  add_era 
 ---------
@@ -58,7 +58,7 @@ NOTICE:  sql_saga: Created GIST index "child_valid_gist_idx" on column public.ch
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON public.child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -85,7 +85,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Test original drop_foreign_key (with positional and named arguments)
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON public.child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -112,7 +112,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON public.child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -140,7 +140,7 @@ TABLE sql_saga.foreign_keys;
 -- Test overloaded drop_foreign_key for regular-to-temporal
 CREATE TABLE regular_child(id int, parent_id int);
 SELECT sql_saga.add_regular_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
-NOTICE:  sql_saga: No compatible index found for foreign key on table regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON regular_child USING BTREE (parent_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON public.regular_child USING BTREE (parent_id)
    add_regular_foreign_key    
 ------------------------------
  regular_child_parent_id_fkey
@@ -185,7 +185,7 @@ TABLE sql_saga.unique_keys;
 
 -- Test original drop_unique_key (with positional and named arguments)
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -211,7 +211,7 @@ TABLE sql_saga.unique_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -278,7 +278,7 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass, cleanup => true);
 -- 3. Verify add_era fails without create_columns => true
 SAVEPOINT before_fail;
 SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
-ERROR:  range column "v" not found in table "era_symmetry_test"
+ERROR:  range column "v" not found in table "public.era_symmetry_test"
 CONTEXT:  PL/pgSQL function __api_add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[]) line 168 at RAISE
 ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era

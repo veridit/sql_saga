@@ -75,12 +75,12 @@ GRANT EXECUTE ON FUNCTION sql_saga.uk_truncate_check_c() TO PUBLIC;
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger
 AS 'sql_saga', 'generated_always_as_row_start_end'
-LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, public;
+LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, pg_temp;
 
 CREATE OR REPLACE FUNCTION sql_saga.write_history()
 RETURNS trigger
 AS 'sql_saga', 'write_history'
-LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, public;
+LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, pg_temp;
 
 CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_finalfn(internal, anyrange, anyrange)
 RETURNS boolean
@@ -136,3 +136,11 @@ RETURNS void
 AS 'sql_saga', 'truncate_as_owner'
 LANGUAGE c VOLATILE STRICT;
 REVOKE ALL ON FUNCTION sql_saga.__internal_truncate_as_owner(regclass) FROM PUBLIC;
+
+-- The search_path of the role that called the running management function (1.4, R8). User-supplied SQL text is
+-- parsed under it, as native DDL parses it under the caller's path. NULL outside a management function. Private.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_caller_search_path()
+RETURNS text
+AS 'sql_saga', 'api_caller_search_path_sql'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_caller_search_path() FROM PUBLIC;

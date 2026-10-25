@@ -164,7 +164,7 @@ FROM sql_saga.system_versioning WHERE table_name = 'ms';
 (1 row)
 
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -177,7 +177,7 @@ SELECT pg_temp.fingerprint('ms') = :'fp_added' AS same_as_add_system_versioning;
 (1 row)
 
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -228,7 +228,7 @@ SELECT * FROM pg_temp.query_functions('ms');
 SELECT sql_saga.rebuild_system_versioning_views(NULL); -- fail
 ERROR:  no table name specified
 SELECT sql_saga.rebuild_system_versioning_views('ms_plain'); -- fail
-ERROR:  table ms_plain does not have SYSTEM VERSIONING
+ERROR:  table public.ms_plain does not have SYSTEM VERSIONING
 SET ROLE ms_other;
 SELECT sql_saga.rebuild_system_versioning_views('ms'); -- fail
 ERROR:  must be owner of table ms
@@ -240,10 +240,10 @@ ERROR:  sql_saga: without_columns must not contain NULL
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['payload', 'payload']); -- fail
 ERROR:  sql_saga: column payload is listed more than once in without_columns
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['no_such_column']); -- fail
-ERROR:  sql_saga: column no_such_column does not exist in either ms or ms_history
+ERROR:  sql_saga: column no_such_column does not exist in either public.ms or public.ms_history
 -- Every as-of function filters on the system time column, so it cannot be left out.
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['system_valid_range']); -- fail
-ERROR:  sql_saga: cannot exclude system time column system_valid_range from SYSTEM VERSIONING views for table ms
+ERROR:  sql_saga: cannot exclude system time column system_valid_range from SYSTEM VERSIONING views for table public.ms
 SELECT pg_temp.fingerprint('ms') = :'fp_added' AS unchanged_by_refused_calls;
  unchanged_by_refused_calls 
 ----------------------------
@@ -256,16 +256,16 @@ SELECT pg_temp.fingerprint('ms') = :'fp_added' AS unchanged_by_refused_calls;
 -- PostgreSQL's preliminary "drop cascades to N other objects" NOTICE is not part of the design.
 SET client_min_messages = warning;
 DROP VIEW ms_with_history CASCADE; -- fail
-ERROR:  cannot drop view "public.ms_with_history" because it is used in SYSTEM VERSIONING for table "ms"
+ERROR:  cannot drop view "public.ms_with_history" because it is used in SYSTEM VERSIONING for table "public.ms"
 DROP VIEW ms_history_gated CASCADE; -- fail
-ERROR:  cannot drop view "public.ms_history_gated" because it is used in SYSTEM VERSIONING for table "ms"
+ERROR:  cannot drop view "public.ms_history_gated" because it is used in SYSTEM VERSIONING for table "public.ms"
 DROP FUNCTION ms__as_of(timestamp with time zone); -- fail
-ERROR:  cannot drop function "public.ms__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "ms"
+ERROR:  cannot drop function "public.ms__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "public.ms"
 RESET client_min_messages;
 ALTER VIEW ms_with_history SET (security_invoker = off); -- fail
-ERROR:  view "ms_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "ms"
+ERROR:  view "public.ms_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "public.ms"
 CREATE OR REPLACE VIEW ms_history_gated AS SELECT * FROM ms_history; -- fail: the gate would be lost
-ERROR:  view "ms_history_gated" must keep its access gate because it is used in SYSTEM VERSIONING for table "ms"
+ERROR:  view "public.ms_history_gated" must keep its access gate because it is used in SYSTEM VERSIONING for table "public.ms"
 -- A stray grant is not part of the fixed shape: a rebuild does not carry it over, on any of the objects.
 GRANT INSERT ON ms_with_history TO ms_other;
 GRANT SELECT ON ms_history_gated TO ms_other;
@@ -285,7 +285,7 @@ SELECT object_name, other_grantees FROM pg_temp.access_shape('ms');
 (6 rows)
 
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -321,7 +321,7 @@ SELECT * FROM pg_temp.family_columns('ms');
 (2 rows)
 
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -357,7 +357,7 @@ SELECT id, payload, extra FROM ms_history WHERE id = 2 ORDER BY system_valid_ran
 ALTER TABLE ms_history ADD COLUMN legacy_note text;
 UPDATE ms_history SET legacy_note = 'from the old system' WHERE id = 1;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -428,7 +428,7 @@ ORDER BY b.attnum;
 (5 rows)
 
 SELECT sql_saga.rebuild_system_versioning_views('pa');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table pa
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.pa
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -454,7 +454,7 @@ SELECT id, a, p, q FROM pa_history ORDER BY id;
 GRANT SELECT ON pa TO ms_reader;
 ALTER TABLE pa ENABLE ROW LEVEL SECURITY;
 CREATE POLICY by_q ON pa FOR SELECT TO ms_reader USING (q = 'keep');
-NOTICE:  sql_saga: Created policy sql_saga_b0367a2309343c89 on pa_history as the history copy of policy by_q on pa
+NOTICE:  sql_saga: Created policy sql_saga_b0367a2309343c89 on public.pa_history as the history copy of policy by_q on public.pa
 SET ROLE ms_reader;
 SELECT id, a, p, q FROM pa_with_history ORDER BY id, system_valid_range;
  id |  a  | p  |  q   
@@ -469,7 +469,7 @@ RESET ROLE;
 ALTER TABLE ms ADD COLUMN obsolete text;
 ALTER TABLE ms_history ADD COLUMN obsolete text;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -478,7 +478,7 @@ NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table
 ALTER TABLE ms DROP COLUMN obsolete; -- fail: the views use it
 ERROR:  cannot drop column obsolete of table ms because other objects depend on it
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['obsolete']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -495,7 +495,7 @@ SELECT * FROM pg_temp.family_columns('ms');
 ALTER TABLE ms DROP COLUMN obsolete;
 ALTER TABLE ms_history DROP COLUMN obsolete;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -532,7 +532,7 @@ SELECT * FROM pg_temp.query_functions('ms');
 --- 8. Dropping a history-only column works the same way
 ALTER TABLE ms_history ADD COLUMN history_annotation text;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -547,7 +547,7 @@ SELECT * FROM pg_temp.family_columns('ms') WHERE view_name = 'ms_with_history';
 ALTER TABLE ms_history DROP COLUMN history_annotation; -- fail: the views use it
 ERROR:  cannot drop column history_annotation of table ms_history because other objects depend on it
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['history_annotation']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -555,7 +555,7 @@ NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table
 
 ALTER TABLE ms_history DROP COLUMN history_annotation;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -581,15 +581,15 @@ SELECT count(*) AS history_rows_before FROM ms_history;
 
 \set VERBOSITY default
 UPDATE ms SET payload = 'two++' WHERE id = 2; -- fail
-ERROR:  sql_saga: column missing_in_history of base table ms is missing from history table ms_history
+ERROR:  sql_saga: column missing_in_history of base table public.ms is missing from history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ADD COLUMN missing_in_history integer; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \echo :LAST_ERROR_SQLSTATE
 42703
 DELETE FROM ms WHERE id = 3; -- fail
-ERROR:  sql_saga: column missing_in_history of base table ms is missing from history table ms_history
+ERROR:  sql_saga: column missing_in_history of base table public.ms is missing from history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ADD COLUMN missing_in_history integer; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 SELECT sql_saga.rebuild_system_versioning_views('ms'); -- fail: the same state is refused
-ERROR:  sql_saga: column missing_in_history of base table ms is missing from history table ms_history
+ERROR:  sql_saga: column missing_in_history of base table public.ms is missing from history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ADD COLUMN missing_in_history integer; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \set VERBOSITY terse
 -- Nothing was written.
@@ -616,7 +616,7 @@ SELECT * FROM pg_temp.family_columns('ms') WHERE view_name = 'ms_with_history';
 -- The fix from the HINT.
 ALTER TABLE ms_history ADD COLUMN missing_in_history integer;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -641,12 +641,12 @@ ALTER TABLE ms ADD COLUMN mismatch bigint;
 ALTER TABLE ms_history ADD COLUMN mismatch integer;
 \set VERBOSITY default
 UPDATE ms SET payload = 'two++' WHERE id = 2; -- fail
-ERROR:  sql_saga: column mismatch has type bigint in base table ms but type integer in history table ms_history
+ERROR:  sql_saga: column mismatch has type bigint in base table public.ms but type integer in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN mismatch TYPE bigint; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \echo :LAST_ERROR_SQLSTATE
 42804
 SELECT sql_saga.rebuild_system_versioning_views('ms'); -- fail
-ERROR:  sql_saga: column mismatch has type bigint in base table ms but type integer in history table ms_history
+ERROR:  sql_saga: column mismatch has type bigint in base table public.ms but type integer in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN mismatch TYPE bigint; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \set VERBOSITY terse
 SELECT id, payload FROM ms WHERE id = 2;
@@ -657,7 +657,7 @@ SELECT id, payload FROM ms WHERE id = 2;
 
 ALTER TABLE ms_history ALTER COLUMN mismatch TYPE bigint;
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -699,7 +699,7 @@ NOTICE:  sql_saga: Created function "ms_domain__from_to(timestamp with time zone
 
 INSERT INTO ms_domain VALUES (1, 'one');
 SELECT sql_saga.rebuild_system_versioning_views('ms_domain', ARRAY['payload']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms_domain
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms_domain
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -725,10 +725,10 @@ SELECT operation, message, hint
 FROM (VALUES ('write'), ('rebuild')) AS v (operation)
 CROSS JOIN LATERAL pg_temp.capture_domain_mismatch(operation);
 TABLE domain_mismatch;
- operation |                                                             message                                                              |                                                                              hint                                                                               
------------+----------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
- write     | sql_saga: column payload has type public.visible_domain in base table ms_domain but type text in history table ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN payload TYPE public.visible_domain; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
- rebuild   | sql_saga: column payload has type public.visible_domain in base table ms_domain but type text in history table ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN payload TYPE public.visible_domain; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
+ operation |                                                                    message                                                                     |                                                                              hint                                                                               
+-----------+------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+ write     | sql_saga: column payload has type public.visible_domain in base table public.ms_domain but type text in history table public.ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN payload TYPE public.visible_domain; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
+ rebuild   | sql_saga: column payload has type public.visible_domain in base table public.ms_domain but type text in history table public.ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN payload TYPE public.visible_domain; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
 (2 rows)
 
 SELECT count(DISTINCT (message, hint)) = 1 AS byte_identical,
@@ -754,7 +754,7 @@ END;
 $execute_hint$;
 SET search_path = public;
 SELECT sql_saga.rebuild_system_versioning_views('ms_domain');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms_domain
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms_domain
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -775,10 +775,10 @@ SELECT operation, message, hint
 FROM (VALUES ('write'), ('rebuild')) AS v (operation)
 CROSS JOIN LATERAL pg_temp.capture_domain_mismatch(operation);
 TABLE saga_type_mismatch;
- operation |                                                              message                                                               |                                                                               hint                                                                                
------------+------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
- write     | sql_saga: column behavior has type sql_saga.drop_behavior in base table ms_domain but type text in history table ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN behavior TYPE sql_saga.drop_behavior; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
- rebuild   | sql_saga: column behavior has type sql_saga.drop_behavior in base table ms_domain but type text in history table ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN behavior TYPE sql_saga.drop_behavior; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
+ operation |                                                                     message                                                                      |                                                                               hint                                                                                
+-----------+--------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ write     | sql_saga: column behavior has type sql_saga.drop_behavior in base table public.ms_domain but type text in history table public.ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN behavior TYPE sql_saga.drop_behavior; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
+ rebuild   | sql_saga: column behavior has type sql_saga.drop_behavior in base table public.ms_domain but type text in history table public.ms_domain_history | Run: ALTER TABLE public.ms_domain_history ALTER COLUMN behavior TYPE sql_saga.drop_behavior; SELECT sql_saga.rebuild_system_versioning_views('public.ms_domain');
 (2 rows)
 
 SELECT count(DISTINCT (message, hint)) = 1 AS byte_identical,
@@ -803,7 +803,7 @@ END;
 $execute_hint$;
 SET search_path = public;
 SELECT sql_saga.rebuild_system_versioning_views('ms_domain');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms_domain
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms_domain
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -823,7 +823,7 @@ ALTER TABLE ms ADD COLUMN code varchar(20);
 ALTER TABLE ms_history ADD COLUMN code varchar(30);
 \set VERBOSITY default
 UPDATE ms SET payload = 'one+++' WHERE id = 1; -- fail
-ERROR:  sql_saga: column code has type character varying(20) in base table ms but type character varying(30) in history table ms_history
+ERROR:  sql_saga: column code has type character varying(20) in base table public.ms but type character varying(30) in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN code TYPE character varying(20); SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \set VERBOSITY terse
 ALTER TABLE ms_history ALTER COLUMN code TYPE varchar(20);
@@ -831,15 +831,15 @@ ALTER TABLE ms ADD COLUMN label text COLLATE "C";
 ALTER TABLE ms_history ADD COLUMN label text COLLATE "POSIX";
 \set VERBOSITY default
 UPDATE ms SET payload = 'one+++' WHERE id = 1; -- fail
-ERROR:  sql_saga: column label has type text COLLATE "C" in base table ms but type text COLLATE "POSIX" in history table ms_history
+ERROR:  sql_saga: column label has type text COLLATE "C" in base table public.ms but type text COLLATE "POSIX" in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN label TYPE text COLLATE "C"; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 SELECT sql_saga.rebuild_system_versioning_views('ms'); -- fail
-ERROR:  sql_saga: column label has type text COLLATE "C" in base table ms but type text COLLATE "POSIX" in history table ms_history
+ERROR:  sql_saga: column label has type text COLLATE "C" in base table public.ms but type text COLLATE "POSIX" in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN label TYPE text COLLATE "C"; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \set VERBOSITY terse
 ALTER TABLE ms_history ALTER COLUMN label TYPE text COLLATE "C";
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -867,7 +867,7 @@ SELECT * FROM pg_temp.family_columns('ms') WHERE view_name = 'ms_with_history';
 -- without_columns only shapes the views. It is not stored, so the history writer does not know about
 -- it and never leaves out a base value: a write in the intermediate state fails with the fix.
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['code']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -876,7 +876,7 @@ NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table
 ALTER TABLE ms ALTER COLUMN code TYPE varchar(40);
 -- code now differs between ms and ms_history; leaving it out, the rebuild succeeds.
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['code']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -890,7 +890,7 @@ SELECT * FROM pg_temp.family_columns('ms') WHERE view_name = 'ms_with_history';
 
 \set VERBOSITY default
 UPDATE ms SET payload = 'one+++++', code = 'c2' WHERE id = 1; -- fail
-ERROR:  sql_saga: column code has type character varying(40) in base table ms but type character varying(20) in history table ms_history
+ERROR:  sql_saga: column code has type character varying(40) in base table public.ms but type character varying(20) in history table public.ms_history
 HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN code TYPE character varying(40); SELECT sql_saga.rebuild_system_versioning_views('public.ms');
 \echo :LAST_ERROR_SQLSTATE
 42804
@@ -903,7 +903,7 @@ SELECT id, payload, code FROM ms WHERE id = 1;
 
 ALTER TABLE ms_history ALTER COLUMN code TYPE varchar(40);
 SELECT sql_saga.rebuild_system_versioning_views('ms');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -957,7 +957,7 @@ UPDATE ms SET payload = 'three+++' WHERE id = 3;
 SELECT pg_temp.fingerprint('ms') AS fp_before_tx \gset
 BEGIN;
 SELECT sql_saga.rebuild_system_versioning_views('ms', ARRAY['extra']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.ms
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -1034,11 +1034,11 @@ GRANT SELECT ON rt TO ms_a;
 ALTER TABLE rt ENABLE ROW LEVEL SECURITY;
 RESET client_min_messages;
 CREATE POLICY tenant_a ON rt FOR SELECT TO ms_a USING (tenant = 'a');
-NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on rt_history as the history copy of policy tenant_a on rt
+NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on public.rt_history as the history copy of policy tenant_a on public.rt
 ALTER TABLE rt_history ADD COLUMN legacy text;
 UPDATE rt_history SET legacy = 'old ' || tenant;
 SELECT sql_saga.rebuild_system_versioning_views('rt');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table rt
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.rt
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -1081,18 +1081,18 @@ RESET ROLE;
 -- so the policy cannot be copied (fail closed, never a wrong filter). The sync checks every copy before
 -- it changes anything, so the refusal is the only message: no NOTICE about a change that is not made.
 SELECT sql_saga.rebuild_system_versioning_views('rt', ARRAY['tenant']);
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table rt
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.rt
  rebuild_system_versioning_views 
 ---------------------------------
  
 (1 row)
 
 ALTER TABLE rt RENAME COLUMN tenant TO account; -- fail
-ERROR:  sql_saga: policy tenant_a on rt references column account, which rt_history lacks
+ERROR:  sql_saga: policy tenant_a on public.rt references column account, which public.rt_history lacks
 ALTER TABLE rt_history RENAME COLUMN tenant TO account;
 ALTER TABLE rt RENAME COLUMN tenant TO account;
 SELECT sql_saga.rebuild_system_versioning_views('rt');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table rt
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.rt
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -1152,8 +1152,8 @@ HINT:  Run: SELECT sql_saga.sync_history_policies('rt');
 RESET ROLE;
 \set VERBOSITY terse
 SELECT sql_saga.rebuild_system_versioning_views('rt');
-NOTICE:  sql_saga: Created policy sql_saga_8cc6d686ae8365d2 on rt_history as the history copy of policy late on rt
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table rt
+NOTICE:  sql_saga: Created policy sql_saga_8cc6d686ae8365d2 on public.rt_history as the history copy of policy late on public.rt
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.rt
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -1171,7 +1171,7 @@ RESET ROLE;
 ALTER TABLE rt OWNER TO ms_owner;
 SET ROLE ms_owner;
 SELECT sql_saga.rebuild_system_versioning_views('rt');
-NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table rt
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.rt
  rebuild_system_versioning_views 
 ---------------------------------
  
@@ -1197,7 +1197,7 @@ SELECT * FROM pg_temp.access_shape('rt');
 
 -- FORCE ROW LEVEL SECURITY still filters the owner on current rows and on history alike.
 ALTER TABLE rt FORCE ROW LEVEL SECURITY;
-NOTICE:  sql_saga: Set row level security on rt_history to FORCE
+NOTICE:  sql_saga: Set row level security on public.rt_history to FORCE
 SET ROLE ms_owner;
 SELECT count(*) AS forced_owner_rows FROM rt_with_history;
  forced_owner_rows 
@@ -1207,7 +1207,7 @@ SELECT count(*) AS forced_owner_rows FROM rt_with_history;
 
 RESET ROLE;
 ALTER TABLE rt NO FORCE ROW LEVEL SECURITY;
-NOTICE:  sql_saga: Set row level security on rt_history to NO FORCE
+NOTICE:  sql_saga: Set row level security on public.rt_history to NO FORCE
 SET ROLE ms_owner;
 SELECT count(*) AS owner_rows FROM rt_with_history;
  owner_rows 

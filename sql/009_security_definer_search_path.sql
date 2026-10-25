@@ -28,6 +28,23 @@ WHERE n.nspname = 'sql_saga'
   )
 ORDER BY p.proname;
 
+\echo '--- Verify no SECURITY DEFINER function has a schema other roles may write on its search_path ---'
+
+-- A SECURITY DEFINER function runs as the extension owner. Every schema on its search_path must be one only that
+-- owner (a superuser) controls, or a role that may CREATE there shadows an operator or function with its own code,
+-- run with the extension owner's rights (1.4, review round 2, R8). Allowed: sql_saga, pg_catalog, pg_temp (last).
+SELECT p.proname AS writable_schema_on_search_path, c.setting
+FROM pg_catalog.pg_proc AS p
+JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
+WHERE n.nspname = 'sql_saga'
+  AND p.prosecdef
+  AND c.setting LIKE 'search_path=%'
+  AND EXISTS (
+      SELECT FROM unnest(string_to_array(substr(c.setting, length('search_path=') + 1), ',')) AS s(schema_name)
+      WHERE btrim(s.schema_name) NOT IN ('sql_saga', 'pg_catalog', 'pg_temp'))
+ORDER BY p.proname;
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql

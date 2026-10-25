@@ -37,7 +37,7 @@ NOTICE:  sql_saga: Created GIST index "parent_natural_valid_range_gist_idx" on c
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent_natural'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table parent_natural: ADD CONSTRAINT parent_natural_id_p_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public.parent_natural: ADD CONSTRAINT parent_natural_id_p_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  parent_natural_id_p
@@ -63,7 +63,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'parent_natural'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table temporal_child_natural. Creating new index: CREATE INDEX temporal_child_natural_parent_id_q_gist_idx ON temporal_child_natural USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.temporal_child_natural. Creating new index: CREATE INDEX temporal_child_natural_parent_id_q_gist_idx ON public.temporal_child_natural USING GIST (parent_id, valid_range)
           add_foreign_key           
 ------------------------------------
  temporal_child_natural_parent_id_q
@@ -95,7 +95,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'parent_natural'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table regular_child_natural. Creating new index: CREATE INDEX regular_child_natural_parent_id_idx ON regular_child_natural USING BTREE (parent_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.regular_child_natural. Creating new index: CREATE INDEX regular_child_natural_parent_id_idx ON public.regular_child_natural USING BTREE (parent_id)
            add_foreign_key            
 --------------------------------------
  regular_child_natural_parent_id_fkey
@@ -134,7 +134,7 @@ NOTICE:  sql_saga: Created GIST index "parent_pk_valid_range_gist_idx" on column
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent_pk'::regclass, ARRAY['id']::name[], 'p', key_type => 'primary');
-NOTICE:  sql_saga: Added constraints to table parent_pk: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table public.parent_pk: ALTER COLUMN id SET NOT NULL
  add_unique_key 
 ----------------
  parent_pk_id_p
@@ -160,7 +160,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'parent_pk'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table temporal_child_pk. Creating new index: CREATE INDEX temporal_child_pk_parent_id_q_gist_idx ON temporal_child_pk USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.temporal_child_pk. Creating new index: CREATE INDEX temporal_child_pk_parent_id_q_gist_idx ON public.temporal_child_pk USING GIST (parent_id, valid_range)
         add_foreign_key        
 -------------------------------
  temporal_child_pk_parent_id_q
@@ -192,7 +192,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'parent_pk'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table regular_child_pk. Creating new index: CREATE INDEX regular_child_pk_parent_id_idx ON regular_child_pk USING BTREE (parent_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table public.regular_child_pk. Creating new index: CREATE INDEX regular_child_pk_parent_id_idx ON public.regular_child_pk USING BTREE (parent_id)
          add_foreign_key         
 ---------------------------------
  regular_child_pk_parent_id_fkey
