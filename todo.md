@@ -119,7 +119,12 @@ fixed. New findings, each fixed test-first:
       DONE: test 137 (NO ACTION move with delay_constraints false: accepted, tag kept); test 148 (XOR key: check
       per match type; MATCH SIMPLE ignores partly NULL keys exactly as native FKs to UNIQUE NULLS NOT DISTINCT do,
       verified natively; documented that an XOR target protects nothing under SIMPLE)
-- [ ] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
+- [x] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
+      DONE: migrations connect as POSTGRES_ADMIN_USER (default postgres, superuser; cli/internal/migrate). Runtime
+      calls are admin.disable/enable_temporal_triggers, SECURITY DEFINER owned by the migration role, calling
+      sql_saga.disable/enable_temporal_triggers (SECURITY INVOKER, unchanged). No StatBus code calls a management
+      function as a non-owner. One StatBus test expects a sql_saga NOTICE text (test/expected/007): it will show
+      the schema-qualified name (R8); update that expected file during the StatBus upgrade
 - [ ] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
       (src/3h) over private SECURITY DEFINER workers sql_saga.__api_<name>. The 1.x->1.4 update must create the
       workers, then CREATE OR REPLACE each public function as the trampoline (keeps its OID, grants and dependants),
