@@ -93,9 +93,12 @@ fixed. New findings, each fixed test-first:
       add_current_view clock keeps its released resolution and is embedded schema-qualified. Test 146 (RED at HEAD:
       attacker operator ran as superuser; GREEN: none), test 009 guard. 49 outputs changed only by schema
       qualification in messages (verified mechanically). Fast 131/131, concurrency, restore 11/11 + splits
-- [ ] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
+- [x] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
       sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
-- [ ] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
+      DONE: verification plan prepared as the function owner. Test 147 (USAGE on sql_saga revoked from PUBLIC,
+      fresh sessions: child insert, violation, cascade all work; RED at HEAD: permission denied for schema)
+- [x] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
+      DONE: dangling row needs the referenced table's owner, else superuser. Test 140 part 4 (RED: any role)
 - [ ] R7 LOW/perf: F1 verification costs three catalog lookups per trigger firing. Cache the verified trigger per
       transaction in the plan-cache entry. Re-run benchmarks (CASCADE 10k, regular FK bulk load) against the 1.3
       baseline; update README/decision-log numbers

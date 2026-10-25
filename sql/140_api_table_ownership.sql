@@ -126,13 +126,34 @@ SET LOCAL ROLE ow_other;
 SELECT 'own child, parent with REFERENCES | ' || ow.outcome($$SELECT sql_saga.add_foreign_key('ow_o.child', ARRAY['parent_id'], 'ow.parent', ARRAY['id'])$$);
 RESET ROLE;
 
-\echo '--- part 4: as native DROP ... CASCADE, the parent owner removes a dependent foreign key owned by another role'
+\echo '--- part 4: a catalog row whose referencing table is gone (R6): only the referenced table owner may remove it'
+SAVEPOINT p5;
+SET LOCAL ROLE ow_owner;
+CREATE TABLE ow.orphan_child (parent_id int);
+SELECT sql_saga.add_foreign_key('ow.orphan_child', ARRAY['parent_id'], 'ow.parent', ARRAY['id'], foreign_key_name => 'orphan_fk') \gset
+RESET ROLE;
+-- Simulate a dangling row: the child disappears without drop protection (event triggers off).
+SET LOCAL session_replication_role = replica;
+ALTER EVENT TRIGGER sql_saga_drop_protection DISABLE;
+DROP TABLE ow.orphan_child;
+ALTER EVENT TRIGGER sql_saga_drop_protection ENABLE;
+RESET session_replication_role;
+SET LOCAL ROLE ow_other;
+SELECT 'another role removes the dangling row | ' || ow.outcome($$SELECT sql_saga.drop_foreign_key_by_name(NULL, 'orphan_fk')$$);
+RESET ROLE;
+SET LOCAL ROLE ow_owner;
+SELECT 'the referenced table owner removes it | ' || ow.outcome($$SELECT sql_saga.drop_foreign_key_by_name(NULL, 'orphan_fk')$$);
+RESET ROLE;
+ROLLBACK TO SAVEPOINT p5;
+
+\echo '--- part 5: as native DROP ... CASCADE, the parent owner removes a dependent foreign key owned by another role'
 SET LOCAL ROLE ow_owner;
 SELECT 'drop the referencing key directly, not owning it | ' || ow.outcome($$SELECT sql_saga.drop_foreign_key_by_name(NULL, 'child_parent_id_fkey')$$);
 SELECT 'drop_era CASCADE (views, keys, dependent foreign keys) | ' || ow.outcome($$SELECT sql_saga.drop_era('ow.parent', 'valid', 'CASCADE')$$);
 RESET ROLE;
 SELECT 'foreign keys left | ' || coalesce(string_agg(fk.foreign_key_name, ', ' ORDER BY fk.foreign_key_name), '(none)') FROM sql_saga.foreign_keys AS fk;
 SELECT 'regular foreign key triggers left on ow_o.child | ' || count(*) FROM pg_trigger WHERE tgrelid = 'ow_o.child'::regclass AND NOT tgisinternal;
+
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

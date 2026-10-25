@@ -1464,6 +1464,13 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 	if (trigger->tgisinternal)
 		goto refuse;
 
+	/* The verification reads sql_saga's catalog as the function owner: the writer needs no rights on it (R5). */
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
 	if (regular_fk_verify_plan == NULL)
 	{
 		/*
@@ -1485,12 +1492,8 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 			"   AND t.tgargs OPERATOR(pg_catalog.=) sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name))";
 		Oid			argtypes[4] = {NAMEOID, OIDOID, NAMEOID, INT4OID};
 
-		regular_fk_verify_plan = SPI_prepare(sql, 4, argtypes);
-		if (regular_fk_verify_plan == NULL)
-			elog(ERROR, "SPI_prepare for regular foreign key trigger verification failed: %s",
-				 SPI_result_code_string(SPI_result));
-		if (SPI_keepplan(regular_fk_verify_plan))
-			elog(ERROR, "SPI_keepplan for regular foreign key trigger verification failed");
+		/* Planned (parsed, privileges checked) as the function owner, like the execution below. */
+		regular_fk_verify_plan = regular_fk_prepare_as(function_owner, sql, 4, argtypes);
 	}
 
 	if (trigger->tgnargs != 17)
@@ -1499,12 +1502,6 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 	values[1] = ObjectIdGetDatum(RelationGetRelid(trigdata->tg_relation));
 	values[2] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgname));
 	values[3] = Int32GetDatum((int32) kind);
-
-	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
-	if (!HeapTupleIsValid(proc_tuple))
-		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
-	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
-	ReleaseSysCache(proc_tuple);
 
 	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
 	SetUserIdAndSecContext(function_owner,

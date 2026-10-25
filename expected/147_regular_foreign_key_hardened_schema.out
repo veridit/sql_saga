@@ -1,0 +1,7 @@
+\set ECHO none
+writer has USAGE on sql_saga | false
+--- child insert, fresh session
+child insert with a present key | ok
+ERROR:  insert or update on table "hs.note" violates foreign key constraint "note_unit_id_fkey"
+--- parent delete with cascade, fresh session
+notes left after deleting unit 1 | 0

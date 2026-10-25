@@ -104,8 +104,19 @@ BEGIN
         native_constraint_attributable := foreign_key_row.native_constraint_attributable;
 
         /* As ALTER TABLE ... DROP CONSTRAINT: the caller must own the referencing table (also when found by name). */
-        IF require_owner AND foreign_key_row.fk_table_oid IS NOT NULL THEN
-            PERFORM sql_saga.__internal_require_owner(foreign_key_row.fk_table_oid, 'drop_foreign_key');
+        IF require_owner THEN
+            IF foreign_key_row.fk_table_oid IS NOT NULL THEN
+                PERFORM sql_saga.__internal_require_owner(foreign_key_row.fk_table_oid, 'drop_foreign_key');
+            ELSIF foreign_key_row.unique_table_oid IS NOT NULL THEN
+                /*
+                 * A dangling row (the referencing table is gone): removing it drops triggers on the referenced
+                 * table, so its owner may, as for DROP ... CASCADE there (R6).
+                 */
+                PERFORM sql_saga.__internal_require_owner(foreign_key_row.unique_table_oid, 'drop_foreign_key');
+            ELSIF NOT (SELECT r.rolsuper FROM pg_catalog.pg_roles AS r WHERE r.oid = sql_saga.__internal_caller()) THEN
+                RAISE EXCEPTION 'must be superuser to drop foreign key "%", whose tables no longer exist',
+                    foreign_key_row.foreign_key_name USING ERRCODE = 'insufficient_privilege';
+            END IF;
         END IF;
 
         -- Delete the metadata record first, so the drop_protection trigger doesn't fire on the main objects.

@@ -28,7 +28,10 @@ set_era_ephemeral_columns as a member | ok
 --- part 3: a foreign key needs REFERENCES on the referenced table
 own child, parent without REFERENCES | 42501: permission denied for table parent
 own child, parent with REFERENCES | ok
---- part 4: as native DROP ... CASCADE, the parent owner removes a dependent foreign key owned by another role
+--- part 4: a catalog row whose referencing table is gone (R6): only the referenced table owner may remove it
+another role removes the dangling row | 42501: must be owner of table parent
+the referenced table owner removes it | ok
+--- part 5: as native DROP ... CASCADE, the parent owner removes a dependent foreign key owned by another role
 drop the referencing key directly, not owning it | 42501: must be owner of table child
 drop_era CASCADE (views, keys, dependent foreign keys) | ok
 foreign keys left | (none)
