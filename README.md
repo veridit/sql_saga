@@ -239,8 +239,9 @@ point, usually `COMMIT`. If the key is inserted again before then, the children 
 it this way during each merge, also with `delay_constraints => false`, so it can delete and re-insert a timeline
 without cascading.
 
-Bulk deletes cost about as much as `NO ACTION` when the key survives. When the key goes, they cost about four
-times a native cascade between plain tables: 214.8 ms against 51.8 ms for 10,000 keys with 2 children each.
+Bulk deletes cost about as much as `NO ACTION` when the key survives. When the key goes, they cost about three
+times a native cascade between plain tables: 200 ms against 55 to 69 ms for 10,000 keys with 2 children each
+(`doc/decision-log.md`).
 
 A temporal-to-temporal foreign key does not accept `CASCADE`: PostgreSQL does not support referential actions on
 foreign keys that use `PERIOD`. `SET NULL`, `SET DEFAULT` and `ON UPDATE` actions other than `NO ACTION` and

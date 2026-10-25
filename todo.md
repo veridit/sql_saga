@@ -99,9 +99,13 @@ fixed. New findings, each fixed test-first:
       fresh sessions: child insert, violation, cascade all work; RED at HEAD: permission denied for schema)
 - [x] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
       DONE: dangling row needs the referenced table's owner, else superuser. Test 140 part 4 (RED: any role)
-- [ ] R7 LOW/perf: F1 verification costs three catalog lookups per trigger firing. Cache the verified trigger per
+- [x] R7 (was LOW, measured HIGH) perf: F1 verification costs three catalog lookups per trigger firing. Cache the verified trigger per
       transaction in the plan-cache entry. Re-run benchmarks (CASCADE 10k, regular FK bulk load) against the 1.3
       baseline; update README/decision-log numbers
+      DONE: measured a 20-24x regression from F1 (unreferenced delete 1210 ms vs 51 ms in 1.3; child insert 1411
+      vs 117 ms). Cache verified triggers per transaction, reset on relcache invalidation and at xact end. Now
+      within noise of 1.3 (57.9 vs 51.4; 138.7 vs 118.2). Test 139 part 4b (catalog row removed after verification
+      plus DDL: refused). decision-log table and README updated with 1.4 and 1.3 columns
 - [ ] R4 docs: README and decision-log still say TRUNCATE is not checked; decision-log says the cascade runs as the
       extension owner; test 137 comment says the same; document `uk_truncate_trigger` and the TRUNCATE refusal
       (data-based: an empty child does not block, unlike native) in README and doc/api.md

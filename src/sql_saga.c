@@ -41,6 +41,7 @@
 #include "utils/elog.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/inval.h"
 #include "utils/snapmgr.h"
 #include "access/stratnum.h"
 #include "access/tableam.h"
@@ -191,6 +192,7 @@ static HTAB *fk_plan_cache = NULL;
 static HTAB *uk_delete_plan_cache = NULL;
 static HTAB *uk_update_plan_cache = NULL;
 static bool cache_callback_registered = false;
+static void regular_fk_verified_reset(void);
 
 /* Free the kept plans of a transaction's cache and the cache itself. */
 static void
@@ -246,6 +248,7 @@ cache_cleanup_callback(XactEvent event, void *arg)
 			fk_plan_cache_destroy(&fk_plan_cache, false);
 			fk_plan_cache_destroy(&uk_delete_plan_cache, false);
 			fk_plan_cache_destroy(&uk_update_plan_cache, true);
+			regular_fk_verified_reset();
 			break;
 		default:
 			break;
@@ -1444,6 +1447,40 @@ typedef enum RegularFkTriggerKind
 
 static SPIPlanPtr regular_fk_verify_plan = NULL;
 
+/*
+ * Triggers verified in this transaction (R7): verification costs a catalog query, and a trigger fires once per row.
+ * The key is the trigger OID; the entry records the firing table and kind it was verified for. The cache is cleared
+ * at transaction end and on every relcache invalidation: CREATE, ALTER and DROP TRIGGER and ALTER TABLE send one
+ * for the table (PostgreSQL keeps a relation's triggers in its relcache entry and has no pg_trigger syscache). A
+ * write to sql_saga.foreign_keys or unique_keys alone sends none; those tables are writable only by the extension
+ * owner, and sql_saga changes them together with the triggers they describe.
+ */
+typedef struct RegularFkVerified
+{
+	Oid			trigger_oid;	/* hash key */
+	Oid			relid;
+	int			kind;
+} RegularFkVerified;
+static HTAB *regular_fk_verified = NULL;
+
+static void
+regular_fk_verified_reset(void)
+{
+	if (regular_fk_verified != NULL)
+	{
+		hash_destroy(regular_fk_verified);
+		regular_fk_verified = NULL;
+	}
+}
+
+static void
+regular_fk_verified_relcache_callback(Datum arg, Oid relid)
+{
+	regular_fk_verified_reset();
+}
+
+static bool regular_fk_verified_callbacks_registered = false;
+
 static void
 regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 {
@@ -1498,6 +1535,13 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 
 	if (trigger->tgnargs != 17)
 		goto refuse;
+	if (regular_fk_verified != NULL)
+	{
+		RegularFkVerified *hit = hash_search(regular_fk_verified, &trigger->tgoid, HASH_FIND, NULL);
+
+		if (hit != NULL && hit->relid == RelationGetRelid(trigdata->tg_relation) && hit->kind == (int) kind)
+			return;
+	}
 	values[0] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgargs[0]));
 	values[1] = ObjectIdGetDatum(RelationGetRelid(trigdata->tg_relation));
 	values[2] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgname));
@@ -1525,7 +1569,30 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "regular foreign key trigger verification returned %s", SPI_result_code_string(ret));
 	if (ok)
+	{
+		RegularFkVerified *entry;
+
+		if (!regular_fk_verified_callbacks_registered)
+		{
+			CacheRegisterRelcacheCallback(regular_fk_verified_relcache_callback, (Datum) 0);
+			regular_fk_verified_callbacks_registered = true;
+		}
+		if (regular_fk_verified == NULL)
+		{
+			HASHCTL		ctl;
+
+			memset(&ctl, 0, sizeof(ctl));
+			ctl.keysize = sizeof(Oid);
+			ctl.entrysize = sizeof(RegularFkVerified);
+			ctl.hcxt = TopMemoryContext;
+			regular_fk_verified = hash_create("sql_saga verified regular foreign key triggers", 16, &ctl,
+											  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+		}
+		entry = hash_search(regular_fk_verified, &trigger->tgoid, HASH_ENTER, NULL);
+		entry->relid = RelationGetRelid(trigdata->tg_relation);
+		entry->kind = (int) kind;
 		return;
+	}
 
 refuse:
 	ereport(ERROR,

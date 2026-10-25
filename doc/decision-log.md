@@ -46,18 +46,27 @@ the `temporal_merge` planner and executor.
 - `TRUNCATE` fires no row triggers, so it neither checks nor cascades a regular foreign key. This was
   already true of `NO ACTION` in 1.3 and is documented.
 
-### Measured cost (macOS, PostgreSQL 18.3, best of 3)
+### Measured cost (macOS, PostgreSQL 18.3, best of 3; `tmp/bench_cascade_run.sh`)
 
-| 10,000 keys, 2 timeline rows each | ms |
-|---|---|
-| CASCADE, delete every row (20,000 children cascaded) | 214.8 |
-| CASCADE, delete one of two rows (children kept) | 133.1 |
-| NO ACTION, delete one of two rows (children kept) | 141.5 |
-| NO ACTION, delete every row of unreferenced keys | 50.7 |
-| native PostgreSQL CASCADE between plain tables (10,000 parents, 20,000 children) | 51.8 |
+Measured on the final 1.4 code (after the security fixes and the per-transaction trigger verification cache) and on
+v1.3 in the same session. The native baseline varied between 55 and 69 ms across runs on this machine, so
+differences under about 20% are noise.
 
-When the key survives, CASCADE costs the same as `NO ACTION`. 50,000 keys took 1,308 ms, so the cost grows
-about linearly.
+| 10,000 keys, 2 timeline rows each | 1.4 ms | 1.3 ms |
+|---|---|---|
+| CASCADE, delete every row (20,000 children cascaded) | 200.4 | n/a |
+| CASCADE, delete one of two rows (children kept) | 101.0 | n/a |
+| NO ACTION, delete one of two rows (children kept) | 124.0 | 102.6 |
+| NO ACTION, delete every row of unreferenced keys | 57.9 | 51.4 |
+| regular FK, insert 20,000 child rows | 138.7 | 118.2 |
+| native FK, insert 20,000 child rows | 129.0 | 142.2 |
+| native PostgreSQL CASCADE between plain tables (10,000 parents, 20,000 children) | 69.3 | 54.8 |
+
+When the key survives, CASCADE costs the same as `NO ACTION`. The cost grows about linearly.
+
+The verification that a trigger is sql_saga's own (review finding F1) first ran a catalog query on every firing,
+which made bulk deletes and child inserts about 20 times slower (1,210 ms instead of 51 ms for the unreferenced
+delete). It is now done once per trigger per transaction, and again after any DDL on the table.
 
 ---
 

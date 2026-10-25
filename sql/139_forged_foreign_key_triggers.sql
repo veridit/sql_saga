@@ -125,6 +125,18 @@ SELECT 'genuine child insert of a missing key | ' || ff.outcome('INSERT INTO ff.
 SELECT 'genuine TRUNCATE of the parent alone | ' || ff.outcome('TRUNCATE ff.parent');
 SELECT 'check_integrity | ' || ff.outcome('SELECT sql_saga.check_integrity()');
 
+\echo '--- part 4b: a verified trigger stays verified only while it is unchanged (R7 cache)'
+-- In one transaction: the genuine delete trigger is verified on first use; then the extension owner's catalog row is
+-- dropped by hand (as a broken installation would). The next firing must be refused, not served from the cache.
+SAVEPOINT c;
+SELECT 'first genuine firing (verified, key survives) | ' || ff.outcome('DELETE FROM ff.parent WHERE id = 2');
+INSERT INTO ff.parent (id, valid_from, valid_until) VALUES (2, '2020-01-01', 'infinity');
+ALTER TABLE ff.parent DISABLE TRIGGER USER;
+ALTER TABLE ff.parent ENABLE TRIGGER USER;
+DELETE FROM sql_saga.foreign_keys WHERE foreign_key_name = 'ff_child_fk';
+SELECT 'firing after the catalog row is gone (after DDL on the table) | ' || ff.outcome('DELETE FROM ff.parent WHERE id = 1');
+ROLLBACK TO SAVEPOINT c;
+
 \echo '--- part 5: identity of the cascade (F2) and no rights needed on the child (F8)'
 /*
  * The child table is owned by ff_child_owner. A trigger on it records who runs it. As native ON DELETE CASCADE, the
