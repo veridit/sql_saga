@@ -1,0 +1,38 @@
+\set ECHO none
+--- A: management functions against the DDL they stand for
+superuser: add_era vs ALTER TABLE ADD COLUMN | same: allowed
+owner: add_era vs ALTER TABLE ADD COLUMN | same: allowed
+inheriting member of owner: add_era vs ALTER TABLE ADD COLUMN | same: allowed
+NOINHERIT member, no SET ROLE: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+NOINHERIT member, SET ROLE owner: add_era vs ALTER TABLE ADD COLUMN | same: allowed
+GRANT ALL, not owner: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+SELECT only: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+no rights: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+pg_maintain member: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+wrapper owned by owner, called by no-rights role: add_era vs ALTER TABLE ADD COLUMN | same: allowed
+wrapper owned by non-owner, called by owner: add_era vs ALTER TABLE ADD COLUMN | same: refused 42501
+superuser: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
+owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
+inheriting member of owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
+NOINHERIT member, no SET ROLE: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+NOINHERIT member, SET ROLE owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
+GRANT ALL, not owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+SELECT only: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+no rights: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+pg_maintain member: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+wrapper owned by owner, called by no-rights role: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
+wrapper owned by non-owner, called by owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+child owner without REFERENCES on the parent: add_foreign_key vs ADD FOREIGN KEY | same: allowed
+child owner, REFERENCES revoked: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501
+parent owner, child owned by another role: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501
+--- B: writes against a regular foreign key and a native one, side by side
+column-privilege writer, child insert of a present key (parent unreadable, RLS hides it) | same: allowed
+column-privilege writer, child insert of an absent key | same: refused 23503
+parent writer without child rights, delete a referenced parent (cascade, RLS on the child) | same: allowed
+parent writer, TRUNCATE the referenced parent alone | same: refused 0A000
+FORCE RLS, owner inserts a child of a present key (policy hides the parent from the owner too) | same: allowed
+FORCE RLS, parent writer deletes an invisible parent (no row matches, as natively) | same: allowed
+FORCE RLS, visible parent 3 deleted, cascade into an invisible child | sql_saga allowed (1 rows), native allowed (1 rows)
+after the cascade | parent 3 left: sql_saga 0, native 0 | child 3 left: sql_saga 0, native 0
+--- deliberate differences (README)
+TRUNCATE of a parent with no referencing child row | allowed (2 rows) then sql_saga allowed, native refused 0A000

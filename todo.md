@@ -131,7 +131,7 @@ fixed. New findings, each fixed test-first:
       and revoke the workers. The 1.3-target generator in the dev tree does not know 3h; rework it for 1.4
 
 **Release gate: behaves exactly like PostgreSQL for every kind of user (owner requirement, 2026-10-23).**
-- [ ] One parity test: each scenario runs through sql_saga and through the native equivalent, and the outcome
+- [x] One parity test: each scenario runs through sql_saga and through the native equivalent, and the outcome
       (allowed / refused with SQLSTATE) must be equal. Roles: superuser, table owner, member of the owner role,
       NOINHERIT member, role with GRANT ALL but not owner, role with only SELECT, role with no rights, pg_maintain,
       SECURITY DEFINER wrappers owned by the owner and by a non-owner. Operations: management API vs ALTER TABLE /
@@ -142,6 +142,13 @@ fixed. New findings, each fixed test-first:
       Also: no user-defined code (row triggers, CHECK/index/default/generated expressions, domain checks) may run
       with the extension owner's rights while a management function changes a user table: native DDL by the owner
       runs it as the owner. Probe every DML/DDL the workers run on user tables; run them as the table owner
+      DONE: test 149, 31 side-by-side comparisons with native, all equal: 11 caller kinds x add_era and
+      add_unique_key vs ALTER TABLE; REFERENCES for FKs; column-privilege writer; parent writer without child rights
+      (cascade); TRUNCATE; RLS and FORCE RLS on both sides (invisible rows not deleted; visible parent cascades into an
+      invisible FORCE-RLS child, as natively). One deliberate difference listed: TRUNCATE with no referencing child
+      row is allowed (native refuses from the graph). User code never runs as superuser: tests 145 (history),
+      146 (search_path hijack); probes of add_era/add_unique_key/add_foreign_key/add_system_versioning/views with
+      user CHECK/index/generated/domain expressions all evaluated as the table owner
 - [ ] Third independent review of everything after R1-R7 until APPROVE
 
 **Review and release.**
