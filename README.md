@@ -497,6 +497,18 @@ workers are not executable by `PUBLIC`.
 Before 1.4 these functions did not check the caller, so any role allowed to call them could change another role's
 table.
 
+##### Whose rights sql_saga's own writes use
+
+sql_saga never runs user code with the extension owner's rights. Like PostgreSQL's referential actions, which run
+as the owner of the table they change:
+
+- the history row a system-versioned `UPDATE` or `DELETE` writes, and the history `TRUNCATE` that follows a
+  `TRUNCATE` of the base table, are written as the owner of the history table;
+- a regular foreign key's checks and its `ON DELETE CASCADE` run as the owner of the table they read or change.
+
+So the writer of the base table needs no rights on the history or on the other table. Triggers, `CHECK` and index
+expressions or domain checks on those tables run with their owner's rights.
+
 ##### Ownership and hardened databases
 
 Derived objects are owned by the owner of the base table. Ownership changes on the base table are propagated

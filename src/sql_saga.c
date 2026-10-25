@@ -761,8 +761,30 @@ insert_into_history(Relation history_rel, HeapTuple history_tuple)
         pfree(buf->data);
 	}
 
+	/*
+	 * The history row is written as the owner of the history table (1.4, review round 2), as native referential
+	 * actions write as the owner of the table they change: whoever writes the base table needs no rights on the
+	 * history, and the table owner's code on the history (triggers, CHECK and index expressions, domain checks)
+	 * runs with the table owner's rights, never with the extension owner's.
+	 */
 	value = HeapTupleGetDatum(history_tuple);
-	ret = SPI_execute_plan(hentry->qplan, &value, NULL, false, 0);
+	{
+		Oid			saved_userid;
+		int			saved_sec_context;
+
+		GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+		SetUserIdAndSecContext(history_rel->rd_rel->relowner,
+							   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		PG_TRY();
+		{
+			ret = SPI_execute_plan(hentry->qplan, &value, NULL, false, 0);
+		}
+		PG_FINALLY();
+		{
+			SetUserIdAndSecContext(saved_userid, saved_sec_context);
+		}
+		PG_END_TRY();
+	}
 	if (ret != SPI_OK_INSERT)
 		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
 
@@ -3277,6 +3299,49 @@ api_trampoline(PG_FUNCTION_ARGS)
 
 	fcinfo->isnull = result_isnull;
 	return result;
+}
+
+/*
+ * __internal_truncate_as_owner(table regclass) -- TRUNCATE the table as its owner (the history TRUNCATE that follows a
+ * base TRUNCATE, src/0h). Private.
+ */
+PG_FUNCTION_INFO_V1(truncate_as_owner);
+Datum
+truncate_as_owner(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	HeapTuple	tup;
+	Oid			owner;
+	char	   *sql;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	int			ret = 0;
+
+	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("relation with OID %u does not exist", relid)));
+	owner = ((Form_pg_class) GETSTRUCT(tup))->relowner;
+	ReleaseSysCache(tup);
+	sql = psprintf("TRUNCATE ONLY %s", quote_qualified_identifier(get_namespace_name(get_rel_namespace(relid)),
+															   get_rel_name(relid)));
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+	PG_TRY();
+	{
+		ret = SPI_execute(sql, false, 0);
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+	if (ret != SPI_OK_UTILITY)
+		elog(ERROR, "TRUNCATE of %s returned %s", sql, SPI_result_code_string(ret));
+	SPI_finish();
+	pfree(sql);
+	PG_RETURN_VOID();
 }
 
 /* __internal_caller() -- the role the running management function acts for (see api_caller). */

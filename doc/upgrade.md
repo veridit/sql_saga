@@ -38,6 +38,10 @@ Otherwise they fail with `42501`. Before updating, check that your migrations an
 
 Each public management function is now a `SECURITY INVOKER` C entry point over a private `SECURITY DEFINER` worker `sql_saga.__api_<name>`. Names, arguments, defaults, results, comments and grants of the public functions are unchanged. Four internal `SECURITY DEFINER` helpers that acted for any caller are no longer executable by `PUBLIC`.
 
+### History writes run as the history table's owner
+
+Up to 1.3 the history row of a system-versioned `UPDATE` or `DELETE`, and the history `TRUNCATE`, were written with the extension owner's rights, so triggers, `CHECK` and index expressions on the history table ran as that role (usually a superuser). From 1.4 they run as the owner of the history table, which is the owner of the base table unless you changed it. A trigger on a history table that relied on superuser rights now runs with the table owner's rights.
+
 ## What changes in 1.3
 
 ### Regular foreign keys: the referencing side becomes a constraint trigger

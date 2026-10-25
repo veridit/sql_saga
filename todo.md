@@ -67,11 +67,16 @@ fixed. New findings, each fixed test-first:
       INVOKER trampolines (api_trampoline) recording GetUserId() over private __api_<name> workers; nested internal
       calls inherit the authorized caller. Test 144 parts 2-4 match native ALTER TABLE row by row (owner wrapper,
       non-owner wrapper, NOINHERIT without/with SET ROLE). Fast 129/129, concurrency, restore 11/11 + splits 3/3
-- [ ] R1b: the system-versioning trigger functions (write_history, generated_always_as_row_start_end,
+- [x] R1b: the system-versioning trigger functions (write_history, generated_always_as_row_start_end,
       truncate_system_versioning) are SECURITY DEFINER and executable by PUBLIC (needed so a table owner can create
       the trigger) but, unlike the regular-FK triggers since F1, do not verify that sql_saga created the trigger.
       Probe: a forged write_history/truncate trigger on an attacker's table whose name collides with a registered
       family, or on a registered table by a non-owner. Verify like regular_fk_verify_trigger
+      DONE (found worse than listed): the history INSERT and the history TRUNCATE ran as the extension owner, so a
+      table owner's trigger/CHECK/index/domain code on its own history table ran as SUPERUSER (any role that may
+      create a table could escalate). Both now run as the history table's owner (C, like native RI; writer still
+      needs no history rights; FORCE RLS bypassed as native RI does). Forged triggers on other tables cannot reach a
+      registered history (lookup is by the firing table). Test 145. Fast 130/130, restore RLS/SV cases pass
 - [ ] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
       sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
 - [ ] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed

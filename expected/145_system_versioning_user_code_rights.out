@@ -1,0 +1,15 @@
+\set ECHO none
+--- part 1: user code on the history table runs as the history owner
+svu_owner | superuser false | t_history CHECK
+svu_owner | superuser false | t_history INSERT
+--- part 2: a writer with rights on the base table only keeps the history
+writer can read the history | true
+history rows | 3
+svu_owner | superuser false | t_history CHECK
+svu_owner | superuser false | t_history CHECK
+svu_owner | superuser false | t_history INSERT
+svu_owner | superuser false | t_history INSERT
+after the writer's TRUNCATE, history rows | 0
+svu_owner | superuser false | t_history TRUNCATE
+--- part 3: forged triggers cannot reach a registered history
+registered history unchanged | true

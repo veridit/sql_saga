@@ -25,7 +25,12 @@ BEGIN
     WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name);
 
     IF FOUND THEN
-        EXECUTE format('TRUNCATE %I.%I', history_schema /* %I */, history_table /* %I */);
+        /*
+         * As the history table's owner (1.4, review round 2), like the history INSERT in write_history: the base
+         * table's writer needs no rights on the history, and the owner's code on the history (its TRUNCATE
+         * triggers) never runs with the extension owner's rights.
+         */
+        PERFORM sql_saga.__internal_truncate_as_owner(pg_catalog.format('%I.%I', history_schema, history_table)::regclass);
     END IF;
 
     RETURN NULL;

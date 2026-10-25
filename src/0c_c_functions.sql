@@ -129,3 +129,10 @@ RETURNS regrole
 AS 'sql_saga', 'api_caller_sql'
 LANGUAGE c STABLE;
 REVOKE ALL ON FUNCTION sql_saga.__internal_caller() FROM PUBLIC;
+
+-- TRUNCATE a table as its owner (the history TRUNCATE after a base TRUNCATE, src/0h). Private.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_truncate_as_owner(table_oid regclass)
+RETURNS void
+AS 'sql_saga', 'truncate_as_owner'
+LANGUAGE c VOLATILE STRICT;
+REVOKE ALL ON FUNCTION sql_saga.__internal_truncate_as_owner(regclass) FROM PUBLIC;
