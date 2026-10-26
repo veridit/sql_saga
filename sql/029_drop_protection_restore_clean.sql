@@ -379,6 +379,32 @@ SET client_min_messages = warning;
 DROP SCHEMA "my schema" CASCADE;
 RESET client_min_messages;
 
+\echo '=== G: a non-superuser cannot forge the clean-teardown exemption'
+SET client_min_messages = error;
+\o /dev/null
+CREATE ROLE clean_user;
+CREATE SCHEMA clean_user_schema AUTHORIZATION clean_user;
+GRANT USAGE ON SCHEMA sql_saga TO clean_user;
+SET ROLE clean_user;
+CREATE TABLE clean_user_schema.b (id int);
+SELECT sql_saga.add_system_versioning('clean_user_schema.b');
+RESET ROLE;
+BEGIN;
+SET LOCAL check_function_bodies = off;
+SET LOCAL row_security = off;
+SET LOCAL application_name = 'pg_restore';
+SET LOCAL sql_saga.clean_restore = on;
+SET LOCAL ROLE clean_user;
+SAVEPOINT forged_clean;
+DROP TRIGGER b_truncate ON clean_user_schema.b; -- fail: managed trigger, not an ownership error
+ROLLBACK TO SAVEPOINT forged_clean;
+ROLLBACK;
+DROP SCHEMA clean_user_schema CASCADE;
+DROP OWNED BY clean_user;
+DROP ROLE clean_user;
+SET client_min_messages = warning;
+\o
+
 DROP VIEW family_state;
 
 -- The extension teardown's cascade inventory is not part of what this test pins.

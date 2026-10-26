@@ -47,6 +47,7 @@ sql_saga.__api_sync_all_history_policies() | PUBLIC no
 sql_saga.__api_sync_history_policies(regclass) | PUBLIC no
 sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[]) | PUBLIC no
 sql_saga.__internal_drop_foreign_key_by_name(regclass,name,boolean,boolean) | PUBLIC no
+sql_saga.__internal_drop_protection() | PUBLIC no
 sql_saga.__internal_history_policy_sync_active(oid) | PUBLIC yes
 sql_saga.__internal_reconcile_system_versioning_family(regclass,name[]) | PUBLIC no
 sql_saga.__internal_refresh_system_time_columns_snapshot(oid) | PUBLIC no
@@ -60,7 +61,6 @@ sql_saga.__internal_updatable_view_follow_shape(oid[]) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_alter_type(oid,text[],text[],boolean) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_drop_column(oid,text[],boolean) | PUBLIC no
 sql_saga.check_integrity() | PUBLIC no
-sql_saga.drop_protection() | PUBLIC yes
 sql_saga.generated_always_as_row_start_end() | PUBLIC yes
 sql_saga.rename_following() | PUBLIC yes
 sql_saga.truncate_system_versioning() | PUBLIC yes

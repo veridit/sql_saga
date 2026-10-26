@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION sql_saga.drop_protection()
+CREATE OR REPLACE FUNCTION sql_saga.__internal_drop_protection()
  RETURNS event_trigger
  LANGUAGE plpgsql
  SECURITY DEFINER

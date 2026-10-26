@@ -3531,6 +3531,79 @@ api_trampoline(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Event-trigger counterpart of api_trampoline. The public event-trigger entry point is SECURITY INVOKER,
+ * so it records the role PostgreSQL actually authorized for this DDL before calling its private definer worker.
+ * Nested internal DDL keeps the outer recorded caller, just as nested management APIs do.
+ */
+PG_FUNCTION_INFO_V1(sql_saga_event_trampoline);
+Datum
+sql_saga_event_trampoline(PG_FUNCTION_ARGS)
+{
+	Oid			self = fcinfo->flinfo->fn_oid;
+	HeapTuple	proctup;
+	Form_pg_proc procform;
+	char	   *worker_name;
+	oidvector  *argtypes;
+	Oid			worker;
+	FmgrInfo	worker_flinfo;
+	LOCAL_FCINFO(worker_fcinfo, FUNC_MAX_ARGS);
+	Oid			worker_owner;
+	Oid			caller;
+	char	   *search_path;
+
+	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(self));
+	if (!HeapTupleIsValid(proctup))
+		elog(ERROR, "cache lookup failed for function %u", self);
+	procform = (Form_pg_proc) GETSTRUCT(proctup);
+	if (procform->prosecdef)
+		elog(ERROR, "sql_saga.%s must be SECURITY INVOKER", NameStr(procform->proname));
+	worker_name = psprintf("__internal_%s", NameStr(procform->proname));
+	argtypes = &procform->proargtypes;
+	worker = GetSysCacheOid3(PROCNAMEARGSNSP, Anum_pg_proc_oid, CStringGetDatum(worker_name),
+							PointerGetDatum(argtypes), ObjectIdGetDatum(procform->pronamespace));
+	ReleaseSysCache(proctup);
+	if (!OidIsValid(worker))
+		elog(ERROR, "sql_saga: event worker function sql_saga.%s is missing", worker_name);
+
+	proctup = SearchSysCache1(PROCOID, ObjectIdGetDatum(worker));
+	if (!HeapTupleIsValid(proctup))
+		elog(ERROR, "cache lookup failed for function %u", worker);
+	worker_owner = ((Form_pg_proc) GETSTRUCT(proctup))->proowner;
+	ReleaseSysCache(proctup);
+	caller = (api_caller_depth > 0 && GetUserId() == worker_owner)
+		? api_caller_stack[api_caller_depth - 1]
+		: GetUserId();
+
+	if (api_caller_depth >= SQL_SAGA_MAX_API_DEPTH)
+		ereport(ERROR, (errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+						errmsg("sql_saga event triggers nested too deeply")));
+
+	fmgr_info(worker, &worker_flinfo);
+	InitFunctionCallInfoData(*worker_fcinfo, &worker_flinfo, 0, fcinfo->fncollation,
+							 fcinfo->context, fcinfo->resultinfo);
+
+	search_path = (api_caller_depth > 0 && GetUserId() == worker_owner)
+		? api_caller_search_path_stack[api_caller_depth - 1]
+		: MemoryContextStrdup(TopMemoryContext, namespace_search_path ? namespace_search_path : "");
+	api_caller_stack[api_caller_depth] = caller;
+	api_caller_search_path_stack[api_caller_depth] = search_path;
+	api_caller_depth++;
+	PG_TRY();
+	{
+		(void) FunctionCallInvoke(worker_fcinfo);
+	}
+	PG_FINALLY();
+	{
+		api_caller_depth--;
+		if (api_caller_depth == 0 || api_caller_search_path_stack[api_caller_depth - 1] != search_path)
+			pfree(search_path);
+	}
+	PG_END_TRY();
+
+	PG_RETURN_VOID();
+}
+
+/*
  * __internal_truncate_as_owner(table regclass) -- TRUNCATE the table as its owner (the history TRUNCATE that follows a
  * base TRUNCATE, src/0h). Private.
  */
@@ -3966,6 +4039,14 @@ Datum
 api_caller_sql(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_OID(api_caller());
+}
+
+/* __internal_caller_is_superuser() -- whether the role the running event/API acts for is a superuser. */
+PG_FUNCTION_INFO_V1(api_caller_is_superuser_sql);
+Datum
+api_caller_is_superuser_sql(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(superuser_arg(api_caller()));
 }
 
 /*

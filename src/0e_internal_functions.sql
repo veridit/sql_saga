@@ -102,6 +102,7 @@ $function$;
  * pg_restore --clean drops every archived object, dependents first and each base table last, before
  * it recreates them, so the objects of a sql_saga family disappear one at a time while their catalog
  * rows still exist. The event triggers let such a statement through only when all of these hold:
+ *   - the recorded immediate caller is a superuser (ordinary roles cannot forge a restore exemption);
  *   - the session settings pg_dump and pg_restore always set: check_function_bodies and row_security off;
  *   - a pg_restore session: application_name 'pg_restore' (libpq's default for pg_restore), or the
  *     explicit opt-in sql_saga.clean_restore = on, for a restore script run through psql;
@@ -117,7 +118,8 @@ LANGUAGE sql
 STABLE
 SET search_path = pg_catalog
 AS $__internal_is_clean_teardown$
-    SELECT current_setting('check_function_bodies') = 'off'
+    SELECT sql_saga.__internal_caller_is_superuser()
+       AND current_setting('check_function_bodies') = 'off'
        AND current_setting('row_security') = 'off'
        AND (current_setting('application_name') = 'pg_restore'
             -- '' (not NULL) once the session has seen the placeholder, so coalesce both

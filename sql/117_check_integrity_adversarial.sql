@@ -204,6 +204,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
 ('__internal_check_history_columns(table_oid oid, history_table_oid oid, without_columns name[])'),
 ('__internal_column_type_sql(type_oid oid, typmod integer, collation_oid oid)'),
+('__internal_caller_is_superuser()'),
 ('__internal_current_view_clock(view_oid oid)'),
 ('__internal_current_view_now(view_oid oid, range_subtype regtype)'),
 ('__internal_deny_history(table_oid oid)'),

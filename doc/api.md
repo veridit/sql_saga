@@ -681,7 +681,7 @@ SECURITY INVOKER
 
 ```sql
 FUNCTION drop_protection() RETURNS event_trigger
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ### drop_synchronize_temporal_columns_trigger
