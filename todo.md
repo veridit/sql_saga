@@ -180,7 +180,16 @@ fixed. New findings, each fixed test-first:
 - [ ] Fourth independent review after Q1-Q6 until APPROVE
 
 **Open decisions for the owner (asked one at a time).**
-- [ ] D1 (asked 2026-10-26): Q4 scope. Run DDL as the recorded caller in ALL workers in 1.4, or only the predicate path
+- [x] D1 DECIDED 2026-10-26 (owner): everywhere, always. PRINCIPLE: sql_saga never runs an action on user objects
+      with elevated rights; it runs it as the calling user, so PostgreSQL itself requires that user to have the
+      rights. Any exception (an action that technically cannot run as the caller) needs the owner's explicit approval
+      first, with the reason; never engineered around without asking. Owner's reasoning: minimal SECURITY DEFINER and
+      minimal rights, because elevated code must otherwise re-create PostgreSQL's whole security system, which opens
+      many holes (Q1-Q4 are examples). Target: API workers SECURITY INVOKER (native checks decide); only tiny,
+      auditable definer functions remain, for writes to sql_saga's own catalog, each checking the caller's rights
+- [ ] D1 step 1: inventory every statement in the 44 SECURITY DEFINER functions (24 API workers, 14 internal helpers,
+      6 trigger functions); classify each as "runs as caller" or "needs an exception"; present the exceptions with
+      reasons for the owner's approval before implementing
 - [ ] D2: message texts name tables schema-qualified (public.t); StatBus test/expected/007 changes
 - [ ] D3: catalog_format 1.4: a 1.3 dump restores at 1.3, then ALTER EXTENSION UPDATE
 - [ ] D4: history writes run as the history table's owner
