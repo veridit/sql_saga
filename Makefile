@@ -211,7 +211,8 @@ endif
 # Unit tests of the update-script generator (no database needed).
 .PHONY: test-generator
 test-generator:
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts.py
+	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_4.py
+	devops/test_update_scripts_make.sh
 
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`
