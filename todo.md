@@ -164,7 +164,13 @@ fixed. New findings, each fixed test-first:
       registered table: crash, forgery), 149 (column privilege)
 - [ ] Q3 MEDIUM parity: require_references checks table-level REFERENCES only; native accepts REFERENCES on the
       referenced key columns. Check per column (pg_attribute_aclcheck); 149 cases; README wording
-- [ ] Q4 LOW: the recorded caller search_path is unused; a predicate text such as pred_fn(id) with pred_fn in public
+- [x] Q1 DONE 1517389 (test 150, 149 +22). Q2 + Q3 DONE ef9a5f0 (test 145 part 4, 149 +5; SV UPDATE 417-420 ms)
+- [ ] Q4 ESCALATED HIGH (2026-10-26): predicate text is spliced into an ALTER TABLE that the worker runs as the
+      extension owner; a non-superuser table owner injected ", OWNER TO postgres" and it ran. Root cause: the
+      workers check the caller's rights but execute as superuser. Proposed fix (owner's design): execute DDL on user
+      tables as the recorded caller under the caller's search_path (native rules decide), catalog writes stay with
+      the extension owner; predicate must parse as one condition. Scope is decision D1 below
+- [ ] (original Q4 text) LOW: the recorded caller search_path is unused; a predicate text such as pred_fn(id) with pred_fn in public
       worked in 1.3 and fails now when the constraint is built. Decide and implement (parse user text under the
       caller's path, or document that names must be qualified); fix the comment in 3h and todo R8
 - [ ] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
@@ -172,6 +178,15 @@ fixed. New findings, each fixed test-first:
 - [ ] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code
       with the extension owner's rights" claim (Q2), doc/upgrade.md (predicate resolution, adoption needs ownership)
 - [ ] Fourth independent review after Q1-Q6 until APPROVE
+
+**Open decisions for the owner (asked one at a time).**
+- [ ] D1 (asked 2026-10-26): Q4 scope. Run DDL as the recorded caller in ALL workers in 1.4, or only the predicate path
+- [ ] D2: message texts name tables schema-qualified (public.t); StatBus test/expected/007 changes
+- [ ] D3: catalog_format 1.4: a 1.3 dump restores at 1.3, then ALTER EXTENSION UPDATE
+- [ ] D4: history writes run as the history table's owner
+- [ ] D5: TRUNCATE refused only while a child row references the parent (native: by FK definition). Keep or match
+- [ ] D6: regular FK to an XOR key under MATCH SIMPLE protects nothing, as native; documented
+- [ ] D7: public management functions are C trampolines recording the caller, calling private workers
 
 **Review and release.**
 - [x] Second independent review of all 1.4 changes: BLOCK, findings R1-R7 above
