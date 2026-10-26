@@ -231,8 +231,8 @@ fixed. New findings, each fixed test-first:
      invalidation, and avoid new per-row or per-statement catalog work. Benchmark every security/identity conversion
      before and after against the pre-change code, 1.3 and native where applicable; address regressions rather than
      accepting or hiding them, and never buy speed by weakening the security principles above
-- [ ] D1b: regular-FK parent-side trigger DDL needs a narrow helper for exact native parity (child owner has
-      REFERENCES but need not have TRIGGER on the parent), or a different enforcement design
+- [x] D1b APPROVED 2026-10-26: a narrow helper may create/drop only the canonical parent-side regular-FK triggers
+      after the native REFERENCES check, for exact native REFERENCES-only parity; everything else runs as the caller
 - [ ] D1c: native-CASCADE cleanup on third-party child tables needs the same narrowly scoped treatment as native
       internal cascade, or more native constraints
 - [ ] D1d: generated per-era sync functions live in schema sql_saga. Namespace principle points to keeping them there
