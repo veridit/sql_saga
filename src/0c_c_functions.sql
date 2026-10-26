@@ -117,11 +117,11 @@ AS 'sql_saga', 'require_owner'
 LANGUAGE c STABLE;
 REVOKE ALL ON FUNCTION sql_saga.__internal_require_owner(regclass, text) FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION sql_saga.__internal_require_references(table_oid regclass)
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_references(table_oid regclass, column_names name[] DEFAULT NULL)
 RETURNS void
 AS 'sql_saga', 'require_references'
 LANGUAGE c STABLE;
-REVOKE ALL ON FUNCTION sql_saga.__internal_require_references(regclass) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_references(regclass, name[]) FROM PUBLIC;
 
 -- 1.4 (review round 3, Q1): the native checks of CREATE in a schema followed by ALTER ... OWNER TO, of ALTER TABLE
 -- ... OWNER TO and of DROP TABLE, for the role that called the management function. Private.

@@ -47,6 +47,11 @@ wrapper owned by non-owner, called by owner: adopting another role's history vs 
 child owner without REFERENCES on the parent: add_foreign_key vs ADD FOREIGN KEY | same: allowed
 child owner, REFERENCES revoked: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501
 parent owner, child owned by another role: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501
+child owner, REFERENCES on the key column only: add_foreign_key (regular) vs ADD FOREIGN KEY | same: allowed
+child owner, REFERENCES on another column only: add_foreign_key (regular) vs ADD FOREIGN KEY | same: refused 42501
+id: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: refused 42501
+valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: refused 42501
+id, valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: allowed
 --- B: writes against a regular foreign key and a native one, side by side
 column-privilege writer, child insert of a present key (parent unreadable, RLS hides it) | same: allowed
 column-privilege writer, child insert of an absent key | same: refused 23503

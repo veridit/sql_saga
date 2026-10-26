@@ -188,6 +188,43 @@ SELECT par.cmp('parent owner, child owned by another role: add_foreign_key vs AD
     par.try('pp_owner', $$SELECT sql_saga.add_foreign_key('par.s_child_all', ARRAY['parent_id'], 'par.s_parent', ARRAY['id'])$$),
     par.try('pp_owner', $$ALTER TABLE par.n_child_all ADD FOREIGN KEY (parent_id) REFERENCES par.n_parent (id)$$));
 
+-- REFERENCES on the key columns only (review round 3, Q3): natively enough, table-level not needed.
+\o /dev/null
+GRANT REFERENCES (id) ON par.s_parent, par.n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('child owner, REFERENCES on the key column only: add_foreign_key (regular) vs ADD FOREIGN KEY',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.s_child_all', ARRAY['parent_id'], 'par.s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.n_child_all ADD FOREIGN KEY (parent_id) REFERENCES par.n_parent (id)$$));
+\o /dev/null
+REVOKE REFERENCES (id) ON par.s_parent, par.n_parent FROM pp_allprivs;
+ALTER TABLE par.n_parent ADD COLUMN valid_range daterange;
+GRANT REFERENCES (valid_range) ON par.s_parent, par.n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('child owner, REFERENCES on another column only: add_foreign_key (regular) vs ADD FOREIGN KEY',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.s_child_all', ARRAY['parent_id'], 'par.s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.n_child_all ADD FOREIGN KEY (parent_id) REFERENCES par.n_parent (id)$$));
+\o /dev/null
+REVOKE REFERENCES (valid_range) ON par.s_parent, par.n_parent FROM pp_allprivs;
+ALTER TABLE par.n_parent DROP COLUMN valid_range;
+-- Temporal foreign keys: the native FOREIGN KEY ... PERIOD references the key columns and the range column.
+SET ROLE pp_owner;
+CREATE TABLE par.n_tparent (id int NOT NULL, valid_range daterange NOT NULL, UNIQUE (id, valid_range WITHOUT OVERLAPS));
+RESET ROLE;
+CREATE TABLE par.s_tchild (id int, parent_id int, valid_range daterange NOT NULL, valid_from date, valid_until date);
+CREATE TABLE par.n_tchild (id int, parent_id int, valid_range daterange NOT NULL);
+ALTER TABLE par.s_tchild OWNER TO pp_allprivs;
+ALTER TABLE par.n_tchild OWNER TO pp_allprivs;
+SET ROLE pp_allprivs;
+SELECT sql_saga.add_era('par.s_tchild', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+RESET ROLE;
+\o
+SELECT par.cmp(c.grant_cols || ': add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD',
+    par.try('superuser', format($$SET LOCAL ROLE pp_owner; GRANT REFERENCES (%1$s) ON par.s_parent, par.n_tparent TO pp_allprivs; SET LOCAL ROLE pp_allprivs;
+        SELECT sql_saga.add_foreign_key('par.s_tchild', ARRAY['parent_id'], 'par.s_parent', ARRAY['id'])$$, c.grant_cols)),
+    par.try('superuser', format($$SET LOCAL ROLE pp_owner; GRANT REFERENCES (%1$s) ON par.s_parent, par.n_tparent TO pp_allprivs; SET LOCAL ROLE pp_allprivs;
+        ALTER TABLE par.n_tchild ADD FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES par.n_tparent (id, PERIOD valid_range)$$, c.grant_cols)))
+FROM (VALUES (1, 'id'), (2, 'valid_range'), (3, 'id, valid_range')) AS c (n, grant_cols) ORDER BY c.n;
+
 \echo '--- B: writes against a regular foreign key and a native one, side by side'
 \o /dev/null
 SET ROLE pp_owner;

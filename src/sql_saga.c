@@ -193,6 +193,9 @@ static HTAB *uk_delete_plan_cache = NULL;
 static HTAB *uk_update_plan_cache = NULL;
 static bool cache_callback_registered = false;
 static void regular_fk_verified_reset(void);
+static void sv_verify_trigger(FunctionCallInfo fcinfo, int kind);
+#define SV_TRIGGER_GENERATED_ALWAYS 10	/* generated_always_as_row_start_end: generated_always_trigger */
+#define SV_TRIGGER_WRITE_HISTORY 11		/* write_history: write_history_trigger */
 
 /* Free the kept plans of a transaction's cache and the cache itself. */
 static void
@@ -1605,6 +1608,141 @@ refuse:
 					   get_func_name(fcinfo->flinfo->fn_oid), trigger_column[kind])));
 }
 
+/*
+ * The system-versioning trigger functions (generated_always_as_row_start_end, write_history) are SECURITY DEFINER and
+ * write as the extension owner (the generated column) or the history owner (the history row). A role with TRIGGER on
+ * a system-versioned table may create triggers on it, so each first checks that it fires as the trigger sql_saga
+ * created (1.4, review round 3, Q2): a sql_saga.system_time_era row for the firing table, the catalogued trigger
+ * name for the kind, not internal, and exactly one argument equal to the era's range column. Before Q2 a forged
+ * trigger crashed the server (write_history on a non-range column), forged history rows, or wrote a column the role
+ * has no privilege on. Verified triggers are cached for the transaction with the regular foreign key triggers.
+ */
+
+static SPIPlanPtr sv_verify_plan = NULL;
+
+static void
+sv_verify_trigger(FunctionCallInfo fcinfo, int kind)
+{
+	TriggerData *trigdata = (TriggerData *) fcinfo->context;
+	Trigger    *trigger = trigdata->tg_trigger;
+	Relation	rel = trigdata->tg_relation;
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	int			ret = 0;
+	bool		ok = false;
+	char	   *schema_name;
+
+	if (trigger->tgisinternal || trigger->tgnargs != 1)
+		goto refuse;
+	if (regular_fk_verified != NULL)
+	{
+		RegularFkVerified *hit = hash_search(regular_fk_verified, &trigger->tgoid, HASH_FIND, NULL);
+
+		if (hit != NULL && hit->relid == RelationGetRelid(rel) && hit->kind == (int) kind)
+			return;
+	}
+
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+	if (sv_verify_plan == NULL)
+	{
+		/* $1 schema, $2 table, $3 trigger name, $4 kind (10 generated always, 11 write history). */
+		const char *sql =
+			"SELECT EXISTS ("
+			" SELECT FROM sql_saga.system_time_era AS ste"
+			" JOIN sql_saga.era AS e ON e.table_schema OPERATOR(pg_catalog.=) ste.table_schema"
+			"   AND e.table_name OPERATOR(pg_catalog.=) ste.table_name AND e.era_name OPERATOR(pg_catalog.=) ste.era_name"
+			" WHERE ste.table_schema OPERATOR(pg_catalog.=) $1 AND ste.table_name OPERATOR(pg_catalog.=) $2"
+			"   AND $3 OPERATOR(pg_catalog.=) CASE $4 WHEN 10 THEN ste.generated_always_trigger ELSE ste.write_history_trigger END"
+			"   AND e.range_column_name OPERATOR(pg_catalog.=) $5)";
+		Oid			argtypes[5] = {NAMEOID, NAMEOID, NAMEOID, INT4OID, NAMEOID};
+
+		sv_verify_plan = regular_fk_prepare_as(function_owner, sql, 5, argtypes);
+	}
+	schema_name = get_namespace_name(RelationGetNamespace(rel));
+	{
+		Datum		args[5];
+		char		argnulls[5] = {' ', ' ', ' ', ' ', ' '};
+
+		args[0] = DirectFunctionCall1(namein, CStringGetDatum(schema_name));
+		args[1] = DirectFunctionCall1(namein, CStringGetDatum(RelationGetRelationName(rel)));
+		args[2] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgname));
+		args[3] = Int32GetDatum((int32) kind);
+		args[4] = DirectFunctionCall1(namein, CStringGetDatum(trigger->tgargs[0]));
+
+		GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+		SetUserIdAndSecContext(function_owner,
+							   saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		PG_TRY();
+		{
+			ret = SPI_execute_plan(sv_verify_plan, args, argnulls, true, 1);
+			if (ret == SPI_OK_SELECT && SPI_processed == 1)
+			{
+				bool		isnull;
+				Datum		d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+
+				ok = !isnull && DatumGetBool(d);
+			}
+		}
+		PG_FINALLY();
+		{
+			SetUserIdAndSecContext(saved_userid, saved_sec_context);
+		}
+		PG_END_TRY();
+	}
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "system versioning trigger verification returned %s", SPI_result_code_string(ret));
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+	if (ok)
+	{
+		RegularFkVerified *entry;
+
+		if (!regular_fk_verified_callbacks_registered)
+		{
+			CacheRegisterRelcacheCallback(regular_fk_verified_relcache_callback, (Datum) 0);
+			regular_fk_verified_callbacks_registered = true;
+		}
+		if (!cache_callback_registered)
+		{
+			RegisterXactCallback(cache_cleanup_callback, NULL);
+			cache_callback_registered = true;
+		}
+		if (regular_fk_verified == NULL)
+		{
+			HASHCTL		ctl;
+
+			memset(&ctl, 0, sizeof(ctl));
+			ctl.keysize = sizeof(Oid);
+			ctl.entrysize = sizeof(RegularFkVerified);
+			ctl.hcxt = TopMemoryContext;
+			regular_fk_verified = hash_create("sql_saga verified regular foreign key triggers", 16, &ctl,
+											  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+		}
+		entry = hash_search(regular_fk_verified, &trigger->tgoid, HASH_ENTER, NULL);
+		entry->relid = RelationGetRelid(rel);
+		entry->kind = (int) kind;
+		return;
+	}
+
+refuse:
+	ereport(ERROR,
+			(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("trigger \"%s\" on table \"%s\" is not a sql_saga system versioning trigger",
+					trigger->tgname, RelationGetRelationName(rel)),
+			 errdetail("%s may only fire as the %s trigger that sql_saga created for the table's system time era, with its argument.",
+					   get_func_name(fcinfo->flinfo->fn_oid),
+					   kind == SV_TRIGGER_GENERATED_ALWAYS ? "generated_always_trigger" : "write_history_trigger")));
+}
+
 static void
 regular_fk_parse_columns(const char *str, Datum **datums, int *count)
 {
@@ -2991,6 +3129,8 @@ generated_always_as_row_start_end(PG_FUNCTION_ARGS)
 	if (trigdata->tg_trigger->tgnargs != 1)
 		elog(ERROR, "%s: expected 1 argument (range_column_name), got %d",
 			 funcname, trigdata->tg_trigger->tgnargs);
+	/* Only as the trigger sql_saga created, with the era's range column (1.4, review round 3, Q2). */
+	sv_verify_trigger(fcinfo, SV_TRIGGER_GENERATED_ALWAYS);
 	range_column_name = trigdata->tg_trigger->tgargs[0];
 
 	rel = trigdata->tg_relation;
@@ -3082,6 +3222,8 @@ write_history(PG_FUNCTION_ARGS)
 	if (trigdata->tg_trigger->tgnargs != 1)
 		elog(ERROR, "%s: expected 1 argument (range_column_name), got %d",
 			 funcname, trigdata->tg_trigger->tgnargs);
+	/* Only as the trigger sql_saga created, with the era's range column (1.4, review round 3, Q2). */
+	sv_verify_trigger(fcinfo, SV_TRIGGER_WRITE_HISTORY);
 	range_column_name = trigdata->tg_trigger->tgargs[0];
 
 	rel = trigdata->tg_relation;
@@ -3119,6 +3261,9 @@ write_history(PG_FUNCTION_ARGS)
 						errmsg("column \"%s\" does not exist in table \"%s\"",
 							   range_column_name, RelationGetRelationName(rel))));
 	range_type_oid = SPI_gettypeid(tupledesc, range_num);
+	/* Defense in depth: the range is deserialized below, so its type must be checked first. */
+	if (range_type_oid != TSTZRANGEOID)
+		elog(ERROR, "system time range column must be of type tstzrange");
 	range_cache = lookup_type_cache(range_type_oid, TYPECACHE_RANGE_INFO);
 
 	if (TRIGGER_FIRED_BY_INSERT(trigdata->tg_event) ||
@@ -3480,23 +3625,53 @@ require_owner(PG_FUNCTION_ARGS)
 }
 
 /*
- * __internal_require_references(table_oid regclass) -- refuse unless the role that called sql_saga's API has
- * REFERENCES on the table, as ALTER TABLE ... ADD FOREIGN KEY requires for the referenced table.
+ * __internal_require_references(table_oid regclass, column_names name[]) -- refuse unless the role that called
+ * sql_saga's API may reference the key columns, as ALTER TABLE ... ADD FOREIGN KEY requires (checkFkeyPermissions):
+ * REFERENCES on the table, or else on every referenced column (1.4, review round 3, Q3).
  */
 PG_FUNCTION_INFO_V1(require_references);
 Datum
 require_references(PG_FUNCTION_ARGS)
 {
 	Oid			relid;
+	Oid			caller = api_caller();
+	bool		ok = false;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("no table name specified")));
 	relid = PG_GETARG_OID(0);
-	if (pg_class_aclcheck(relid, api_caller(), ACL_REFERENCES) != ACLCHECK_OK)
+	if (pg_class_aclcheck(relid, caller, ACL_REFERENCES) == ACLCHECK_OK)
+		ok = true;
+	else if (!PG_ARGISNULL(1))
+	{
+		ArrayType  *arr = PG_GETARG_ARRAYTYPE_P(1);
+		Datum	   *elems;
+		bool	   *elem_nulls;
+		int			nelems;
+		int			i;
+
+		deconstruct_array(arr, NAMEOID, NAMEDATALEN, false, TYPALIGN_CHAR, &elems, &elem_nulls, &nelems);
+		ok = nelems > 0;
+		for (i = 0; i < nelems && ok; i++)
+		{
+			AttrNumber	attnum;
+
+			if (elem_nulls[i])
+				ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("key column name must not be NULL")));
+			attnum = get_attnum(relid, NameStr(*DatumGetName(elems[i])));
+			if (attnum == InvalidAttrNumber)
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_COLUMN),
+						 errmsg("column \"%s\" of relation \"%s\" does not exist",
+								NameStr(*DatumGetName(elems[i])), get_rel_name(relid))));
+			ok = pg_attribute_aclcheck(relid, attnum, caller, ACL_REFERENCES) == ACLCHECK_OK;
+		}
+	}
+	if (!ok)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied for table %s", get_rel_name(relid)),
-				 errdetail("A foreign key needs the REFERENCES privilege on the referenced table.")));
+				 errdetail("A foreign key needs the REFERENCES privilege on the referenced table or on its key columns.")));
 	PG_RETURN_VOID();
 }
 

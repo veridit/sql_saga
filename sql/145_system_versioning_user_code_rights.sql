@@ -96,9 +96,55 @@ SET ROLE svu_attacker;
 CREATE TABLE svu_att.t (id int NOT NULL, note text, system_valid_range tstzrange);
 CREATE TRIGGER f AFTER TRUNCATE ON svu_att.t FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning();
 CREATE TRIGGER w AFTER DELETE ON svu_att.t FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('system_valid_range');
+-- Refused since Q2: the trigger is not one sql_saga created for a system time era.
 TRUNCATE svu_att.t;
 RESET ROLE;
 SELECT 'registered history unchanged | ' || ((SELECT count(*) FROM svu.t_history) = (SELECT n FROM svu_before))::text;
+
+\echo '--- part 4: forged triggers on the registered table itself are refused (review round 3, Q2)'
+-- A role with TRIGGER and UPDATE on a system-versioned table may create triggers on it. Before Q2 a forged
+-- write_history on a non-range column crashed the server, one on a second tstzrange column forged history rows,
+-- and a forged generated_always_as_row_start_end wrote a column the role may not write. Each must be refused.
+\o /dev/null
+SET ROLE svu_owner;
+ALTER TABLE svu.t_history ADD COLUMN fake_range tstzrange;
+ALTER TABLE svu.t ADD COLUMN fake_range tstzrange;
+GRANT TRIGGER ON svu.t TO svu_writer;
+REVOKE INSERT ON svu.t FROM svu_writer;
+GRANT INSERT (id, note) ON svu.t TO svu_writer;
+INSERT INTO svu.t (id, note) VALUES (4, 'four');
+RESET ROLE;
+\o
+CREATE FUNCTION svu.try(stmt text) RETURNS text LANGUAGE plpgsql AS $try$
+BEGIN
+    BEGIN
+        SET LOCAL ROLE svu_writer;
+        EXECUTE stmt;
+        RAISE EXCEPTION USING ERRCODE = 'P0099';
+    EXCEPTION
+        WHEN SQLSTATE 'P0099' THEN RESET ROLE; RETURN 'allowed';
+        WHEN OTHERS THEN RESET ROLE; RETURN 'refused ' || SQLSTATE || ': ' || SQLERRM;
+    END;
+END;
+$try$;
+SELECT 'write_history on a non-range column | ' || svu.try($$
+    CREATE TRIGGER forged_crash AFTER UPDATE ON svu.t FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('note');
+    UPDATE svu.t SET note = 'crash?' WHERE id = 4$$);
+SELECT 'write_history on a second tstzrange column | ' || svu.try($$
+    CREATE TRIGGER forged_history AFTER UPDATE ON svu.t FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('fake_range');
+    UPDATE svu.t SET fake_range = tstzrange(now(), NULL) WHERE id = 4$$);
+SELECT 'write_history with the canonical argument under another name | ' || svu.try($$
+    CREATE TRIGGER forged_copy AFTER UPDATE ON svu.t FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('system_valid_range');
+    UPDATE svu.t SET note = 'copy?' WHERE id = 4$$);
+SELECT 'generated_always_as_row_start_end on a column without privilege | ' || svu.try($$
+    CREATE TRIGGER forged_gen BEFORE INSERT ON svu.t FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end('fake_range');
+    INSERT INTO svu.t (id, note) VALUES (5, 'five')$$);
+SELECT 'truncate_system_versioning under another name | ' || svu.try($$
+    CREATE TRIGGER forged_trunc AFTER TRUNCATE ON svu.t FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning();
+    TRUNCATE svu.t$$);
+-- The canonical triggers still work for the same writer (rolled back).
+SELECT 'the writer''s UPDATE through the canonical triggers | ' || svu.try($$UPDATE svu.t SET note = 'fine' WHERE id = 4$$);
+SELECT 'history rows with an open-ended system_valid_range | ' || count(*) FROM svu.t_history WHERE upper_inf(system_valid_range);
 
 RESET ROLE;
 DROP SCHEMA svu CASCADE;

@@ -12,4 +12,13 @@ svu_owner | superuser false | t_history INSERT
 after the writer's TRUNCATE, history rows | 0
 svu_owner | superuser false | t_history TRUNCATE
 --- part 3: forged triggers cannot reach a registered history
+ERROR:  trigger "f" on table "t" is not a sql_saga system versioning trigger
 registered history unchanged | true
+--- part 4: forged triggers on the registered table itself are refused (review round 3, Q2)
+write_history on a non-range column | refused 42501: trigger "forged_crash" on table "t" is not a sql_saga system versioning trigger
+write_history on a second tstzrange column | refused 42501: trigger "forged_history" on table "t" is not a sql_saga system versioning trigger
+write_history with the canonical argument under another name | refused 42501: trigger "forged_copy" on table "t" is not a sql_saga system versioning trigger
+generated_always_as_row_start_end on a column without privilege | refused 42501: trigger "forged_gen" on table "t" is not a sql_saga system versioning trigger
+truncate_system_versioning under another name | refused 42501: trigger "forged_trunc" on table "t" is not a sql_saga system versioning trigger
+the writer's UPDATE through the canonical triggers | allowed
+history rows with an open-ended system_valid_range | 0

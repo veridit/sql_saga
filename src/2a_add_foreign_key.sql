@@ -462,7 +462,8 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
-    PERFORM sql_saga.__internal_require_references(uk_table_oid);
+    -- As ADD FOREIGN KEY ... REFERENCES t (key columns): table-level or per-column REFERENCES (Q3).
+    PERFORM sql_saga.__internal_require_references(uk_table_oid, v_uk_stable_cols);
 
     v_fk_index_name := sql_saga.__find_or_create_fk_index(
         fk_table_oid,
@@ -798,7 +799,8 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name, uk_table_name)::regclass;
-    PERFORM sql_saga.__internal_require_references(uk_table_oid);
+    -- As ADD FOREIGN KEY ... REFERENCES t (key columns, PERIOD range): table-level or per-column REFERENCES (Q3).
+    PERFORM sql_saga.__internal_require_references(uk_table_oid, v_uk_stable_cols || uk_era_row.range_column_name);
 
     /* Check that all the columns match */
     IF array_length(fk_column_names, 1) <> array_length(v_uk_stable_cols, 1) THEN
