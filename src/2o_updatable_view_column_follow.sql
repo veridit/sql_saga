@@ -241,12 +241,12 @@ BEGIN
           AND (e.grantee = 0 OR EXISTS (SELECT FROM pg_catalog.pg_roles AS r WHERE r.oid = e.grantee))
         ORDER BY e.grantee, e.privilege_type
     LOOP
-        EXECUTE pg_catalog.format('GRANT %s%s ON TABLE %s TO %s%s',
+        PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('GRANT %s%s ON TABLE %s TO %s%s',
             x.privilege_type,
             CASE WHEN column_name IS NULL THEN '' ELSE pg_catalog.format(' (%I)', column_name) END,
             view_oid::pg_catalog.regclass,
             CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::pg_catalog.regrole::text END,
-            CASE WHEN x.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END);
+            CASE WHEN x.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END));
     END LOOP;
 END;
 $__internal_updatable_view_apply_acl$;
@@ -314,7 +314,7 @@ BEGIN
     IF v_extension IS NOT NULL THEN
         EXECUTE pg_catalog.format('ALTER EXTENSION %I DROP VIEW %s', v_extension, v_view_oid::pg_catalog.regclass);
     END IF;
-    EXECUTE pg_catalog.format('DROP VIEW %s', v_view_oid::pg_catalog.regclass);
+    PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('DROP VIEW %s', v_view_oid::pg_catalog.regclass));
 END;
 $__internal_updatable_view_record_and_drop$;
 
@@ -356,7 +356,8 @@ BEGIN
                  pending.era_name, pending.trigger_name, pending.current_func,
                  sql_saga.__internal_updatable_view_generated_columns(v_table_oid), pending.ephemeral_columns)::sql_saga.updatable_view;
 
-    EXECUTE sql_saga.__internal_updatable_view_create_sql(v_row, false, pending.view_reloptions, pending.view_clock);
+    PERFORM sql_saga.__internal_execute_as_caller(
+        sql_saga.__internal_updatable_view_create_sql(v_row, false, pending.view_reloptions, pending.view_clock));
     v_view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', v_row.view_schema, v_row.view_name));
 
     /*
@@ -374,12 +375,12 @@ BEGIN
         END IF;
     END IF;
     -- As add_*_view: the view belongs to the table owner.
-    EXECUTE pg_catalog.format('ALTER VIEW %s OWNER TO %s', v_view_oid::pg_catalog.regclass,
-        (SELECT c.relowner::pg_catalog.regrole::text FROM pg_catalog.pg_class AS c WHERE c.oid = v_table_oid));
+    PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER VIEW %s OWNER TO %s', v_view_oid::pg_catalog.regclass,
+        (SELECT c.relowner::pg_catalog.regrole::text FROM pg_catalog.pg_class AS c WHERE c.oid = v_table_oid)));
 
     PERFORM sql_saga.__internal_updatable_view_apply_acl(v_view_oid, NULL, pending.view_acl);
     IF pending.view_comment IS NOT NULL THEN
-        EXECUTE pg_catalog.format('COMMENT ON VIEW %s IS %L', v_view_oid::pg_catalog.regclass, pending.view_comment);
+        PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('COMMENT ON VIEW %s IS %L', v_view_oid::pg_catalog.regclass, pending.view_comment));
     END IF;
 
     FOR v_column IN SELECT c FROM pg_catalog.jsonb_array_elements(pending.column_facts) AS c
@@ -392,11 +393,11 @@ BEGIN
                 ARRAY(SELECT pg_catalog.jsonb_array_elements_text(v_column->'acl'))::aclitem[]);
         END IF;
         IF v_column->>'comment' IS NOT NULL THEN
-            EXECUTE pg_catalog.format('COMMENT ON COLUMN %s.%I IS %L', v_view_oid::pg_catalog.regclass, v_column->>'name', v_column->>'comment');
+            PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('COMMENT ON COLUMN %s.%I IS %L', v_view_oid::pg_catalog.regclass, v_column->>'name', v_column->>'comment'));
         END IF;
         IF v_column->>'default' IS NOT NULL THEN
             -- pg_get_expr text captured under this same search_path.
-            EXECUTE pg_catalog.format('ALTER VIEW %s ALTER COLUMN %I SET DEFAULT %s', v_view_oid::pg_catalog.regclass, v_column->>'name', v_column->>'default');
+            PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER VIEW %s ALTER COLUMN %I SET DEFAULT %s', v_view_oid::pg_catalog.regclass, v_column->>'name', v_column->>'default'));
         END IF;
     END LOOP;
 
@@ -408,12 +409,12 @@ BEGIN
         END IF;
         PERFORM sql_saga.__internal_execute_as_caller(v_trigger->>'definition');
         IF v_trigger->>'enabled' IS DISTINCT FROM 'O' THEN
-            EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', v_view_oid::pg_catalog.regclass,
+            PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', v_view_oid::pg_catalog.regclass,
                 CASE v_trigger->>'enabled' WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' ELSE 'ENABLE ALWAYS' END,
-                v_trigger->>'name');
+                v_trigger->>'name'));
         END IF;
         IF v_trigger->>'comment' IS NOT NULL THEN
-            EXECUTE pg_catalog.format('COMMENT ON TRIGGER %I ON %s IS %L', v_trigger->>'name', v_view_oid::pg_catalog.regclass, v_trigger->>'comment');
+            PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('COMMENT ON TRIGGER %I ON %s IS %L', v_trigger->>'name', v_view_oid::pg_catalog.regclass, v_trigger->>'comment'));
         END IF;
     END LOOP;
 
@@ -896,8 +897,8 @@ BEGIN
                 ORDER BY va.n
             LOOP
                 RAISE DEBUG 'sql_saga: follow rename of column "%" to "%" in view %', v_rename.old_name, v_rename.new_name, v_view.view_oid::pg_catalog.regclass;
-                EXECUTE pg_catalog.format('ALTER VIEW %s RENAME COLUMN %I TO %I',
-                    v_view.view_oid::pg_catalog.regclass, v_rename.old_name, v_rename.new_name);
+                PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER VIEW %s RENAME COLUMN %I TO %I',
+                    v_view.view_oid::pg_catalog.regclass, v_rename.old_name, v_rename.new_name));
                 RAISE NOTICE 'sql_saga: Renamed column "%" of % view "%" to "%" to follow the rename in table "%"',
                     v_rename.old_name, v_row.view_type, sql_saga.__internal_display_name(v_view.view_oid::pg_catalog.regclass),
                     v_rename.new_name, sql_saga.__internal_display_name(v_view.table_oid::pg_catalog.regclass);
@@ -912,11 +913,11 @@ BEGIN
                    AND v_rename.old_name = ANY (v_trigger_args[v_first_column_arg:]) THEN
                     v_trigger_args := v_trigger_args[1:v_first_column_arg - 1]
                                       || pg_catalog.array_replace(v_trigger_args[v_first_column_arg:], v_rename.old_name::text, v_rename.new_name::text);
-                    EXECUTE pg_catalog.format('CREATE OR REPLACE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.%s(%s)',
+                    PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('CREATE OR REPLACE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.%s(%s)',
                         v_row.trigger_name, v_view.view_oid::pg_catalog.regclass,
                         CASE v_row.view_type WHEN 'current' THEN 'current_view_trigger' ELSE 'for_portion_of_trigger' END,
                         (SELECT pg_catalog.string_agg(pg_catalog.quote_literal(a.arg), ', ' ORDER BY a.n)
-                         FROM pg_catalog.unnest(v_trigger_args) WITH ORDINALITY AS a(arg, n)));
+                         FROM pg_catalog.unnest(v_trigger_args) WITH ORDINALITY AS a(arg, n))));
                     RAISE NOTICE 'sql_saga: Recreated trigger "%" on % view "%" (CREATE OR REPLACE TRIGGER) with identifier column "%" renamed to "%"',
                         v_row.trigger_name, v_row.view_type, sql_saga.__internal_display_name(v_view.view_oid::pg_catalog.regclass),
                         v_rename.old_name, v_rename.new_name;
@@ -939,9 +940,10 @@ BEGIN
                 -- taken instead. Any other 55000 from this statement is handled the same way: the fallback either
                 -- rebuilds the view completely or refuses with its own message, so nothing is silently lost.
                 BEGIN
-                    EXECUTE sql_saga.__internal_updatable_view_create_sql(v_row, true,
-                        (SELECT c.reloptions FROM pg_catalog.pg_class AS c WHERE c.oid = v_view.view_oid),
-                        CASE WHEN v_row.view_type = 'current' THEN sql_saga.__internal_current_view_clock(v_view.view_oid) END);
+                    PERFORM sql_saga.__internal_execute_as_caller(
+                        sql_saga.__internal_updatable_view_create_sql(v_row, true,
+                            (SELECT c.reloptions FROM pg_catalog.pg_class AS c WHERE c.oid = v_view.view_oid),
+                            CASE WHEN v_row.view_type = 'current' THEN sql_saga.__internal_current_view_clock(v_view.view_oid) END));
                     v_replaced := true;
                 EXCEPTION WHEN object_not_in_prerequisite_state THEN
                     /*

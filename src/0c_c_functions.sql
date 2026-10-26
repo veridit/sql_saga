@@ -94,7 +94,7 @@ GRANT EXECUTE ON FUNCTION sql_saga.rename_following() TO PUBLIC;
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger
 AS 'sql_saga', 'generated_always_as_row_start_end'
-LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, pg_temp;
+LANGUAGE c STRICT SECURITY INVOKER SET search_path = sql_saga, pg_catalog, pg_temp;
 
 CREATE OR REPLACE FUNCTION sql_saga.write_history()
 RETURNS trigger

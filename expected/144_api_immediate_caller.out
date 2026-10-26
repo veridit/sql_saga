@@ -62,6 +62,5 @@ sql_saga.__internal_updatable_view_follow_shape(oid[]) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_alter_type(oid,text[],text[],boolean) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_drop_column(oid,text[],boolean) | PUBLIC no
 sql_saga.check_integrity() | PUBLIC no
-sql_saga.generated_always_as_row_start_end() | PUBLIC yes
 sql_saga.truncate_system_versioning() | PUBLIC yes
 sql_saga.write_history() | PUBLIC yes
