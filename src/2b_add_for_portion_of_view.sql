@@ -15,6 +15,10 @@ BEGIN
         RAISE EXCEPTION 'table_oid must not be NULL';
     END IF;
     PERFORM sql_saga.__internal_require_owner(table_oid, 'add_for_portion_of_view');
+    /* The view is created in the table's schema for its owner (1.4, review round 3, Q1). */
+    PERFORM sql_saga.__internal_require_create(
+        (SELECT c.relnamespace FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid),
+        (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid)::regrole, 'add_for_portion_of_view');
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
 

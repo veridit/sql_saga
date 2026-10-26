@@ -333,6 +333,7 @@ BEGIN
       EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
       table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
       IF (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) <> table_owner THEN
+          PERFORM sql_saga.__internal_require_owner_change(history_table_oid::regclass, table_owner::regrole, 'rebuild_system_versioning_views');
           EXECUTE pg_catalog.format('ALTER TABLE %s OWNER TO %I', history_table_oid::regclass, table_owner);
       END IF;
       IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) THEN
@@ -427,6 +428,9 @@ BEGIN
     FROM pg_catalog.pg_class AS c
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
     WHERE c.oid = table_oid;
+    /* The history table, views and functions are created in the base table's schema for its owner (Q1). */
+    PERFORM sql_saga.__internal_require_create(
+        (SELECT c.relnamespace FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid), table_owner, 'add_system_versioning');
 
     IF EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)) THEN
         RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
@@ -489,6 +493,8 @@ BEGIN
         IF EXISTS (SELECT 1 FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = (table_schema, history_table_name)) THEN
             RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
         END IF;
+        /* Adopting stands for ALTER TABLE <history> OWNER TO <base owner> (1.4, review round 3, Q1). */
+        PERFORM sql_saga.__internal_require_owner_change(history_table_id::regclass, table_owner, 'add_system_versioning');
         /*
          * Compare with the base table as it will be once versioned: the system time era adds
          * system_valid_range when the base lacks it. Checked here, before any change.

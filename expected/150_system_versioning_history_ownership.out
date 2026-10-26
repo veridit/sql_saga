@@ -1,0 +1,33 @@
+\set ECHO none
+--- part 1: adopting another role's table is refused
+refused 42501: must be owner of table victim
+victim owner: hsv_victim, rls: false, acl: default
+registered as history: 0
+mine has system versioning: 0
+native: refused 42501: must be owner of table victim
+--- part 2: adopting one's own table, and a table of an inherited role, works
+
+mine_history owner: hsv_evil
+
+grp_history owner: hsv_member
+native: refused 42501: must be owner of table mine_history
+--- part 3: no CREATE on the schema
+add_system_versioning: refused 42501: permission denied for schema hsv
+native CREATE TABLE: refused 42501: permission denied for schema hsv
+t
+nc_pk
+add_for_portion_of_view: refused 42501: permission denied for schema hsv
+add_current_view: refused 42501: permission denied for schema hsv
+native CREATE VIEW: refused 42501: permission denied for schema hsv
+with CREATE, add_system_versioning: allowed
+with CREATE, add_for_portion_of_view: allowed
+with CREATE, add_current_view: allowed
+--- part 4: a history table another role owns is neither dropped nor re-owned
+rebuild_system_versioning_views: allowed
+drop_system_versioning: refused 42501: must be owner of table mine_history
+native DROP TABLE: refused 42501: must be owner of table mine_history
+mine_history owner: hsv_victim
+owner again, rebuild_system_versioning_views: allowed
+owner again, drop_system_versioning: allowed
+schema owner, drop_system_versioning: allowed
+schema owner, native DROP TABLE of another role's table: allowed

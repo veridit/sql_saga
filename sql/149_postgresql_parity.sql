@@ -145,6 +145,29 @@ SELECT par.cmp(c.label || ': add_unique_key vs ADD CONSTRAINT UNIQUE',
     par.try(c.r, par.as_caller(c.how, $$ALTER TABLE par.n_key ADD UNIQUE (id, valid_range WITHOUT OVERLAPS)$$)))
 FROM caller AS c ORDER BY c.n;
 
+-- System versioning (review round 3, Q1): add_system_versioning stands for ALTER TABLE <base> (the era column and
+-- triggers) plus CREATE TABLE <history> (LIKE <base>) in the base table's schema, given to the base owner; adopting an
+-- existing history stands for ALTER TABLE <history> OWNER TO <base owner> instead of the CREATE.
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.s_sv (id int);
+CREATE TABLE par.n_sv (id int);
+CREATE TABLE par.s_sv_adopt (id int);
+RESET ROLE;
+-- An existing table owned by another role, named as the history, against the native takeover of it.
+CREATE TABLE par.foreign_history (id int, system_valid_range tstzrange);
+ALTER TABLE par.foreign_history OWNER TO pp_allprivs;
+GRANT ALL ON par.s_sv, par.n_sv, par.s_sv_adopt TO pp_allprivs;
+\o
+SELECT par.cmp(c.label || ': add_system_versioning vs CREATE TABLE (LIKE) in the schema',
+    par.try(c.r, par.as_caller(c.how, $$SELECT sql_saga.add_system_versioning('par.s_sv')$$)),
+    par.try(c.r, par.as_caller(c.how, $$ALTER TABLE par.n_sv ADD COLUMN system_valid_range tstzrange; CREATE TABLE par.n_sv_history (LIKE par.n_sv); ALTER TABLE par.n_sv_history OWNER TO pp_owner$$)))
+FROM caller AS c ORDER BY c.n;
+SELECT par.cmp(c.label || ': adopting another role''s history vs ALTER TABLE OWNER TO',
+    par.try(c.r, par.as_caller(c.how, $$SELECT sql_saga.add_system_versioning('par.s_sv_adopt', history_table_name => 'foreign_history')$$)),
+    par.try(c.r, par.as_caller(c.how, $$ALTER TABLE par.n_sv ADD COLUMN adopt_probe int; ALTER TABLE par.foreign_history OWNER TO pp_owner$$)))
+FROM caller AS c ORDER BY c.n;
+
 -- Foreign keys: the caller's own child table (so ownership of the child holds), parent owned by pp_owner.
 \o /dev/null
 CREATE TABLE par.s_child_all (id int, parent_id int);

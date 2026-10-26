@@ -1513,6 +1513,8 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 		/*
 		 * $1 foreign key name, $2 firing table, $3 trigger name, $4 kind (0 child, 1 update, 2 delete, 3 truncate).
 		 * The trigger is looked up by table and name, and its arguments compared with the canonical ones.
+		 * uk_truncate_trigger is read through to_jsonb: between installing the 1.4 library and ALTER EXTENSION
+		 * UPDATE, the catalog still has the 1.3 layout without that column, and the existing triggers must work.
 		 */
 		const char *sql =
 			"SELECT EXISTS ("
@@ -1525,7 +1527,7 @@ regular_fk_verify_trigger(FunctionCallInfo fcinfo, RegularFkTriggerKind kind)
 			"         THEN pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name))"
 			"         ELSE pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name)) END"
 			"   AND $3 OPERATOR(pg_catalog.=) CASE $4 WHEN 0 THEN fk.fk_check_constraint WHEN 1 THEN fk.uk_update_trigger"
-			"         WHEN 2 THEN fk.uk_delete_trigger ELSE fk.uk_truncate_trigger END"
+			"         WHEN 2 THEN fk.uk_delete_trigger ELSE (pg_catalog.to_jsonb(fk) OPERATOR(pg_catalog.->>) 'uk_truncate_trigger')::pg_catalog.name END"
 			"   AND t.tgargs OPERATOR(pg_catalog.=) sql_saga.__internal_regular_fk_trigger_args(fk.foreign_key_name))";
 		Oid			argtypes[4] = {NAMEOID, OIDOID, NAMEOID, INT4OID};
 
@@ -3495,5 +3497,118 @@ require_references(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied for table %s", get_rel_name(relid)),
 				 errdetail("A foreign key needs the REFERENCES privilege on the referenced table.")));
+	PG_RETURN_VOID();
+}
+
+/*
+ * The native checks of ALTER ... OWNER TO for a role (ATExecChangeOwner, AlterObjectOwner_internal): a superuser
+ * passes; anyone else needs the right to SET ROLE to the new owner, and the new owner needs CREATE on the schema.
+ * Ownership of the object itself is checked by the caller.
+ */
+static void
+require_can_give_to(Oid caller, Oid new_owner, Oid nsp)
+{
+	if (superuser_arg(caller) || caller == new_owner)
+		return;
+	check_can_set_role(caller, new_owner);
+	if (object_aclcheck(NamespaceRelationId, nsp, new_owner, ACL_CREATE) != ACLCHECK_OK)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied for schema %s", get_namespace_name(nsp))));
+}
+
+/*
+ * __internal_require_create(schema_oid oid, new_owner regrole, purpose text) -- refuse unless the role that called
+ * sql_saga's API could create an object in the schema and give it to new_owner, as the native CREATE TABLE/VIEW/
+ * FUNCTION followed by ALTER ... OWNER TO requires (1.4, review round 3, Q1).
+ */
+PG_FUNCTION_INFO_V1(require_create);
+Datum
+require_create(PG_FUNCTION_ARGS)
+{
+	Oid			nsp = PG_GETARG_OID(0);
+	Oid			new_owner = PG_GETARG_OID(1);
+	Oid			caller = api_caller();
+
+	if (object_aclcheck(NamespaceRelationId, nsp, caller, ACL_CREATE) != ACLCHECK_OK)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("permission denied for schema %s", get_namespace_name(nsp)),
+				 PG_ARGISNULL(2) ? 0 : errdetail("%s creates objects in the schema, which needs the CREATE privilege on it.",
+												 text_to_cstring(PG_GETARG_TEXT_PP(2)))));
+	require_can_give_to(caller, new_owner, nsp);
+	PG_RETURN_VOID();
+}
+
+/*
+ * __internal_require_owner_change(table_oid regclass, new_owner regrole, purpose text) -- refuse unless the role that
+ * called sql_saga's API may ALTER TABLE ... OWNER TO new_owner: nothing is needed when the owner does not change;
+ * otherwise ownership of the table and the checks of require_can_give_to (1.4, review round 3, Q1).
+ */
+PG_FUNCTION_INFO_V1(require_owner_change);
+Datum
+require_owner_change(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	Oid			new_owner = PG_GETARG_OID(1);
+	Oid			caller = api_caller();
+	HeapTuple	tup;
+	Form_pg_class classform;
+	Oid			owner;
+	Oid			nsp;
+	char	   *relname;
+
+	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("relation with OID %u does not exist", relid)));
+	classform = (Form_pg_class) GETSTRUCT(tup);
+	owner = classform->relowner;
+	nsp = classform->relnamespace;
+	relname = pstrdup(NameStr(classform->relname));
+	ReleaseSysCache(tup);
+
+	if (owner == new_owner)
+		PG_RETURN_VOID();
+	if (!has_privs_of_role(caller, owner))
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be owner of table %s", relname),
+				 PG_ARGISNULL(2) ? 0 : errdetail("%s gives the table to the owner of the system-versioned table, which needs the rights of its current owner.",
+												 text_to_cstring(PG_GETARG_TEXT_PP(2)))));
+	require_can_give_to(caller, new_owner, nsp);
+	PG_RETURN_VOID();
+}
+
+/*
+ * __internal_require_drop(table_oid regclass, purpose text) -- refuse unless the role that called sql_saga's API may
+ * DROP the table: the privileges of its owner or of its schema's owner, as RemoveRelations requires.
+ */
+PG_FUNCTION_INFO_V1(require_drop);
+Datum
+require_drop(PG_FUNCTION_ARGS)
+{
+	Oid			relid = PG_GETARG_OID(0);
+	Oid			caller = api_caller();
+	HeapTuple	tup;
+	Form_pg_class classform;
+	Oid			owner;
+	Oid			nsp;
+	char	   *relname;
+
+	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_TABLE), errmsg("relation with OID %u does not exist", relid)));
+	classform = (Form_pg_class) GETSTRUCT(tup);
+	owner = classform->relowner;
+	nsp = classform->relnamespace;
+	relname = pstrdup(NameStr(classform->relname));
+	ReleaseSysCache(tup);
+
+	if (!has_privs_of_role(caller, owner) && !object_ownercheck(NamespaceRelationId, nsp, caller))
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be owner of table %s", relname),
+				 PG_ARGISNULL(1) ? 0 : errdetail("%s drops the table, which needs the rights of its owner.",
+												 text_to_cstring(PG_GETARG_TEXT_PP(1)))));
 	PG_RETURN_VOID();
 }

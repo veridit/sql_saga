@@ -149,7 +149,29 @@ fixed. New findings, each fixed test-first:
       row is allowed (native refuses from the graph). User code never runs as superuser: tests 145 (history),
       146 (search_path hijack); probes of add_era/add_unique_key/add_foreign_key/add_system_versioning/views with
       user CHECK/index/generated/domain expressions all evaluated as the table owner
-- [ ] Third independent review of everything after R1-R7 until APPROVE
+- [x] Third independent review of everything after R1-R7: BLOCK (`tmp/review_v14_round3.md`, at 6bb2fc8), findings
+      Q1-Q6 below
+- [ ] Q1 CRITICAL: add_system_versioning(history_table_name => X) adopts X after a column-name shape check and
+      ALTERs its owner to the base owner: any role that may create tables in a schema takes over (and reads) another
+      role's table there. Same re-ownership in __internal_reconcile_system_versioning_family; drop_system_versioning
+      (cleanup) drops a history of any owner. Fix: adopting, re-owning, moving or dropping a history table needs the
+      caller to own it (as native ALTER/DROP TABLE). Test with two non-superuser roles; extend 149 section A
+- [ ] Q2 HIGH: write_history, generated_always_as_row_start_end and truncate_system_versioning never verify the
+      firing trigger. A TRIGGER+UPDATE holder crashes the postmaster (write_history on a non-range column), forges
+      history rows (second tstzrange column) and writes a column it has no privilege on (generated_always...).
+      Fix: verify like regular_fk_verify_trigger (registered system_versioning row for tgrelid, canonical trigger
+      name, exact tgargs), plus a TSTZRANGEOID check as defense in depth. Tests: 145 (forged trigger on the
+      registered table: crash, forgery), 149 (column privilege)
+- [ ] Q3 MEDIUM parity: require_references checks table-level REFERENCES only; native accepts REFERENCES on the
+      referenced key columns. Check per column (pg_attribute_aclcheck); 149 cases; README wording
+- [ ] Q4 LOW: the recorded caller search_path is unused; a predicate text such as pred_fn(id) with pred_fn in public
+      worked in 1.3 and fails now when the constraint is built. Decide and implement (parse user text under the
+      caller's path, or document that names must be qualified); fix the comment in 3h and todo R8
+- [ ] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
+      144 part 5 lists PUBLIC definer functions without asserting the set
+- [ ] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code
+      with the extension owner's rights" claim (Q2), doc/upgrade.md (predicate resolution, adoption needs ownership)
+- [ ] Fourth independent review after Q1-Q6 until APPROVE
 
 **Review and release.**
 - [x] Second independent review of all 1.4 changes: BLOCK, findings R1-R7 above

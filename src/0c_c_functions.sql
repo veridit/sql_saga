@@ -123,6 +123,26 @@ AS 'sql_saga', 'require_references'
 LANGUAGE c STABLE;
 REVOKE ALL ON FUNCTION sql_saga.__internal_require_references(regclass) FROM PUBLIC;
 
+-- 1.4 (review round 3, Q1): the native checks of CREATE in a schema followed by ALTER ... OWNER TO, of ALTER TABLE
+-- ... OWNER TO and of DROP TABLE, for the role that called the management function. Private.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_create(schema_oid oid, new_owner regrole, purpose text DEFAULT NULL)
+RETURNS void
+AS 'sql_saga', 'require_create'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_create(oid, regrole, text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_owner_change(table_oid regclass, new_owner regrole, purpose text DEFAULT NULL)
+RETURNS void
+AS 'sql_saga', 'require_owner_change'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_owner_change(regclass, regrole, text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_require_drop(table_oid regclass, purpose text DEFAULT NULL)
+RETURNS void
+AS 'sql_saga', 'require_drop'
+LANGUAGE c STABLE;
+REVOKE ALL ON FUNCTION sql_saga.__internal_require_drop(regclass, text) FROM PUBLIC;
+
 -- The role the running management function acts for (1.4, R2; api_caller in src/sql_saga.c). Private.
 CREATE OR REPLACE FUNCTION sql_saga.__internal_caller()
 RETURNS regrole

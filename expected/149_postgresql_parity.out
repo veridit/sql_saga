@@ -22,6 +22,28 @@ no rights: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
 pg_maintain member: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
 wrapper owned by owner, called by no-rights role: add_unique_key vs ADD CONSTRAINT UNIQUE | same: allowed
 wrapper owned by non-owner, called by owner: add_unique_key vs ADD CONSTRAINT UNIQUE | same: refused 42501
+superuser: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: allowed
+owner: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: allowed
+inheriting member of owner: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: allowed
+NOINHERIT member, no SET ROLE: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+NOINHERIT member, SET ROLE owner: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: allowed
+GRANT ALL, not owner: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+SELECT only: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+no rights: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+pg_maintain member: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+wrapper owned by owner, called by no-rights role: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: allowed
+wrapper owned by non-owner, called by owner: add_system_versioning vs CREATE TABLE (LIKE) in the schema | same: refused 42501
+superuser: adopting another role's history vs ALTER TABLE OWNER TO | same: allowed
+owner: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+inheriting member of owner: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+NOINHERIT member, no SET ROLE: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+NOINHERIT member, SET ROLE owner: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+GRANT ALL, not owner: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+SELECT only: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+no rights: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+pg_maintain member: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+wrapper owned by owner, called by no-rights role: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
+wrapper owned by non-owner, called by owner: adopting another role's history vs ALTER TABLE OWNER TO | same: refused 42501
 child owner without REFERENCES on the parent: add_foreign_key vs ADD FOREIGN KEY | same: allowed
 child owner, REFERENCES revoked: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501
 parent owner, child owned by another role: add_foreign_key vs ADD FOREIGN KEY | same: refused 42501

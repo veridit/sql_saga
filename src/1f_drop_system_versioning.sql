@@ -103,6 +103,10 @@ BEGIN
     IF NOT is_dropped AND cleanup THEN
         PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
         IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
+            /* Stands for DROP TABLE <history> (1.4, review round 3, Q1). */
+            PERFORM sql_saga.__internal_require_drop(
+                to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)),
+                'drop_system_versioning');
             EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
             RAISE NOTICE 'sql_saga: Dropped history table "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.history_schema_name, system_versioning_row.history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
