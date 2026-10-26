@@ -197,8 +197,29 @@ fixed. New findings, each fixed test-first:
       `tmp/d1_helper_inventory_agent.md`. API: 14 need only catalog helpers, 10 have an additional case. Five
       definers are redundant. Event triggers verified to run as the DDL issuer when SECURITY INVOKER. Decisions D1a-D1d
       below; no implementation yet
-- [ ] D1a (first exception to ask): allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog
-      writes and the two private-read tables (never a generic execute-as-owner helper)
+- [x] D1a APPROVED 2026-10-26: allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog writes and
+      the two private-read tables; never a generic execute-as-owner helper
+- [ ] D0 (proposed for owner confirmation): the principles below decide every exception and parity question. Core:
+      never invent a second security system. PostgreSQL is the authority on both permissions and the identity used
+      for an action. "Minimal SECURITY DEFINER" means least power and least reachable code, not merely fewest functions
+  1. Explicit user operations run as the immediate caller, under the caller's search_path. Native PostgreSQL decides
+     ownership, privileges and RLS. Do not be stricter or looser than native unless the owner approves and documents
+     a deliberate difference.
+  2. Match the actor to the action. Internal actions for which native uses another identity (referential checks and
+     cascades) use that same, lowest sufficient identity, normally the owner of the object read or changed, never
+     automatically the extension owner or a superuser. Explicit user operations never gain those internal rights.
+  3. Minimize the privileged surface: operations x objects x rights x duration x reachable user code. Prefer a design
+     with no elevation. Where impossible, prefer several tiny fixed-purpose helpers to one broad definer. Restore
+     identity on every exit and fail closed.
+  4. No arbitrary elevated SQL and no elevated user code. Privileged helpers take structured parameters, verify the
+     caller, object, canonical operation and arguments, use fixed SQL and a safe search_path, and never run user
+     triggers, CHECK/index/domain expressions or policy code with extension-owner rights.
+  5. Extension metadata is not a backdoor to user objects. Private sql_saga catalog writes and reads use narrow helpers
+     only after the corresponding native-equivalent authorization, scoped to the authorized family and operation.
+     Catalog triggers that affect user objects need the same caller identity analysis, not an incidental privilege.
+  6. Prove both directions with failing tests first: native parity for every caller kind and adversarial cases for
+     every privileged helper. Measure performance, review independently until APPROVE, and document every deliberate
+     difference rather than silently "improving" native semantics
 - [ ] D1b: regular-FK parent-side trigger DDL needs a narrow helper for exact native parity (child owner has
       REFERENCES but need not have TRIGGER on the parent), or a different enforcement design
 - [ ] D1c: native-CASCADE cleanup on third-party child tables needs the same narrowly scoped treatment as native
