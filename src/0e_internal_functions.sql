@@ -51,9 +51,10 @@ AS $__internal_display_function_name$
         || substring(function_identity FROM strpos(function_identity, '('));
 $__internal_display_function_name$;
 
--- These pure text-formatting helpers are also used by the SECURITY INVOKER health_checks event trigger.
-GRANT EXECUTE ON FUNCTION sql_saga.__internal_display_name(text) TO PUBLIC;
-GRANT EXECUTE ON FUNCTION sql_saga.__internal_display_function_name(text) TO PUBLIC;
+-- Only event workers use the text forms; the regclass form stays callable by PUBLIC because
+-- security-invoker routines such as temporal_merge use it in their messages.
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_display_name(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_display_function_name(text) FROM PUBLIC;
 
 CREATE FUNCTION sql_saga.__internal_ddl_command_affects_managed_object()
 RETURNS boolean
@@ -109,8 +110,8 @@ $function$;
  *   - a top-level DROP statement (pg_restore sends each archive entry as its own query).
  * An accidental drop in any other session, even with the same settings, keeps every protection.
  * Not a security boundary: whoever may run these DROPs owns the objects and could disable the
- * triggers or the event triggers anyway. Called by the event triggers; the read-only helper is PUBLIC
- * because health_checks is SECURITY INVOKER.
+ * triggers or the event triggers anyway. Called by the event workers; the read-only helper stays PRIVATE
+ * because public event entry points use caller-recording trampolines.
  */
 CREATE FUNCTION sql_saga.__internal_is_clean_teardown()
 RETURNS boolean
@@ -130,7 +131,7 @@ AS $__internal_is_clean_teardown$
        AND current_query() ~* '^\s*(DROP\s|ALTER\s+TABLE\s+(IF\s+EXISTS\s+)?(ONLY\s+)?(?:"(?:[^"]|"")*"|[^\s".]+)(?:\.(?:"(?:[^"]|"")*"|[^\s".]+))?\s+DROP\s+CONSTRAINT\s)';
 $__internal_is_clean_teardown$;
 
-GRANT EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() TO PUBLIC;
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() FROM PUBLIC;
 
 /*
  * Is this statement run by a parallel pg_restore (pg_restore -j N) that the caller has declared with
@@ -145,7 +146,8 @@ GRANT EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() TO PUBLIC;
  * invocation alone. Serial and --single-transaction restores keep synchronizing as they go.
  * Not a security boundary: deferring only delays the copy of policies the restoring owner could
  * change anyway, and guarded history reads fail closed until the sync has run.
- * Called by the event triggers; the read-only helper is PUBLIC because health_checks is SECURITY INVOKER.
+ * Called by the event workers; the read-only helper stays PRIVATE because public event entry points use
+ * caller-recording trampolines.
  */
 CREATE FUNCTION sql_saga.__internal_is_parallel_restore()
 RETURNS boolean
@@ -160,7 +162,7 @@ AS $__internal_is_parallel_restore$
        AND coalesce(current_setting('sql_saga.parallel_restore', true), '') = 'on';
 $__internal_is_parallel_restore$;
 
-GRANT EXECUTE ON FUNCTION sql_saga.__internal_is_parallel_restore() TO PUBLIC;
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_parallel_restore() FROM PUBLIC;
 
 CREATE FUNCTION sql_saga.__internal_make_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
  RETURNS name

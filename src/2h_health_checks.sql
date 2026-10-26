@@ -1,8 +1,8 @@
-CREATE OR REPLACE FUNCTION sql_saga.health_checks()
+CREATE OR REPLACE FUNCTION sql_saga.__internal_health_checks()
  RETURNS event_trigger
  LANGUAGE plpgsql
- SECURITY INVOKER
- -- A safe search path for canonical event-trigger checks; generated user-object DDL is fully qualified.
+ SECURITY DEFINER
+ -- Canonical reads use this safe path; user-object DDL uses the recorded caller and caller path.
  SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
@@ -198,9 +198,7 @@ BEGIN
                                        to_regprocedure(sv.func_between_symmetric), to_regprocedure(sv.func_from_to))
         WHERE t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> p.proowner
     LOOP
-        /* SECURITY INVOKER: caller DDL is authorized as the caller; approved elevated internal DDL is
-         * already running as the extension owner. Do not expose the generic caller-SQL helper to event callers. */
-        EXECUTE cmd;
+        PERFORM sql_saga.__internal_execute_as_caller(cmd);
     END LOOP;
 
     /*
@@ -258,7 +256,7 @@ BEGIN
            AND NOT sql_saga.__internal_is_clean_teardown()
            AND NOT sql_saga.__internal_is_parallel_restore()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
-            PERFORM sql_saga.sync_history_policies(r.base_oid::regclass);
+            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
         END IF;
     END LOOP;
 

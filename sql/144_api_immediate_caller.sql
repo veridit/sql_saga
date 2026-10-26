@@ -147,5 +147,16 @@ FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
 WHERE n.nspname = 'sql_saga' AND p.prosecdef
 ORDER BY 1;
 
+SELECT ARRAY(
+    SELECT p.oid::regprocedure::text
+    FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'sql_saga' AND p.prosecdef
+      AND has_function_privilege('public', p.oid, 'EXECUTE')
+    ORDER BY 1
+) = ARRAY[
+    'sql_saga.truncate_system_versioning()',
+    'sql_saga.write_history()'
+] AS public_definer_set_matches;
+
 ROLLBACK;
 \i sql/include/test_teardown.sql

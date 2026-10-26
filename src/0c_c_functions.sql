@@ -82,14 +82,19 @@ CREATE OR REPLACE FUNCTION sql_saga.__internal_caller_is_superuser()
 RETURNS boolean
 AS 'sql_saga', 'api_caller_is_superuser_sql'
 LANGUAGE c STABLE SECURITY INVOKER;
--- Read-only boolean used by the invoker health/drop event paths; it exposes no role identity or catalog data.
-GRANT EXECUTE ON FUNCTION sql_saga.__internal_caller_is_superuser() TO PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_caller_is_superuser() FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION sql_saga.rename_following()
 RETURNS event_trigger
 AS 'sql_saga', 'sql_saga_event_trampoline'
 LANGUAGE c VOLATILE SECURITY INVOKER;
 GRANT EXECUTE ON FUNCTION sql_saga.rename_following() TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.health_checks()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.health_checks() TO PUBLIC;
 
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger

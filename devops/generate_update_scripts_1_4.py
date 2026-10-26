@@ -44,7 +44,7 @@ FROZEN_SHA256 = {
 }
 # src files with routines changed or added since v1.3 (`git diff --name-only v1.3 -- src`), in src order.
 ROUTINE_MANIFEST = ("0c", "0e", "0h", "0i", "0j", "0k", "1a", "1b", "1c", "1d", "1e", "1f", "1g", "1h", "1i", "1j",
-                    "2a", "2b", "2c", "2d", "2e", "2f", "2h", "2i", "2l", "3a", "3b", "3d", "3e")
+                    "2a", "2b", "2c", "2d", "2e", "2f", "2h", "2i", "2l", "2o", "3a", "3b", "3d", "3e")
 # Files whose top-level statements are privilege statements (3f, 3g) or the trampoline file (3h: routines, COMMENT
 # and one DO block that copies the workers' comments).
 ACL_SOURCES = ("3f", "3g")
