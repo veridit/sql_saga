@@ -199,7 +199,7 @@ fixed. New findings, each fixed test-first:
       below; no implementation yet
 - [x] D1a APPROVED 2026-10-26: allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog writes and
       the two private-read tables; never a generic execute-as-owner helper
-- [ ] D0 (proposed for owner confirmation): the principles below decide every exception and parity question. Core:
+- [x] D0 CONFIRMED 2026-10-26, including the namespace principle in item 7: the principles below decide every exception and parity question. Core:
       never invent a second security system. PostgreSQL is the authority on both permissions and the identity used
       for an action. "Minimal SECURITY DEFINER" means least power and least reachable code, not merely fewest functions
   1. Explicit user operations run as the immediate caller, under the caller's search_path. Native PostgreSQL decides
@@ -220,14 +220,29 @@ fixed. New findings, each fixed test-first:
   6. Prove both directions with failing tests first: native parity for every caller kind and adversarial cases for
      every privileged helper. Measure performance, review independently until APPROVE, and document every deliberate
      difference rather than silently "improving" native semantics
+  7. Maintain our own namespace without being paranoid about it. Extension code, metadata and generated functions
+     belong in schema sql_saga, which is a deliberate trusted boundary. Do not scatter internal objects into user
+     schemas merely to avoid a narrow helper. Do not modify objects outside sql_saga except for the caller-explicit
+     temporal objects and the narrowly justified native-equivalent dependents; never incidental cross-family or
+     cross-tenant changes. The privilege boundary matters most where an operation leaves our schema
+  8. Be fast and do not slow down library users. Performance is a hard acceptance requirement alongside correctness
+     and least privilege, not an afterthought. Keep hot paths in C, keep the specialized synchronization functions
+     (8-9x faster than the generic form), retain per-transaction verified-trigger and plan caches with correct
+     invalidation, and avoid new per-row or per-statement catalog work. Benchmark every security/identity conversion
+     before and after against the pre-change code, 1.3 and native where applicable; address regressions rather than
+     accepting or hiding them, and never buy speed by weakening the security principles above
 - [ ] D1b: regular-FK parent-side trigger DDL needs a narrow helper for exact native parity (child owner has
       REFERENCES but need not have TRIGGER on the parent), or a different enforcement design
 - [ ] D1c: native-CASCADE cleanup on third-party child tables needs the same narrowly scoped treatment as native
       internal cascade, or more native constraints
-- [ ] D1d: generated per-era sync functions live in schema sql_saga. Choose a narrow canonical-function helper or
-      move them to the user's schema/ownership; measure performance either way
+- [ ] D1d: generated per-era sync functions live in schema sql_saga. Namespace principle points to keeping them there
+      with a narrow canonical-function helper rather than moving them to user schemas; confirm when reached, and
+      measure performance either way
 - [ ] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
       SECURITY INVOKER; verify/close the caller-forgeable clean-teardown bypass; review view-trigger replay as caller
+- [ ] D1 performance gate: benchmark every converted hot path before/after (regular-FK check/cascade/load,
+      system-versioned UPDATE/TRUNCATE, era sync triggers, temporal_merge), with pre-D1 and 1.3/native baselines;
+      retain C and valid caches, investigate every regression, and record results in doc/decision-log.md
 - [ ] D2: message texts name tables schema-qualified (public.t); StatBus test/expected/007 changes
 - [ ] D3: catalog_format 1.4: a 1.3 dump restores at 1.3, then ALTER EXTENSION UPDATE
 - [ ] D4: history writes run as the history table's owner
