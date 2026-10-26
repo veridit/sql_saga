@@ -167,6 +167,19 @@ disable the triggers or the event triggers. Non-DROP statements of the same rest
 destination itself, without `--if-exists`), `clean_psql` (opt-in), and `clean_psql_without_opt_in`
 (must be refused). Regression test `029_drop_protection_restore_clean`.
 
+### 1.4 amendment: recorded caller and superuser-only exemption
+
+The original recognition rule was not a security boundary and was caller-forgeable: any role could set
+`application_name`, the restore GUCs and a matching DROP statement. 1.4 adds the decisive condition that
+the **recorded immediate caller must be a superuser**. Public drop/rename/health event entry points are
+`SECURITY INVOKER` C trampolines that record that caller before entering private workers, including
+`SET ROLE` and nested internal DDL. A non-superuser therefore cannot forge the exemption with
+`application_name = 'pg_restore'`, `sql_saga.clean_restore = on`, `check_function_bodies = off` and
+`row_security = off`. Existing superuser clean-restore procedures are unchanged; non-superuser clean
+restores over an existing database are refused, while restoring into a new database without `--clean`
+and `pg_restore --clean --create` are unaffected. Test 029 covers both the normal superuser teardown and
+the fully forged non-superuser attempt.
+
 ---
 
 ## Decision: Keep Foreign Keys Between Catalog Tables; Parallel Restore Unsupported (2026-10-13)

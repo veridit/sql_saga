@@ -1,3 +1,23 @@
+/* Event entry points must be replaced only after every private worker exists: on upgrade the old event
+ * triggers remain active while the update runs, so an earlier trampoline would fail with "worker missing". */
+CREATE OR REPLACE FUNCTION sql_saga.drop_protection()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.drop_protection() TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.rename_following()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.rename_following() TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.health_checks()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.health_checks() TO PUBLIC;
+
 CREATE EVENT TRIGGER sql_saga_drop_protection ON sql_drop EXECUTE PROCEDURE sql_saga.drop_protection();
 
 CREATE EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ON ddl_command_start

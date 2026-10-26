@@ -44,7 +44,7 @@ FROZEN_SHA256 = {
 }
 # src files with routines changed or added since v1.3 (`git diff --name-only v1.3 -- src`), in src order.
 ROUTINE_MANIFEST = ("0c", "0e", "0h", "0i", "0j", "0k", "1a", "1b", "1c", "1d", "1e", "1f", "1g", "1h", "1i", "1j",
-                    "2a", "2b", "2c", "2d", "2e", "2f", "2h", "2i", "2l", "2o", "3a", "3b", "3d", "3e")
+                    "2a", "2b", "2c", "2d", "2e", "2f", "2h", "2i", "2j", "2l", "2o", "3a", "3b", "3d", "3e")
 # Files whose top-level statements are privilege statements (3f, 3g) or the trampoline file (3h: routines, COMMENT
 # and one DO block that copies the workers' comments).
 ACL_SOURCES = ("3f", "3g")
@@ -213,7 +213,7 @@ def delta(src_dir, devops_dir, frozen13):
     # install script byte for byte (tables, indexes, rows, triggers that 1.3 already created): they are skipped.
     # Any other non-routine statement fails the build; catalog changes belong in the schema fragment.
     frozen_body = frozen13.split("\n", 1)[1] if frozen13.startswith("\\echo") else frozen13
-    frozen_stmts = set(g13._core(s) for s in g13.split_sql(frozen_body))
+    frozen_stmts = set(g13._core(s).strip() for s in g13.split_sql(frozen_body))
 
     routine_chunks, new_idents, all_idents = [], set(), set()
     for code in ROUTINE_MANIFEST + (TRAMPOLINES,):
@@ -223,7 +223,7 @@ def delta(src_dir, devops_dir, frozen13):
                 k = g13.classify(s)
             except GeneratorError:
                 k = "other"
-            if k in ("create_table", "other", "select", "comment", "grant", "revoke") and g13._core(s) in frozen_stmts \
+            if k in ("create_table", "other", "select", "comment", "grant", "revoke") and g13._core(s).strip() in frozen_stmts \
                     and not (k in ("grant", "revoke") and g13._is_routine_acl(s)):
                 continue  # a table, index, row, trigger, table grant or table comment exactly as in 1.3
             if k in ("grant", "revoke") and not g13._is_routine_acl(s):
