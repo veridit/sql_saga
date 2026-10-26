@@ -238,7 +238,8 @@ fixed. New findings, each fixed test-first:
       Alternatives mentioned but NOT validated as better: normalize into a stable entity table plus timeline table
       (native FKs but a user schema/semantic migration); maintain a stable-key projection table for native child FKs
       (still needs parent-trigger maintenance and adds hot-path state/overhead); or upstream native regular-to-temporal
-      FK support (core work, later). There is no ready larger redesign to substitute for the narrow 1.4 helpers
+      FK support (core work, later). No separate sketches or prototypes exist: these were conceptual alternatives
+      formulated during this discussion, not ready designs to substitute for the narrow 1.4 helpers
 - [ ] D1d: generated per-era sync functions live in schema sql_saga. Namespace principle points to keeping them there
       with a narrow canonical-function helper rather than moving them to user schemas; confirm when reached, and
       measure performance either way
