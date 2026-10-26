@@ -40,10 +40,35 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.2 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.3' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regclass('sql_saga.history_policy_sync_guard') IS NULL
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid = 'sql_saga.era'::pg_catalog.regclass AND a.attname = 'catalog_format' AND NOT a.attisdropped) THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.3 is not the supported v1.3 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.3 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1 or 1.2, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2 or 1.3, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1 or v1.2 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2 or v1.3 extension.';
+    END IF;
+
+    /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */
+    SELECT pg_catalog.string_agg(pg_catalog.format('%I on %I.%I: %s', f.foreign_key_name, f.table_schema, f.table_name,
+               CASE WHEN c.relkind = 'p' THEN 'the referencing table is partitioned' ELSE 'the referenced key is predicated' END),
+               E'\n' ORDER BY f.foreign_key_name)
+    INTO policy_list
+    FROM sql_saga.foreign_keys AS f
+    JOIN sql_saga.unique_keys AS u ON u.unique_key_name = f.unique_key_name
+    JOIN pg_catalog.pg_namespace AS n ON n.nspname = f.table_schema
+    JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, f.table_name)
+    WHERE f.type = 'regular_to_temporal' AND (c.relkind = 'p' OR u.key_type = 'predicated');
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign keys that sql_saga 1.4 does not support prevent upgrade:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Drop each with sql_saga.drop_foreign_key_by_name before updating; after the update add it to each partition, or against a primary or natural key (doc/upgrade.md).';
     END IF;
 
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)

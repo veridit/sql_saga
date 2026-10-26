@@ -3,17 +3,18 @@
 check_integrity | ok
 --- the column and the constraint
 catalog_format column: type, default | text, no default
-constraint "restore old sql_saga dumps per doc/upgrade.md" | CHECK (((catalog_format IS NOT NULL) AND (catalog_format = '1.3'::text)))
+constraint "restore old sql_saga dumps per doc/upgrade.md" | CHECK (((catalog_format IS NOT NULL) AND (catalog_format = '1.4'::text)))
 --- every path that inserts era rows writes the current format
-era unit.valid catalog_format | 1.3
-era versioned.system_time catalog_format | 1.3
+era unit.valid catalog_format | 1.4
+era versioned.system_time catalog_format | 1.4
 check_integrity after add_era and add_system_versioning | ok
 --- a direct era row must state the current format
 INSERT without catalog_format (an older dump) | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
 INSERT with catalog_format NULL | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
 INSERT with catalog_format '1.2' | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
-INSERT with catalog_format '1.4' (a newer layout) | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
-INSERT with catalog_format '1.3' | accepted
+INSERT with catalog_format '1.3' (the previous layout) | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
+INSERT with catalog_format '1.5' (a newer layout) | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
+INSERT with catalog_format '1.4' | accepted
 UPDATE an existing era row to catalog_format NULL | refused 23514 "restore old sql_saga dumps per doc/upgrade.md"
 --- final
 check_integrity | ok

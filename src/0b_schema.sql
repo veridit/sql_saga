@@ -96,7 +96,7 @@ CREATE TABLE sql_saga.era (
 
     CHECK (valid_from_column_name <> valid_until_column_name),
     -- IS NOT NULL is needed: a plain equality is NULL for a missing value and a CHECK passes on NULL.
-    CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md" CHECK (catalog_format IS NOT NULL AND catalog_format = '1.3')
+    CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md" CHECK (catalog_format IS NOT NULL AND catalog_format = '1.4')
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
 COMMENT ON COLUMN sql_saga.era.ephemeral_columns IS 'Columns excluded from coalescing comparison during temporal_merge operations. These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not prevent adjacent periods from being merged.';
@@ -170,10 +170,11 @@ CREATE TABLE sql_saga.foreign_keys (
     -- These are always on the unique key's table
     uk_update_trigger name,
     uk_delete_trigger name,
+    fk_index_name name, -- Stores the name of an index created automatically on the FK table
     -- Regular FKs only (1.4): AFTER TRUNCATE FOR EACH STATEMENT, refuses TRUNCATE of the parent alone while a child
     -- row references it, as PostgreSQL does for native foreign keys. NULL for temporal FKs (native constraints).
+    -- Last, as the 1.4 update adds it, so fresh and updated catalogs have the same column order (dumps, SELECT *).
     uk_truncate_trigger name,
-    fk_index_name name, -- Stores the name of an index created automatically on the FK table
 
     PRIMARY KEY (foreign_key_name),
 
@@ -181,9 +182,10 @@ CREATE TABLE sql_saga.foreign_keys (
     FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys ON DELETE CASCADE,
 
     -- ON DELETE CASCADE is supported for regular_to_temporal keys only (since 1.4): the child row goes
-    -- when the last parent row with its key does. PostgreSQL 18 refuses it on PERIOD keys.
+    -- when the last parent row with its key does. PostgreSQL 18 refuses it on PERIOD keys. Named, so the
+    -- names PostgreSQL gives the unnamed checks stay those of 1.3 (the 1.4 update adds this one by name).
     CHECK (delete_action NOT IN ('SET NULL', 'SET DEFAULT')),
-    CHECK (delete_action <> 'CASCADE' OR type = 'regular_to_temporal'),
+    CONSTRAINT foreign_keys_delete_action_regular_only CHECK (delete_action <> 'CASCADE' OR type = 'regular_to_temporal'),
     CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
 
     CHECK (

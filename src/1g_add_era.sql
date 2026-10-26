@@ -474,7 +474,7 @@ BEGIN
         END IF;
 
         INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults, ephemeral_columns, catalog_format)
-        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, __api_add_era.ephemeral_columns, '1.3');
+        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, __api_add_era.ephemeral_columns, '1.4');
 
         IF v_create_template_trigger THEN
             CALL sql_saga.add_synchronize_temporal_columns_trigger(table_oid, era_name);

@@ -25,7 +25,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.3: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.4: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -52,9 +52,9 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.3}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.4}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -1332,10 +1332,10 @@ ROLLBACK;
 SQL
 )
     check "CREATE POLICY on the base creates the tokenized history copy (exact NOTICE)" \
-        "NOTICE:  sql_saga: Created policy $copy on rdoc_history as the history copy of policy tenant_c on rdoc" \
+        "NOTICE:  sql_saga: Created policy $copy on public.rdoc_history as the history copy of policy tenant_c on public.rdoc" \
         "$(printf '%s\n' "$out" | grep -m1 'Created policy')"
     check "DROP POLICY on the base drops the history copy (exact NOTICE)" \
-        "NOTICE:  sql_saga: Dropped policy $copy on rdoc_history, the history copy of policy tenant_c on rdoc" \
+        "NOTICE:  sql_saga: Dropped policy $copy on public.rdoc_history, the history copy of policy tenant_c on public.rdoc" \
         "$(printf '%s\n' "$out" | grep -m1 'Dropped policy')"
     out=$(sql "$db" -v VERBOSITY=default <<SQL
 BEGIN;
@@ -1401,7 +1401,7 @@ SELECT 'r1=' || count(*) FROM sv__as_of(now());
 ROLLBACK;
 SQL
 )
-    check "rebuild_system_versioning_views after a manual column add" "NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table sv,cols=1,r1=2" \
+    check "rebuild_system_versioning_views after a manual column add" "NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table public.sv,cols=1,r1=2" \
         "$(printf '%s\n' "$out" | grep -E 'Rebuilt|^cols=|^r1=|ERROR' | paste -sd, -)"
 
     # Managed table inheritance: the parent and child families both stay managed, a write through the
@@ -1527,7 +1527,7 @@ sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],te
 canon10_grants() { local r; printf '%s\n' "$CANON10_ROUTINES" | while IFS= read -r r; do echo "GRANT EXECUTE ON ROUTINE $r TO PUBLIC;"; done; }
 # acl10_refusal <db> <label> <routine named first>: the 1.0 update refuses a noncanonical routine ACL, atomically,
 # with the frozen guard text (tmp/v13_acl_replay/guard_proto.sql sha256 2edefcdd, devops/test_generate_update_scripts.py).
-ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '1.3', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
+ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
 acl10_refusal() {
     local db=$1 label=$2 routine=$3 before out acl
     acl=$(q "$db" "SELECT coalesce(proacl::text, '<missing>') FROM pg_proc WHERE oid = to_regprocedure('$routine')")
@@ -1672,7 +1672,9 @@ if [ -f "$DIRECT_UPD" ] && [ -f "$EXT/sql_saga--1.0--1.1.sql" ] && [ -f "$UPD" ]
     fi
     body=$(sed -e 's/--.*$//' "$DIRECT_UPD")
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
-    if printf '%s\n' "$body" | grep -qiw 'CASCADE'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
+    # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
+    if printf '%s\n' "$body" | grep -qiE '(DROP|TRUNCATE)[^;]*[[:<:]]CASCADE[[:>:]]'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
     if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
         fail "direct update script disables event triggers or changes session_replication_role"
     else ok "direct update script keeps event triggers on"; fi
@@ -1714,15 +1716,22 @@ if [ -f "$DIRECT_UPD" ]; then
     body=$(executable_migration_sql "$DIRECT_UPD") || die "scanning $DIRECT_UPD"
     check "direct $BASELINE_VERSION--$NEW_VERSION header line is the ALTER EXTENSION guard"         "\\echo Use \"ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'\" to load this file. \\quit" "$(head -1 "$DIRECT_UPD")"
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
-    if printf '%s\n' "$body" | grep -qiw 'CASCADE'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
+    # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
+    if printf '%s\n' "$body" | grep -qiE '(DROP|TRUNCATE)[^;]*[[:<:]]CASCADE[[:>:]]'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
     if printf '%s\n' "$body" | grep -qi 'session_replication_role'; then fail "direct update script changes session_replication_role"
     else ok "direct update script leaves session_replication_role alone"; fi
     other_disable=$(printf '%s\n' "$body" | grep -iE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE' | grep -vc 'sql_saga_rename_following' || true)
     check "direct update script disables no event trigger other than sql_saga_rename_following" "0" "$other_disable"
-    check "direct update script disables sql_saga_rename_following exactly once" "1" \
+    # The embedded 1.0-1.2 update to 1.3 disables rename_following (their versions rewrote XOR key lists); from 1.3
+    # the 1.4 delta never disables it.
+    if version_lt "$BASELINE_VERSION" 1.3; then rf_disables=1; else rf_disables=0; fi
+    check "direct update script disables sql_saga_rename_following exactly $rf_disables time(s)" "$rf_disables" \
         "$(printf '%s\n' "$body" | grep -ciE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[[:space:]]+sql_saga_rename_following[[:space:]]+DISABLE' || true)"
+    if [ "$rf_disables" = 1 ]; then
     check "direct update script records the rename_following state before disabling it" "t" \
         "$(awk 'tolower($0) ~ /evtenabled/ && !s { s = NR } tolower($0) ~ /alter event trigger sql_saga_rename_following disable/ && !d { d = NR } END { print (s && d && s < d) ? "t" : "f" }' "$DIRECT_UPD")"
+    fi
     check "direct update script ends with the $NEW_VERSION integrity gate" "SELECT sql_saga.check_integrity();" \
         "$(printf '%s\n' "$body" | grep -v '^[[:space:]]*$' | tail -1)"
     check "direct update script carries no frozen 1.2 integrity gate before the 1.3 repairs" "1" \
@@ -1752,6 +1761,16 @@ FOREIGN_SQL="$FOREIGN_EXT/sql_saga--$BASELINE_VERSION.sql"
 
 # ---------------------------------------------------------------------------------------------
 section "roles and fixtures"
+# Helpers used by several baseline-specific sections below (defined unconditionally).
+v13_db() {  # v13_db <db> <setup sql>: a baseline database with btree_gist + sql_saga <baseline>
+    local out
+    new_db "$1" "$EXT_ROOT" "$OLD_LIB"
+    out=$(printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n%s\n" "$BASELINE_VERSION" "$2" | sql "$1")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "fixture $1: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    return 0
+}
+v13_restart() { psql -X -q -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"; }
+v13_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
 # ---------------------------------------------------------------------------------------------
 new_role "${PREFIX}_owner"
 new_role "${PREFIX}_r1"
@@ -1977,6 +1996,7 @@ out=$(q "$HP" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
 check "update succeeds once the user policy is removed" "$NEW_VERSION" "$(q "$HP" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 
 # ---------------------------------------------------------------------------------------------
+if version_lt "$BASELINE_VERSION" 1.3; then  # a regular-FK helper exists only up to 1.2; not reachable from 1.3
 section "atomic failure (tampered regular-FK helper)" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 tamper_before="$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
@@ -2016,6 +2036,7 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
         "$(ext_snapshot "$DOWNLEVEL" | md5)$(dump_schema "$DOWNLEVEL" | md5)"
 fi
 
+fi
 # ---------------------------------------------------------------------------------------------
 section "atomic failure (damaged family, complete final integrity gate)" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2233,8 +2254,8 @@ ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
 fi
 
 # ---------------------------------------------------------------------------------------------
-if [ "$BASELINE_VERSION" = 1.2 ]; then
-    echo; echo "== system time era NOTICE patch is fail-closed: not applicable (the 1.2 body is already patched; the 1.1 and 1.0 paths run it)"
+if ! version_lt "$BASELINE_VERSION" 1.2; then
+    echo; echo "== system time era NOTICE patch is fail-closed: not applicable (the $BASELINE_VERSION body is already patched; the 1.1 and 1.0 paths run it)"
 else
 section "system time era NOTICE patch is fail-closed" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2341,7 +2362,9 @@ INSERT INTO d2 VALUES (1, 2, 'y');
 SQL
 )
 printf '%s\n' "$out" | grep -q '^ERROR' && die "shared helper fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
-check "shared helper fixture: two helpers serve four regular FKs" "2|4" \
+# From 1.3 regular FKs have no helper function (Design B), so a 1.3 fixture already reads 0|4.
+if version_lt "$BASELINE_VERSION" 1.3; then SHARED_BEFORE="2|4"; else SHARED_BEFORE="0|4"; fi
+check "shared helper fixture: $SHARED_BEFORE helpers serve four regular FKs" "$SHARED_BEFORE" \
     "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
 # The "restart": the update and every later session load the candidate binaries.
 psql -X -q -d postgres -c "ALTER DATABASE $SHARED RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $SHARED"
@@ -2382,6 +2405,7 @@ done
 check "shared helper: unreferenced parents can be deleted after the update" "" \
     "$(q "$SHARED" "BEGIN; DELETE FROM par WHERE id = 3; DELETE FROM par2 WHERE a = 3; ROLLBACK" | grep '^ERROR')"
 
+if version_lt "$BASELINE_VERSION" 1.3; then  # StatBus shapes: 1.0-1.2 rename_following sorted XOR keys; not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "StatBus shapes: XOR keys sorted by unrelated DDL, regular FK child sorting before its parent" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2524,6 +2548,8 @@ else
     fail "StatBus shapes: pg_dump of the updated database"
 fi
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # mispaired FKs against a sorted XOR key (1.0-1.2); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "foreign keys created against a sorted XOR key are mispaired: the update refuses with the exact repair" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2658,6 +2684,8 @@ check "mispaired FKs: updating the key referenced only by the temporal child is 
 check "mispaired FKs: an unreferenced key row can be deleted" "accepted" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 3")"
 check "mispaired FKs: an unreferenced key can be updated" "accepted" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 3")"
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # CHECK + helper conversion (1.0-1.2 form); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "regular FK child side: the update converts the CHECK into a constraint trigger" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2757,6 +2785,8 @@ check "regular FK conversion: all child rows kept" "4|1|2" \
     "$(q "$RFK_CONVERT" "SELECT (SELECT count(*) FROM activity_note) || '|' || (SELECT count(*) FROM unit_note) || '|' || (SELECT count(*) FROM contact_note)")"
 rfk_enforcement "$RFK_CONVERT" "regular FK conversion"
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # orphan refusal of the CHECK conversion (1.0-1.2 form); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "regular FK child side: the update refuses while a child row references a missing key" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2801,6 +2831,8 @@ check "regular FK orphan: no child CHECK calls a helper after the update" "0" "$
 check "regular FK orphan: check_integrity passes after the update" "" "$(q "$RFK_ORPHAN" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
 rfk_enforcement "$RFK_ORPHAN" "regular FK orphan"
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # quoted orphan refusal of the CHECK conversion (1.0-1.2 form); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "regular FK child side: the orphan refusal quotes names that need quoting" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -2866,6 +2898,8 @@ check "quoted regular FK orphan: the child accepts an existing key and NULL afte
 check "quoted regular FK orphan: deleting a referenced parent is refused after the update" "refused" \
     "$(rfk_probe "$RFK_QUOTED" "DELETE FROM $RFK_QUOTED_PARENT WHERE \"Id \"\"k'\" = 1")"
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # view column drift (1.1 and 1.2 did not follow ADD COLUMN); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 # tmp/fable_audit_v13.md finding 3 (A3). The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
 # so their column list is frozen; StatBus then ran ALTER TABLE ... ADD COLUMN on era tables that already had
@@ -2956,16 +2990,9 @@ check "view drift: ADD COLUMN after the update is exposed by every view of the t
 # 1.3 release-gate fixtures (tmp/v13_upgrade_harness_brief.md). Each builds its own database on the
 # released baseline binaries, then "restarts" onto the candidate and runs the update.
 # =============================================================================================
-v13_db() {  # v13_db <db> <setup sql>: a baseline database with btree_gist + sql_saga <baseline>
-    local out
-    new_db "$1" "$EXT_ROOT" "$OLD_LIB"
-    out=$(printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n%s\n" "$BASELINE_VERSION" "$2" | sql "$1")
-    printf '%s\n' "$out" | grep -q '^ERROR' && die "fixture $1: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
-    return 0
-}
-v13_restart() { psql -X -q -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"; }
-v13_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
 
+fi
+if version_lt "$BASELINE_VERSION" 1.3; then  # paired FKs before the XOR sort (1.0-1.2); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "correctly paired FKs created before the XOR sort survive the sort and the update" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -3045,6 +3072,7 @@ if [ "$BASELINE_VERSION" = 1.0 ]; then
     xor_presort_case grant10 "GRANT SELECT ON unit_role TO ${PREFIX}_xorgrant;"
 fi
 
+fi
 # ---------------------------------------------------------------------------------------------
 section "base table grant made before both managed views exist: the update keeps every role's reads" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -3082,6 +3110,7 @@ check "base grant before views: check_integrity passes after the update" "" "$(q
 check "base grant before views: after the update the role still reads the base and both views" "1|1|1" "$(as_role "$PG_DB" ${PREFIX}_pregrant "$PG_READS_SQL")"
 check "base grant before views: the base table ACL is unchanged" "$pg_base_acl_before" "$(q "$PG_DB" "$PG_BASE_ACL_SQL")"
 
+if version_lt "$BASELINE_VERSION" 1.3; then  # own-script stale view repair (1.1 and 1.2); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
 section "own-script stale view repair keeps the managed view's OID, grants, comment and user dependents" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -3140,6 +3169,7 @@ else
     check "stale view: the viewer reads through the user view" "1" "$(as_role "$SV" ${PREFIX}_viewer "SELECT count(*) FROM user_names")"
 fi
 
+fi
 # ---------------------------------------------------------------------------------------------
 section "sql_saga_rename_following state: ALWAYS and REPLICA are kept, DISABLED is refused atomically" "expected RED"
 # ---------------------------------------------------------------------------------------------
@@ -3373,7 +3403,21 @@ else
         # Exact per-baseline addition map of routines that release lacks (never inferred from a missing ACL row:
         # an existing routine with a site REVOKE must keep it).
         NEW_ROUTINES="sql_saga.regular_fk_check_c() sql_saga.__internal_current_view_clock(oid) sql_saga.__internal_current_view_now(oid,regtype)"
+        [ "$BASELINE_VERSION" = 1.3 ] && NEW_ROUTINES=""
         [ "$BASELINE_VERSION" = 1.1 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.sync_all_history_policies()"
+        # 1.4 adds the TRUNCATE check of regular foreign keys (granted to PUBLIC, as the other RI trigger functions).
+        [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c()"
+        # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
+        # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
+        if [ "$NEW_VERSION" = 1.4 ]; then
+            for routine in "sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])" \
+                           "sql_saga.__internal_ddl_command_affects_managed_object()" \
+                           "sql_saga.__internal_reconcile_system_versioning_family(regclass,name[])" \
+                           "sql_saga.__internal_sync_history_policies(oid,name[])"; do
+                grep -vFx "fn $routine|PUBLIC|EXECUTE" "$WORK/acl_entries.expected" >"$WORK/acl_entries.expected.tmp"
+                mv "$WORK/acl_entries.expected.tmp" "$WORK/acl_entries.expected"
+            done
+        fi
         for routine in $NEW_ROUTINES; do
             entry="fn $routine|PUBLIC|EXECUTE"
             if [ "$(q "$FRESH_ACL_REF" "SELECT count(*) FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = to_regprocedure('$routine') AND a.grantee = 0 AND a.privilege_type = 'EXECUTE'")" = 1 ]; then

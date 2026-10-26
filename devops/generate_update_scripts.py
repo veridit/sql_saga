@@ -335,6 +335,38 @@ _RETURNS_END = re.compile(r"\s(LANGUAGE|AS|STABLE|IMMUTABLE|VOLATILE|SET|SECURIT
                           r"LEAKPROOF|NOT|WINDOW|SUPPORT|TRANSFORM|EXTERNAL|BEGIN|RETURN)\b", re.I)
 
 
+def _strip_line_comments(text):
+    """Remove -- comments outside string literals and quoted identifiers (a signature may carry them)."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "'":
+            j = i + 1
+            while True:
+                j = text.find("'", j)
+                if j < 0:
+                    raise GeneratorError("unterminated literal in %r" % text)
+                if text.startswith("''", j):
+                    j += 2
+                else:
+                    break
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
+        if c == '"':
+            j = text.find('"', i + 1)
+            out.append(text[i:j + 1])
+            i = j + 1
+            continue
+        if text.startswith("--", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _parse_routine(stmt):
     core = _core(stmt)
     m = _ROUTINE_RE.match(core)
@@ -343,7 +375,7 @@ def _parse_routine(stmt):
     kind = m.group(2).lower()
     name = m.group(3).lower().replace('"', "")
     close = _matching_paren(core, m.end() - 1)
-    args = [_parse_arg(a) for a in _split_top(core[m.end():close])]
+    args = [_parse_arg(a) for a in _split_top(_strip_line_comments(core[m.end():close]))]
     result = None
     if kind == "function":
         after = core[close + 1:]

@@ -822,13 +822,13 @@ CREATE TABLE no_era_test (
 SAVEPOINT expect_error_1;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass);
 ERROR:  era "valid" does not exist on table public.no_era_test
-CONTEXT:  PL/pgSQL function __api_add_for_portion_of_view(regclass,name,name[]) line 32 at RAISE
+CONTEXT:  PL/pgSQL function __api_add_for_portion_of_view(regclass,name,name[]) line 36 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_1;
 -- Should also fail with explicit non-existent era name
 SAVEPOINT expect_error_2;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass, 'nonexistent');
 ERROR:  era "nonexistent" does not exist on table public.no_era_test
-CONTEXT:  PL/pgSQL function __api_add_for_portion_of_view(regclass,name,name[]) line 32 at RAISE
+CONTEXT:  PL/pgSQL function __api_add_for_portion_of_view(regclass,name,name[]) line 36 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 ROLLBACK TO SAVEPOINT scenario_10;
 -- Scenario 11: Range-only table (no synchronized columns)

@@ -8,9 +8,10 @@ SET client_min_messages = warning;
 \o /dev/null
 
 /*
- * Catalog format safeguard (1.3). sql_saga.era carries catalog_format text, with no default, under the named
- * CHECK "restore old sql_saga dumps per doc/upgrade.md" (catalog_format IS NOT NULL AND catalog_format = '1.3'):
- * a plain (catalog_format = '1.3') is NULL for a NULL value and would pass an older dump. The value is the sql_saga
+ * Catalog format safeguard (since 1.3; the format is '1.4' from 1.4, whose foreign_keys gained uk_truncate_trigger).
+ * sql_saga.era carries catalog_format text, with no default, under the named CHECK "restore old sql_saga dumps per
+ * doc/upgrade.md" (catalog_format IS NOT NULL AND catalog_format = '1.4'): a plain (catalog_format = '1.4') is NULL
+ * for a NULL value and would pass an older dump. The value is the sql_saga
  * release that introduced the current catalog layout. Every path that inserts era rows writes it, so a dump of
  * an older catalog (no such column in its COPY list) restored into this install leaves it NULL and the restore
  * fails at the first era row, naming the doc; a newer-format dump into an older install fails the same way.
@@ -93,13 +94,17 @@ SELECT 'INSERT with catalog_format ''1.2'' | ' || cfs.outcome($$
     INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, range_type, multirange_type, range_subtype, range_subtype_category, catalog_format)
     VALUES ('cfs', 'bare', 'valid', 'valid_range', 'daterange', 'datemultirange', 'date', 'D', '1.2')
 $$);
-SELECT 'INSERT with catalog_format ''1.4'' (a newer layout) | ' || cfs.outcome($$
-    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, range_type, multirange_type, range_subtype, range_subtype_category, catalog_format)
-    VALUES ('cfs', 'bare', 'valid', 'valid_range', 'daterange', 'datemultirange', 'date', 'D', '1.4')
-$$);
-SELECT 'INSERT with catalog_format ''1.3'' | ' || cfs.outcome($$
+SELECT 'INSERT with catalog_format ''1.3'' (the previous layout) | ' || cfs.outcome($$
     INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, range_type, multirange_type, range_subtype, range_subtype_category, catalog_format)
     VALUES ('cfs', 'bare', 'valid', 'valid_range', 'daterange', 'datemultirange', 'date', 'D', '1.3')
+$$);
+SELECT 'INSERT with catalog_format ''1.5'' (a newer layout) | ' || cfs.outcome($$
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, range_type, multirange_type, range_subtype, range_subtype_category, catalog_format)
+    VALUES ('cfs', 'bare', 'valid', 'valid_range', 'daterange', 'datemultirange', 'date', 'D', '1.5')
+$$);
+SELECT 'INSERT with catalog_format ''1.4'' | ' || cfs.outcome($$
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, range_type, multirange_type, range_subtype, range_subtype_category, catalog_format)
+    VALUES ('cfs', 'bare', 'valid', 'valid_range', 'daterange', 'datemultirange', 'date', 'D', '1.4')
 $$);
 SELECT 'UPDATE an existing era row to catalog_format NULL | ' || cfs.outcome($$
     UPDATE sql_saga.era SET catalog_format = NULL WHERE table_schema = 'cfs' AND table_name = 'unit'
