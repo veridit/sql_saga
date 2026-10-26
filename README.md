@@ -265,7 +265,13 @@ period`). It recognizes the teardown phase of `pg_restore --clean` and lets thos
 removes the history policies whose names the dump cannot know, because they carry this installation's
 token.
 
-The teardown is recognized by the session `pg_restore` sets up. If you instead run a restore script
+The teardown is recognized by the session `pg_restore` sets up **and requires the recorded immediate caller to be a
+superuser**. A non-superuser cannot forge the exemption with `application_name = 'pg_restore'`,
+`sql_saga.clean_restore = on`, `check_function_bodies = off` and `row_security = off`: managed-object refusals remain
+in force. Run clean restores over an existing database as a superuser, or restore into a new database without
+`--clean`. `pg_restore --clean --create`, which drops and recreates the whole database, is unaffected.
+
+If you instead run a restore script
 through `psql` (`pg_restore --clean -f script.sql`, then `psql -f script.sql`), or connect with your own
 `application_name` (`PGAPPNAME`), opt in explicitly:
 
@@ -273,9 +279,9 @@ through `psql` (`pg_restore --clean -f script.sql`, then `psql -f script.sql`), 
 pg_restore --clean --if-exists -f - backup.dump | PGOPTIONS='-c sql_saga.clean_restore=on' psql -v ON_ERROR_STOP=1 -d mydb
 ```
 
-The opt-in alone does not unlock anything. A drop is only treated as part of a restore teardown in a
-session with the settings every `pg_dump` script starts with (`check_function_bodies = off` and
-`row_security = off`). Accidental drops keep their protection.
+The opt-in alone does not unlock anything, and it does not remove the superuser requirement. A drop is only treated
+as part of a restore teardown when that requirement is met, in a session with the settings every `pg_dump` script
+starts with (`check_function_bodies = off` and `row_security = off`). Accidental drops keep their protection.
 
 `pg_restore --clean --create` (which drops and recreates the whole database) needs none of this.
 
@@ -490,22 +496,32 @@ they stand for would:
 - "The role that calls them" is the current user at the call, as for native DDL: after `SET ROLE` the role set, and
   inside a `SECURITY DEFINER` function that function's owner. So a migration function owned by the table owner may
   call them for another role, and a function owned by someone else cannot borrow its caller's ownership.
-- A foreign key also needs the `REFERENCES` privilege on the referenced table, as `ALTER TABLE ... ADD FOREIGN KEY` does.
+- A foreign key also needs the `REFERENCES` privilege on the referenced table or on every referenced key column, as
+  `ALTER TABLE ... ADD FOREIGN KEY` does. A temporal foreign key also needs it on the period/range column.
+- Adopting an existing history table requires ownership of that table (or membership in its owner) and the native
+  privileges for `ALTER TABLE ... OWNER TO`. Creating a history table, view or function needs `CREATE` on the schema.
+  Without those privileges, sql_saga refuses rather than taking over another role's table.
 - Dropping a foreign key needs ownership of the referencing table. As with native `DROP ... CASCADE`, the owner of
   the referenced table can still remove the foreign keys that depend on its key with `drop_unique_key` or
   `drop_era` and `CASCADE`, whoever owns the referencing tables.
 
-Each public function is a thin `SECURITY INVOKER` entry point that records the calling role and then runs the
-private worker `sql_saga.__api_<name>`, which has the extension owner's rights and authorizes that role first. The
-workers are not executable by `PUBLIC`.
+Each public management function is a thin `SECURITY INVOKER` entry point that records the calling role and then runs the
+private worker `sql_saga.__api_<name>`. Public event-trigger entry points use the same caller-recording pattern over
+private event workers. User-object DDL runs as that caller under the caller's `search_path`; only narrow internal
+operations retain elevation. The workers are not executable by `PUBLIC`.
 
 Before 1.4 these functions did not check the caller, so any role allowed to call them could change another role's
 table.
 
+If no compatible child index exists and the caller lacks `CREATE` on the child schema, sql_saga skips the optional
+automatic index with a warning and its exact `CREATE INDEX` hint, rather than elevating or refusing an otherwise
+native foreign-key creation. Create that index later with sufficient schema privileges for best performance.
+
 ##### Whose rights sql_saga's own writes use
 
-sql_saga never runs user code with the extension owner's rights. Like PostgreSQL's referential actions, which run
-as the owner of the table they change:
+sql_saga never runs arbitrary user SQL or user-trigger definitions with the extension owner's rights. Saved trigger
+definitions on managed views are replayed as the caller, so native `CREATE TRIGGER` and trigger-function `EXECUTE`
+privileges apply. Like PostgreSQL's referential actions, which run as the owner of the table they change:
 
 - the history row a system-versioned `UPDATE` or `DELETE` writes, and the history `TRUNCATE` that follows a
   `TRUNCATE` of the base table, are written as the owner of the history table;
@@ -516,8 +532,9 @@ expressions or domain checks on those tables run with their owner's rights.
 
 ##### Ownership and hardened databases
 
-Derived objects are owned by the owner of the base table. Ownership changes on the base table are propagated
-to them.
+Derived objects are owned by the owner of the base table. Ownership changes on the base table are propagated only
+within the affected family and with the DDL caller's native privileges. Rebuilding views does not re-own a history
+table whose owner diverged, and rebuilding views or functions requires the corresponding native schema privileges.
 
 Some databases revoke the default EXECUTE privilege from `PUBLIC`. `sql_saga` explicitly grants the required
 EXECUTE privilege on its portion and current view trigger functions, `temporal_merge` and its helper routines,

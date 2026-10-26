@@ -125,7 +125,7 @@ fixed. New findings, each fixed test-first:
       sql_saga.disable/enable_temporal_triggers (SECURITY INVOKER, unchanged). No StatBus code calls a management
       function as a non-owner. One StatBus test expects a sql_saga NOTICE text (test/expected/007): it will show
       the schema-qualified name (R8); update that expected file during the StatBus upgrade
-- [ ] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
+- [x] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
       (src/3h) over private SECURITY DEFINER workers sql_saga.__api_<name>. The 1.x->1.4 update must create the
       workers, then CREATE OR REPLACE each public function as the trampoline (keeps its OID, grants and dependants),
       and revoke the workers. The 1.3-target generator in the dev tree does not know 3h; rework it for 1.4
@@ -151,21 +151,21 @@ fixed. New findings, each fixed test-first:
       user CHECK/index/generated/domain expressions all evaluated as the table owner
 - [x] Third independent review of everything after R1-R7: BLOCK (`tmp/review_v14_round3.md`, at 6bb2fc8), findings
       Q1-Q6 below
-- [ ] Q1 CRITICAL: add_system_versioning(history_table_name => X) adopts X after a column-name shape check and
+- [x] Q1 CRITICAL: add_system_versioning(history_table_name => X) adopts X after a column-name shape check and
       ALTERs its owner to the base owner: any role that may create tables in a schema takes over (and reads) another
       role's table there. Same re-ownership in __internal_reconcile_system_versioning_family; drop_system_versioning
       (cleanup) drops a history of any owner. Fix: adopting, re-owning, moving or dropping a history table needs the
       caller to own it (as native ALTER/DROP TABLE). Test with two non-superuser roles; extend 149 section A
-- [ ] Q2 HIGH: write_history, generated_always_as_row_start_end and truncate_system_versioning never verify the
+- [x] Q2 HIGH: write_history, generated_always_as_row_start_end and truncate_system_versioning never verify the
       firing trigger. A TRIGGER+UPDATE holder crashes the postmaster (write_history on a non-range column), forges
       history rows (second tstzrange column) and writes a column it has no privilege on (generated_always...).
       Fix: verify like regular_fk_verify_trigger (registered system_versioning row for tgrelid, canonical trigger
       name, exact tgargs), plus a TSTZRANGEOID check as defense in depth. Tests: 145 (forged trigger on the
       registered table: crash, forgery), 149 (column privilege)
-- [ ] Q3 MEDIUM parity: require_references checks table-level REFERENCES only; native accepts REFERENCES on the
+- [x] Q3 MEDIUM parity: require_references checks table-level REFERENCES only; native accepts REFERENCES on the
       referenced key columns. Check per column (pg_attribute_aclcheck); 149 cases; README wording
 - [x] Q1 DONE 1517389 (test 150, 149 +22). Q2 + Q3 DONE ef9a5f0 (test 145 part 4, 149 +5; SV UPDATE 417-420 ms)
-- [ ] Q4 ESCALATED HIGH (2026-10-26): predicate text is spliced into an ALTER TABLE that the worker runs as the
+- [x] Q4 ESCALATED HIGH (2026-10-26): predicate text is spliced into an ALTER TABLE that the worker runs as the
       extension owner; a non-superuser table owner injected ", OWNER TO postgres" and it ran. Root cause: the
       workers check the caller's rights but execute as superuser. Proposed fix (owner's design): execute DDL on user
       tables as the recorded caller under the caller's search_path (native rules decide), catalog writes stay with
@@ -181,10 +181,14 @@ fixed. New findings, each fixed test-first:
       FORCE-RLS parity cases; hidden invalid row accepted like native, visible invalid row refused like native.
       The 063 planner expectation was independently checked against a pre-D1 build: the type-first fallback order is
       pre-existing, not a D1 regression, and the stale expected text was corrected explicitly
-- [ ] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
+- [x] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
       144 part 5 lists PUBLIC definer functions without asserting the set
-- [ ] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code
+      DONE: test 009 asserts empty search-path violation sets and pg_temp last; test 144 asserts the exact PUBLIC
+      definer set in addition to listing every definer.
+- [x] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code
       with the extension owner's rights" claim (Q2), doc/upgrade.md (predicate resolution, adoption needs ownership)
+      DONE: also documents optional-index fallback, caller-recording event workers and the superuser-only clean-restore
+      exemption.
 - [ ] Fourth independent review after Q1-Q6 until APPROVE
 
 **Open decisions for the owner (asked one at a time).**
@@ -254,8 +258,11 @@ fixed. New findings, each fixed test-first:
 - [ ] Release evidence: account for every 1.4 change by origin (requested CASCADE/TRUNCATE feature, independent review,
       self-found defect, packaging, D1 root-cause conversion), including which defects already existed in 1.0; use it
       for the final release notes and scope review
-- [ ] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
+- [x] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
       SECURITY INVOKER; verify/close the caller-forgeable clean-teardown bypass; review view-trigger replay as caller
+      DONE: public event entry points are caller-recording C trampolines over private workers; health repair is scoped
+      to affected families, clean teardown requires a superuser caller, and saved trigger replay uses caller privileges.
+      Tests 029, 152 and 153; old helper ACLs stay private so site REVOKEs are not replayed.
 - [ ] D1 performance gate: benchmark every converted hot path before/after (regular-FK check/cascade/load,
       system-versioned UPDATE/TRUNCATE, era sync triggers, temporal_merge), with pre-D1 and 1.3/native baselines;
       retain C and valid caches, investigate every regression, and record results in doc/decision-log.md
@@ -268,10 +275,14 @@ fixed. New findings, each fixed test-first:
 
 **Review and release.**
 - [x] Second independent review of all 1.4 changes: BLOCK, findings R1-R7 above
-- [ ] 1.4 packaging: control and native version 1.4, freeze 1.3 artifacts in versions/, catalog_format decision,
+- [x] 1.4 packaging: control and native version 1.4, freeze 1.3 artifacts in versions/, catalog_format decision,
       direct update scripts from 1.0, 1.1, 1.2 and 1.3 (generator), catalog CHECK and uk_truncate_trigger migration
+      DONE: devops/test_generate_update_scripts_1_4.py (27 tests) plus 1.4 Makefile wiring; the manifest includes all
+      changed routines and preserves existing ACLs, and CI names the four-source 1.4 matrix.
       with triggers created for existing regular FKs
-- [ ] doc/upgrade.md for 1.4 (ownership behavior change, new triggers, CASCADE)
+- [x] doc/upgrade.md for 1.4 (ownership behavior change, new triggers, CASCADE)
+      DONE: also native initial validation, predicate canonicalization, optional-index fallback, clean-restore rule and
+      four-source direct update/rehearsal instructions.
 - [ ] Acceptance: full suite incl. benchmarks, generator and native units, upgrade matrix from released tags
       1.0/1.1/1.2/1.3, restore matrix with split 20/20, two-session concurrency
 - [ ] Push, green Linux CI, tag v1.4

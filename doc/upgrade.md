@@ -1,42 +1,61 @@
-# Upgrading sql_saga to 1.3
+# Upgrading sql_saga to 1.4
 
-sql_saga 1.3 supports in-place upgrades from the released 1.0, 1.1 and 1.2 builds, each with one direct update script. Plan a maintenance window because the update takes locks on managed objects.
+sql_saga 1.4 supports in-place upgrades from the released 1.0, 1.1, 1.2 and 1.3 builds, each with one direct update script. Plan a maintenance window because the update takes locks on managed objects.
 
 ## Prerequisites
 
-- **PostgreSQL 18.** sql_saga 1.3 supports PostgreSQL 18 only.
+- **PostgreSQL 18.** sql_saga 1.4 supports PostgreSQL 18 only.
 - **Privileges.** Run the preflight, the update and the verification as the extension owner or a superuser. `ALTER EXTENSION ... UPDATE` requires ownership of the extension, and `sql_saga.check_integrity()` is not executable by `PUBLIC`.
 - **The right cluster.** Every command below addresses the production installation: `$DB`, `PGHOST`, `PGPORT` and `PGUSER` must point at it, and `pg_config` must be the one belonging to the PostgreSQL 18 server that runs it, not another local cluster.
 - **A verified backup and a rehearsed restore.** Take a backup of every database that has sql_saga installed, and restore it once on a scratch server before the window (see [Dump and restore](#dump-and-restore)). Rehearse the update itself on that restored copy.
-- **The previous package.** Keep the 1.0, 1.1 or 1.2 package files and libraries you are replacing, so you can redeploy them (see [Failure and recovery](#failure-and-recovery)).
+- **The previous package.** Keep the 1.0, 1.1, 1.2 or 1.3 package files and libraries you are replacing, so you can redeploy them (see [Failure and recovery](#failure-and-recovery)).
 
 ## Supported paths
 
-Each released version has one generated, direct update script to 1.3. PostgreSQL selects it; there is no intermediate hop:
+Each released version has one generated, direct update script to 1.4. PostgreSQL selects it; there is no intermediate hop:
 
-- **1.0 to 1.3:** `sql_saga--1.0--1.3.sql`
-- **1.1 to 1.3:** `sql_saga--1.1--1.3.sql`
-- **1.2 to 1.3:** `sql_saga--1.2--1.3.sql`
+- **1.0 to 1.4:** `sql_saga--1.0--1.4.sql`
+- **1.1 to 1.4:** `sql_saga--1.1--1.4.sql`
+- **1.2 to 1.4:** `sql_saga--1.2--1.4.sql`
+- **1.3 to 1.4:** `sql_saga--1.3--1.4.sql`
 
-The build generates the three scripts (`devops/generate_update_scripts.py`, Python 3, standard library only). Their inputs are the released artifacts `sql_saga--1.0--1.2.sql`, `sql_saga--1.1--1.2.sql` and `sql_saga--1.2.sql`, each authenticated by SHA-256, plus the routines changed since 1.2 and the 1.3 schema and repair steps. For 1.0 and 1.1, the frozen update to 1.2 is embedded with exactly these changes, and the build refuses any other difference: its native-library guard, its update hint and its final integrity gate are retargeted to 1.3, and, in the embedded 1.0 copy only, one privilege check is inserted before the embedded migration's first `GRANT` (see [Custom privileges on 1.0 routines](#custom-privileges-on-10-routines)). The released files in `versions/` are not changed. Every script records its source version first and ends with exactly one final integrity gate. The build fails on anything it does not recognize.
+The build generates the four scripts (`devops/generate_update_scripts_1_4.py`, Python 3, standard library only). Their inputs are the released 1.3 install script and the released 1.0, 1.1 and 1.2 updates to 1.3, each authenticated by SHA-256, plus the routines changed since 1.3 and the 1.4 schema and repair steps. For 1.0, 1.1 and 1.2, the frozen update to 1.3 is embedded with exactly the documented changes: its native-library guard, advisory lock and update hints are retargeted to 1.4, its final integrity gate is removed and the 1.4 gate runs once at the end. The released files in `versions/` are not changed. Every script records its source version first and ends with exactly one final integrity gate. The build fails on anything it does not recognize; `devops/test_generate_update_scripts_1_4.py` and the Makefile wiring test verify this.
 
-Do not run an older update script (to 1.1 or 1.2) while the 1.3 native library is loaded: their native-library guards require the library of their own version. Update directly to 1.3.
+Do not run an older update script (to 1.1, 1.2 or 1.3) while the 1.4 native library is loaded: their native-library guards require the library of their own version. Update directly to 1.4.
 
-The package also ships the earlier update scripts to 1.1 and 1.2. They are released artifacts and are never changed; with the 1.3 libraries loaded, only the direct updates to 1.3 apply.
+The package also ships the earlier install and update scripts. They are released artifacts and are never changed; with the 1.4 libraries loaded, only the direct updates to 1.4 apply.
 
 ## What changes in 1.4
 
-### Management functions check table ownership
+### Management functions use the immediate caller's native privileges
 
-The management functions change tables with the extension owner's rights. Up to 1.3 they did so for any role allowed to call them. From 1.4 they allow and refuse exactly what the DDL they stand for would:
+Up to 1.3, management functions changed tables with the extension owner's rights and did not consistently check the caller. From 1.4, public management functions are thin `SECURITY INVOKER` C entry points that record the immediate caller and then run private workers. User-object DDL runs as that caller under the caller's `search_path`; only narrow internal operations retain elevation, such as catalog writes, canonical parent-side regular-FK triggers, authorized CASCADE cleanup, generated synchronization functions, and native-equivalent RI/history actions.
 
-- the role that calls them must own the table, directly or through role membership, as for `ALTER TABLE`;
-- a foreign key also needs `REFERENCES` on the referenced table;
-- the calling role is the current user at the call, as for native DDL: after `SET ROLE` the role set, inside a `SECURITY DEFINER` function that function's owner.
+- The caller must own each table being changed, directly or through role membership, as for `ALTER TABLE`. Row privileges, including `GRANT ALL`, are not ownership.
+- The calling role is the current user at the call: after `SET ROLE` the role set, and inside a `SECURITY DEFINER` function that function's owner. A migration function owned by someone else cannot borrow its caller's ownership.
+- A foreign key needs `REFERENCES` on the referenced table or on every referenced key column, matching native PostgreSQL. A temporal foreign key also needs it on the period/range column.
+- Adopting an existing history table requires ownership of that history table (or membership in its owner) and the native privileges for `ALTER TABLE ... OWNER TO`. Creating a history table, view or function requires `CREATE` on the schema. Without those privileges, adoption or creation is refused rather than taking over another role's table.
+- Dropping a foreign key needs ownership of the referencing table. As with native `DROP ... CASCADE`, the referenced table owner can still remove dependent foreign keys owned by other roles through `drop_unique_key` or `drop_era` with `CASCADE`.
 
-Otherwise they fail with `42501`. Before updating, check that your migrations and deploy jobs call them as the table owner, a member of its role, a superuser, or from a `SECURITY DEFINER` function owned by the table owner, and not as a separate deploy role that only has `EXECUTE` or row privileges. The owner of a referenced table can still drop dependent foreign keys owned by other roles through `drop_unique_key` or `drop_era` with `CASCADE`, as native `DROP ... CASCADE` allows.
+Before updating, check migrations and deploy jobs call these functions as the table owner, an inheriting member, a `NOINHERIT` member after `SET ROLE`, a superuser, or from a `SECURITY DEFINER` function owned by the table owner, not as a separate deploy role with only `EXECUTE` or row privileges. Internal workers remain private; the public entry points keep their names, arguments, defaults, results and normal grants.
 
-Each public management function is now a `SECURITY INVOKER` C entry point over a private `SECURITY DEFINER` worker `sql_saga.__api_<name>`. Names, arguments, defaults, results, comments and grants of the public functions are unchanged. Four internal `SECURITY DEFINER` helpers that acted for any caller are no longer executable by `PUBLIC`.
+### Regular foreign keys: CASCADE, TRUNCATE and native validation
+
+A regular-to-temporal foreign key now accepts `delete_action => 'CASCADE'`. It deletes children when the last parent row with their key is deleted, runs as the child table owner, and preserves timeline reshaping when another parent row with the key remains. `TRUNCATE` of a referenced parent is refused while a child row references it, using the native `0A000` error and hint; truncate parent and children together or use `DELETE`.
+
+Add-time validation now follows PostgreSQL's `RI_Initial_Check` identity rules. It uses the caller's LEFT JOIN when SELECT on both relations (or all key columns) and RLS make that safe, otherwise it performs per-row checks as the relevant table owner with `SECURITY_NOFORCE_RLS`. This covers different child/parent owners, column-level SELECT, FORCE RLS and BYPASSRLS, including hidden valid parents and hidden violations.
+
+Automatic child-index creation remains optional (`create_index`, default true). If no compatible index exists and the caller lacks `CREATE` on the child schema, sql_saga skips that optional index with a warning and its exact `CREATE INDEX` hint instead of elevating or refusing an otherwise native foreign-key creation. Create the index later with sufficient schema privileges for best performance.
+
+### Predicate parsing and generated-object maintenance
+
+`add_unique_key(..., predicate => ...)` now parses exactly one predicate expression as the caller under the caller's `search_path`, stores PostgreSQL's canonical deparse, and uses that canonical form in constraints, integrity checks, rename-following and upgrades. This prevents predicate text from becoming another `ALTER TABLE` action and gives qualified and unqualified predicate functions the same stored meaning. Existing predicates are normalized by the 1.4 update.
+
+Public event-trigger entry points record the actual DDL caller before entering private workers. Health-check ownership repair is limited to affected families; unrelated DDL cannot rewrite another family's objects. Saved user-trigger definitions on managed views are replayed as that caller, so native `CREATE TRIGGER` and trigger-function `EXECUTE` privileges apply, with atomic failure on refusal.
+
+### Clean restore exemption is superuser-only
+
+The `pg_restore --clean` teardown exemption now requires the recorded immediate caller to be a superuser, in addition to the restore settings and top-level DROP shape. A non-superuser cannot forge it with `application_name = 'pg_restore'`, `sql_saga.clean_restore = on`, `check_function_bodies = off` and `row_security = off`; managed-object refusals remain in force. Run clean restores over an existing database as a superuser, or restore into a new database without `--clean`.
 
 ### History writes run as the history table's owner
 
@@ -251,18 +270,19 @@ Regular foreign keys that reference the same unique key share one generated help
 
 ## Before the maintenance window
 
-1. Deploy the complete 1.3 package. `make install` places the SQL files, flattened to their file names, in `$(pg_config --sharedir)/extension/`, which is where PostgreSQL looks for them (the source tree's `versions/` directory is not a runtime location):
-   - `sql_saga.control` (`default_version = '1.3'`)
-   - `sql_saga--1.3.sql`
-   - `sql_saga--1.0--1.3.sql`
-   - `sql_saga--1.1--1.3.sql`
-   - `sql_saga--1.2--1.3.sql`
-   - `sql_saga--1.0.sql`, `sql_saga--1.1.sql`, `sql_saga--1.2.sql` (the released install scripts, needed to restore an older dump)
-   - `sql_saga--1.0--1.1.sql`, `sql_saga--1.1--1.2.sql`, `sql_saga--1.0--1.2.sql` (released update scripts, unchanged)
+1. Deploy the complete 1.4 package. `make install` places the SQL files, flattened to their file names, in `$(pg_config --sharedir)/extension/`, which is where PostgreSQL looks for them (the source tree's `versions/` directory is not a runtime location):
+   - `sql_saga.control` (`default_version = '1.4'`)
+   - `sql_saga--1.4.sql`
+   - `sql_saga--1.0--1.4.sql`
+   - `sql_saga--1.1--1.4.sql`
+   - `sql_saga--1.2--1.4.sql`
+   - `sql_saga--1.3--1.4.sql`
+   - `sql_saga--1.0.sql`, `sql_saga--1.1.sql`, `sql_saga--1.2.sql`, `sql_saga--1.3.sql` (the released install scripts, needed to restore an older dump)
+   - the released update scripts to 1.1, 1.2 and 1.3 (unchanged)
    - `sql_saga_upgrade_preflight.sql`
 
    and the libraries in `$(pg_config --pkglibdir)`: `$libdir/sql_saga` and `$libdir/sql_saga_native`.
-2. Restart PostgreSQL after replacing either library. The loaded native library must be the 1.3 build (`sql_saga.native_library_version()` returns `1.3`): every update script refuses if it is not, and nothing it did in its transaction is committed. **Stop application writers before this restart, not only before the update**, and keep them stopped until the update and `check_integrity()` have passed (see [Upgrade](#upgrade)). Between the restart and `ALTER EXTENSION sql_saga UPDATE`, the 1.3 libraries run against the old schema, and a write in that interval can fail. The restart therefore belongs inside the maintenance window, together with the update.
+2. Restart PostgreSQL after replacing either library. The loaded native library must be the 1.4 build (`sql_saga.native_library_version()` returns `1.4`): every update script refuses if it is not, and nothing it did in its transaction is committed. **Stop application writers before this restart, not only before the update**, and keep them stopped until the update and `check_integrity()` have passed (see [Upgrade](#upgrade)). Between the restart and `ALTER EXTENSION sql_saga UPDATE`, the 1.4 libraries run against the old schema, and a write in that interval can fail. The restart therefore belongs inside the maintenance window, together with the update.
 3. Run the read-only preflight in every database:
 
 ```bash
@@ -274,21 +294,21 @@ The preflight accepts only the released installation shapes. It reports derived 
 For every source version, the reliable check is a rehearsal: run the update itself and roll it back. It runs every check the real update runs, including the orphan scan and the final integrity gate, and leaves the database unchanged:
 
 ```bash
-psql -X -v ON_ERROR_STOP=1 -d "$DB" -c "BEGIN; ALTER EXTENSION sql_saga UPDATE TO '1.3'; ROLLBACK;"
+psql -X -v ON_ERROR_STOP=1 -d "$DB" -c "BEGIN; ALTER EXTENSION sql_saga UPDATE TO '1.4'; ROLLBACK;"
 ```
 
-If it prints `ROLLBACK`, the real update will pass as long as nothing changes in between. If it fails, the error names the object and the repair. The dry run takes the same locks as the update, so run it outside busy hours, and with the 1.3 libraries loaded, so on the restored rehearsal copy or inside the window.
+If it prints `ROLLBACK`, the real update will pass as long as nothing changes in between. If it fails, the error names the object and the repair. The dry run takes the same locks as the update, so run it outside busy hours, and with the 1.4 libraries loaded, so on the restored rehearsal copy or inside the window.
 
 Before upgrading from 1.1, every cataloged regular-to-temporal foreign-key helper must still be the exact canonical helper generated by released 1.1. If validation refuses a helper, restore the released 1.1 definition or recreate the foreign key with sql_saga.
 
 ## Upgrade
 
-Application writers must already be stopped: they stop before the restart into the 1.3 libraries, not just before this step. Confirm the starting version is 1.0, 1.1 or 1.2, then update directly to 1.3:
+Application writers must already be stopped: they stop before the restart into the 1.4 libraries, not just before this step. Confirm the starting version is 1.0, 1.1, 1.2 or 1.3, then update directly to 1.4:
 
 ```sql
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
 SET lock_timeout = '30s';
-ALTER EXTENSION sql_saga UPDATE TO '1.3';
+ALTER EXTENSION sql_saga UPDATE TO '1.4';
 ```
 
 You can inspect the selected paths before the window:
@@ -296,16 +316,16 @@ You can inspect the selected paths before the window:
 ```sql
 SELECT source, target, path
 FROM pg_catalog.pg_extension_update_paths('sql_saga')
-WHERE target = '1.3'
-  AND source IN ('1.0', '1.1', '1.2')
+WHERE target = '1.4'
+  AND source IN ('1.0', '1.1', '1.2', '1.3')
 ORDER BY source;
 ```
 
-Expected paths are `1.0--1.3`, `1.1--1.3` and `1.2--1.3`.
+Expected paths are `1.0--1.4`, `1.1--1.4`, `1.2--1.4` and `1.3--1.4`.
 
 The update is atomic: it runs in one transaction, and any refusal or error rolls back everything, leaving the previous version installed exactly as it was. Within that transaction it validates, among other things:
 
-- the loaded 1.3 native library;
+- the loaded 1.4 native library;
 - the generated helpers;
 - that there are no unmanaged policies on managed history tables.
 
@@ -317,8 +337,8 @@ Never bypass any of this with `CASCADE`, disabled event triggers, or a changed `
 
 ### What the update keeps
 
-- From 1.1 and 1.2, the update keeps every managed family as it is. The four generated query functions of each system-versioned table are not regenerated, and neither are their views, policies or privileges. The update adds what 1.3 tracks: the catalog format marker, and, from 1.1, the column snapshot of each system-versioned table, filled from the table's current columns. It converts regular foreign keys as described above.
-- From 1.0, the embedded 1.0-to-1.1 migration deliberately reconciles older generated objects, exactly as an update to 1.1 did. It rebuilds history views and query functions, synchronizes history policies and normalizes direct grants on derived objects. Expect those objects and their privileges to change. The result matches a fresh 1.3 installation.
+- From 1.1, 1.2 and 1.3, the update keeps every managed family as it is unless a named 1.4 repair is required. It adds the 1.4 catalog format marker, canonicalizes predicated unique keys, installs the caller-recording entry points and regular-FK TRUNCATE protection, and converts regular foreign keys as described in the 1.3 section. Existing routine ACLs are not replayed, so site-specific `GRANT` and `REVOKE` statements survive.
+- From 1.0, the embedded 1.0-to-1.1 migration deliberately reconciles older generated objects, exactly as an update to 1.1 did. It rebuilds history views and query functions, synchronizes history policies and normalizes direct grants on derived objects. Expect those objects and their privileges to change. The result matches a fresh 1.4 installation.
 
 ### Final integrity gate and damaged families
 
@@ -328,7 +348,7 @@ The last statement of the update runs the complete `sql_saga.check_integrity()`,
 ERROR:  sql_saga: integrity violation for system-versioned table "public.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
 ```
 
-The database stays at its previous version, unchanged. Repair the named object with the function the message names, such as `rebuild_system_versioning_views`, `sync_history_policies`, or dropping and re-adding the era, key or foreign key. Then run `ALTER EXTENSION sql_saga UPDATE TO '1.3'` again, and repeat until it succeeds. To find damage before the window, run the rehearsal update on a restored copy. Never work around the gate.
+The database stays at its previous version, unchanged. Repair the named object with the function the message names, such as `rebuild_system_versioning_views`, `sync_history_policies`, or dropping and re-adding the era, key or foreign key. Then run `ALTER EXTENSION sql_saga UPDATE TO '1.4'` again, and repeat until it succeeds. To find damage before the window, run the rehearsal update on a restored copy. Never work around the gate.
 
 On the 1.0 path, the embedded 1.0-to-1.1 migration reconciles the damage it rebuilds (generated query functions, views, history policies) rather than refusing it. Damage it does not rebuild, such as a dropped era synchronization trigger, is refused.
 
@@ -349,8 +369,8 @@ Expected results:
 
 | Query | Result |
 |---|---|
-| `extversion` | `1.3` |
-| `native_library_version()` | `1.3` |
+| `extversion` | `1.4` |
+| `native_library_version()` | `1.4` |
 | rows in `sql_saga.installation` | `1` |
 | `to_regclass('sql_saga.temporal_merge_cache')` | `NULL` |
 | regular foreign keys still naming a helper | `0` |
@@ -402,23 +422,23 @@ Then run application smoke tests as every relevant role. Cover especially RLS te
   -- on the current version: inspect, then correct or delete each listed row
   SELECT fk.* FROM public.activity_note AS fk WHERE fk.legal_unit_id IS NOT NULL
       AND NOT EXISTS (SELECT FROM public.legal_unit AS uk WHERE uk.id = fk.legal_unit_id);
-  ALTER EXTENSION sql_saga UPDATE TO '1.3';
+  ALTER EXTENSION sql_saga UPDATE TO '1.4';
   ```
 
-  Between attempts the database runs the previous version's schema with the 1.3 libraries loaded. Keep application writers stopped, or redeploy the previous package and restart before reopening, until the update has passed.
-- **The update succeeded but verification or the application fails.** The new version is committed. There is no downgrade script from 1.3. Redeploying the previous package files and libraries does not turn the database back into its previous version, and an extension at version 1.3 needs the 1.3 libraries. To go back, restore the backup taken before the window, with the previous package deployed.
+  Between attempts the database runs the previous version's schema with the 1.4 libraries loaded. Keep application writers stopped, or redeploy the previous package and restart before reopening, until the update has passed.
+- **The update succeeded but verification or the application fails.** The new version is committed. There is no downgrade script from 1.4. Redeploying the previous package files and libraries does not turn the database back into its previous version, and an extension at version 1.4 needs the 1.4 libraries. To go back, restore the backup taken before the window, with the previous package deployed.
 
 ## Dump and restore
 
-### Catalog-format safeguard introduced in 1.3
+### Catalog-format safeguard introduced in 1.4
 
-The `sql_saga.era` catalog carries `catalog_format = '1.3'`. The value names the release that introduced this catalog format. It is not a count of schema changes and not a second extension version. Using a release name makes the marker traceable to a released layout, and a later release can keep the same value if it remains compatible with this format.
+The `sql_saga.era` catalog carries `catalog_format = '1.4'`. The value names the release that introduced this catalog format. It is not a count of schema changes and not a second extension version. Using a release name makes the marker traceable to a released layout, and a later release can keep the same value if it remains compatible with this format.
 
-The column deliberately has **no default**. The column list of a dump made by 1.0, 1.1 or 1.2 omits it, so restoring those rows directly into a fresh 1.3 installation would supply NULL. This named constraint rejects that mistake:
+The column deliberately has **no default**. The column list of a dump made by 1.0, 1.1, 1.2 or 1.3 omits it or has an earlier marker, so restoring those rows directly into a fresh 1.4 installation would be incompatible. This named constraint rejects that mistake:
 
 ```sql
 CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md"
-CHECK (catalog_format IS NOT NULL AND catalog_format = '1.3')
+CHECK (catalog_format IS NOT NULL AND catalog_format = '1.4')
 ```
 
 The explicit NULL test matters: PostgreSQL CHECK constraints accept an unknown result, so equality alone would not reject the missing value. Public registration functions write the marker explicitly, and the extension update populates it on existing rows as part of the catalog migration.
@@ -429,9 +449,9 @@ The guard cannot make `pg_dump` include `VERSION` in its `CREATE EXTENSION` stat
 
 ### Restore at the dump's own extension version
 
-`pg_dump` does **not** record the extension version. The archive says `CREATE EXTENSION IF NOT EXISTS sql_saga`, which installs the destination's *default* version, 1.3, and then loads the old catalog rows into it without running any update script. With the 1.3 package installed, a plain `pg_restore` of a 1.0, 1.1 or 1.2 dump therefore fails. For a dump with era rows, the safeguard above rejects them. Other dumps fail on a missing catalog column (for example `null value in column "table_columns_snapshot"` with system versioning). Or the restore produces a database whose objects are still in the old shape, which `check_integrity()` refuses.
+`pg_dump` does **not** record the extension version. The archive says `CREATE EXTENSION IF NOT EXISTS sql_saga`, which installs the destination's *default* version, 1.4, and then loads the old catalog rows into it without running any update script. With the 1.4 package installed, a plain `pg_restore` of a 1.0, 1.1, 1.2 or 1.3 dump therefore fails. For a dump with era rows, the safeguard above rejects them. Other dumps fail on a missing catalog column (for example `null value in column "table_columns_snapshot"` with system versioning). Or the restore produces a database whose objects are still in the old shape, which `check_integrity()` refuses.
 
-A dump made by 1.3 restores as usual. To restore a dump made by an older sql_saga (1.0, 1.1 or 1.2), install that version first. The 1.3 package ships every released install script, and they load with the current libraries. `IF NOT EXISTS` then keeps that version, the dump restores into it, and `ALTER EXTENSION sql_saga UPDATE` runs the normal update to 1.3, including the regular foreign key conversion and its orphan scan. Set `OLD_VERSION` to the version of the database that was dumped: run `SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'` on the source, and keep the result with your backups, since it cannot be read reliably from the archive.
+A dump made by 1.4 restores as usual. To restore a dump made by an older sql_saga (1.0, 1.1, 1.2 or 1.3), install that version first. The 1.4 package ships every released install script, and they load with the current libraries. `IF NOT EXISTS` then keeps that version, the dump restores into it, and `ALTER EXTENSION sql_saga UPDATE` runs the normal update to 1.4, including the regular foreign key conversion and its orphan scan. Set `OLD_VERSION` to the version of the database that was dumped: run `SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'` on the source, and keep the result with your backups, since it cannot be read reliably from the archive.
 
 <!-- BEGIN old-dump-restore -->
 ```bash
@@ -466,10 +486,10 @@ If you install the wrong old version, the procedure usually fails and rolls back
 
 It does not fail for a 1.0 dump with `for_portion_of`/`current` views restored as 1.1: the views then miss the
 grants the 1.0-to-1.1 step gives them. Do not rely on a failure to detect the mismatch; use the version of the
-source. A 1.3 dump needs no preinstalled version: restore it as usual.
+source. A 1.4 dump needs no preinstalled version: restore it as usual.
 
 Restores mint a new installation token on the destination.
 
 ## Historical notes
 
-The 1.0-to-1.1 migration removed the persistent `temporal_merge_cache_*` API, normalized direct grants copied onto derived objects, introduced the installation token and gated history views, and reconciled managed families. The 1.1-to-1.2 migration added the column snapshot of system-versioned tables and the new `add_system_versioning` signature. Both remain embedded, unchanged apart from the retargeted guard, hint and final gate, in the generated direct 1.0-to-1.3 and 1.1-to-1.3 paths. New deployments should install 1.3, and existing 1.0, 1.1 and 1.2 installations should update directly to 1.3.
+The 1.0-to-1.1 migration removed the persistent `temporal_merge_cache_*` API, normalized direct grants copied onto derived objects, introduced the installation token and gated history views, and reconciled managed families. The 1.1-to-1.2 migration added the column snapshot of system-versioned tables and the new `add_system_versioning` signature. Both remain embedded, unchanged apart from the retargeted guard, hint and final gate, in the generated direct 1.0-to-1.4 and 1.1-to-1.4 paths. New deployments should install 1.4, and existing 1.0, 1.1, 1.2 and 1.3 installations should update directly to 1.4.
