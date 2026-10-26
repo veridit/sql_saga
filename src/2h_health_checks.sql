@@ -1474,6 +1474,3 @@ REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;
 
 COMMENT ON FUNCTION sql_saga.check_integrity() IS
 'Validates all catalogued sql_saga families without modifying them, and raises on the first deterministic integrity violation.';
-
-COMMENT ON FUNCTION sql_saga.health_checks() IS
-'An event trigger function that runs after DDL commands to check for inconsistencies in sql_saga''s metadata catalogs.';

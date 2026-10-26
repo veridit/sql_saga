@@ -756,6 +756,3 @@ BEGIN
     END;
 END;
 $function$;
-
-COMMENT ON FUNCTION sql_saga.drop_protection() IS
-'An event trigger function that prevents accidental dropping of sql_saga-managed objects. During the teardown phase of pg_restore --clean (see sql_saga.__internal_is_clean_teardown) it lets the drops through and removes the managed history policies the dump cannot name.';

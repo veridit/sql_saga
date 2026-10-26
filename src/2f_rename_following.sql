@@ -2125,6 +2125,3 @@ BEGIN
 
 END;
 $function$;
-
-COMMENT ON FUNCTION sql_saga.rename_following() IS
-'An event trigger function that follows object renames and updates sql_saga''s metadata accordingly.';
