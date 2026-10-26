@@ -3750,6 +3750,9 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 	Datum		values[MAX_FK_COLS];
 	char		nulls[MAX_FK_COLS];
 	Oid			argtypes[MAX_FK_COLS];
+	int16		key_typlen[MAX_FK_COLS];
+	bool		key_typbyval[MAX_FK_COLS];
+	bool		key_copied[MAX_FK_COLS];
 	int			ret;
 	bool		isnull;
 
@@ -3819,6 +3822,7 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 		if (elem_nulls[i])
 			ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("key column name must not be NULL")));
 		argtypes[i] = get_atttype(fk_relid, get_attnum(fk_relid, NameStr(*DatumGetName(elems[i]))));
+		get_typlenbyval(argtypes[i], &key_typlen[i], &key_typbyval[i]);
 		nulls[i] = ' ';
 	}
 
@@ -3851,13 +3855,20 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 				break;
 			for (i = 0; i < ncols; i++)
 			{
-				AttrNumber	attnum = get_attnum(fk_relid, NameStr(*DatumGetName(elems[i])));
-
-				values[i] = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, attnum, &isnull);
+				values[i] = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, i + 1, &isnull);
 				nulls[i] = isnull ? 'n' : ' ';
+				key_copied[i] = false;
+				if (!isnull && !key_typbyval[i])
+				{
+					values[i] = datumCopy(values[i], key_typbyval[i], key_typlen[i]);
+					key_copied[i] = true;
+				}
 			}
 			SetUserIdAndSecContext(parent_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
 			ret = SPI_execute_plan(parent_plan, values, nulls, true, 1);
+			for (i = 0; i < ncols; i++)
+				if (key_copied[i])
+					pfree(DatumGetPointer(values[i]));
 			if (ret != SPI_OK_SELECT)
 				elog(ERROR, "SPI_execute_plan for regular foreign key parent validation returned %s", SPI_result_code_string(ret));
 			if (SPI_processed == 0)

@@ -34,9 +34,10 @@ CREATE ROLE pp_nobody;
 CREATE ROLE pp_maint IN ROLE pg_maintain;
 CREATE ROLE pp_writer;
 CREATE ROLE pp_colwriter;
-GRANT USAGE ON SCHEMA sql_saga TO pp_owner, pp_member, pp_noinherit, pp_allprivs, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter;
+CREATE ROLE pp_bypass BYPASSRLS;
+GRANT USAGE ON SCHEMA sql_saga TO pp_owner, pp_member, pp_noinherit, pp_allprivs, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter, pp_bypass;
 CREATE SCHEMA par AUTHORIZATION pp_owner;
-GRANT USAGE ON SCHEMA par TO pp_member, pp_noinherit, pp_allprivs, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter;
+GRANT USAGE ON SCHEMA par TO pp_member, pp_noinherit, pp_allprivs, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter, pp_bypass;
 GRANT CREATE ON SCHEMA par TO pp_allprivs;
 
 -- Runs a statement as a role in a subtransaction and reports the outcome; never changes anything.
@@ -262,6 +263,172 @@ SELECT par.cmp('add-time validation, violating row visible under FORCE RLS: add_
     par.try('pp_owner', $$SELECT sql_saga.add_foreign_key('par.q7_s_visible', ARRAY['id'], 'par.q7_s_parent', ARRAY['id'])$$),
     par.try('pp_owner', $$ALTER TABLE par.q7_n_visible ADD FOREIGN KEY (id) REFERENCES par.q7_n_parent (id)$$));
 
+\echo '--- A2: native initial-validation identity, column privileges and RLS'
+-- A child owner and a different parent owner exercise the per-row fallback. The child key is not attribute 1,
+-- and the composite case has a column name that is a prefix of another column name.
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.v_s_parent (id int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('par.v_s_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('par.v_s_parent', ARRAY['id'], key_type => 'primary', unique_key_name => 'v_s_pk');
+CREATE TABLE par.v_n_parent (id int PRIMARY KEY);
+CREATE TABLE par.v_s_child (id int, parent_id int);
+CREATE TABLE par.v_n_child (id int, parent_id int);
+INSERT INTO par.v_s_parent (id, valid_range) VALUES (1, '[2020-01-01,infinity)'::daterange);
+INSERT INTO par.v_n_parent VALUES (1);
+INSERT INTO par.v_s_child VALUES (1, 1);
+INSERT INTO par.v_n_child VALUES (1, 1);
+RESET ROLE;
+ALTER TABLE par.v_s_child OWNER TO pp_allprivs;
+ALTER TABLE par.v_n_child OWNER TO pp_allprivs;
+GRANT REFERENCES (id) ON par.v_s_parent, par.v_n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('different owners, REFERENCES only, valid row',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.v_s_child', ARRAY['parent_id'], 'par.v_s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.v_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.v_n_parent (id)$$));
+\o /dev/null
+SET ROLE pp_allprivs;
+INSERT INTO par.v_s_child VALUES (2, 999);
+INSERT INTO par.v_n_child VALUES (2, 999);
+RESET ROLE;
+\o
+SELECT par.cmp('different owners, REFERENCES only, visible violation',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.v_s_child', ARRAY['parent_id'], 'par.v_s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.v_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.v_n_parent (id)$$));
+\o /dev/null
+SET ROLE pp_allprivs;
+DELETE FROM par.v_s_child WHERE id = 2;
+DELETE FROM par.v_n_child WHERE id = 2;
+RESET ROLE;
+GRANT SELECT (id) ON par.v_s_parent, par.v_n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('key-column SELECT only, caller LEFT JOIN validation',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.v_s_child', ARRAY['parent_id'], 'par.v_s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.v_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.v_n_parent (id)$$));
+
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.p_s_parent (a int NOT NULL, aa int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('par.p_s_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('par.p_s_parent', ARRAY['a', 'aa'], key_type => 'primary', unique_key_name => 'p_s_pk');
+CREATE TABLE par.p_n_parent (a int NOT NULL, aa int NOT NULL, PRIMARY KEY (a, aa));
+CREATE TABLE par.p_s_child (id int, a int, aa int);
+CREATE TABLE par.p_n_child (id int, a int, aa int);
+INSERT INTO par.p_s_parent (a, aa, valid_range) VALUES (7, 8, '[2020-01-01,infinity)'::daterange);
+INSERT INTO par.p_n_parent VALUES (7, 8);
+INSERT INTO par.p_s_child VALUES (1, 7, 8);
+INSERT INTO par.p_n_child VALUES (1, 7, 8);
+RESET ROLE;
+ALTER TABLE par.p_s_child OWNER TO pp_allprivs;
+ALTER TABLE par.p_n_child OWNER TO pp_allprivs;
+GRANT REFERENCES (a, aa) ON par.p_s_parent, par.p_n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('composite prefixed key columns, REFERENCES only',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.p_s_child', ARRAY['a', 'aa'], 'par.p_s_parent', ARRAY['a', 'aa'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.p_n_child ADD FOREIGN KEY (a, aa) REFERENCES par.p_n_parent (a, aa)$$));
+\o /dev/null
+SET ROLE pp_allprivs;
+INSERT INTO par.p_s_child VALUES (2, 7, 999);
+INSERT INTO par.p_n_child VALUES (2, 7, 999);
+RESET ROLE;
+\o
+SELECT par.cmp('composite prefixed key columns, violation',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.p_s_child', ARRAY['a', 'aa'], 'par.p_s_parent', ARRAY['a', 'aa'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.p_n_child ADD FOREIGN KEY (a, aa) REFERENCES par.p_n_parent (a, aa)$$));
+
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.t_s_parent (code text NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('par.t_s_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('par.t_s_parent', ARRAY['code'], key_type => 'primary', unique_key_name => 't_s_pk');
+CREATE TABLE par.t_n_parent (code text PRIMARY KEY);
+CREATE TABLE par.t_s_child (id int, parent_code text);
+CREATE TABLE par.t_n_child (id int, parent_code text);
+INSERT INTO par.t_s_parent (code, valid_range) VALUES ('alpha', '[2020-01-01,infinity)'::daterange);
+INSERT INTO par.t_n_parent VALUES ('alpha');
+INSERT INTO par.t_s_child VALUES (1, 'alpha');
+INSERT INTO par.t_n_child VALUES (1, 'alpha');
+RESET ROLE;
+ALTER TABLE par.t_s_child OWNER TO pp_allprivs;
+ALTER TABLE par.t_n_child OWNER TO pp_allprivs;
+GRANT REFERENCES (code) ON par.t_s_parent, par.t_n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('text key, REFERENCES only, valid row',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.t_s_child', ARRAY['parent_code'], 'par.t_s_parent', ARRAY['code'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.t_n_child ADD FOREIGN KEY (parent_code) REFERENCES par.t_n_parent (code)$$));
+\o /dev/null
+SET ROLE pp_allprivs;
+INSERT INTO par.t_s_child VALUES (2, 'missing');
+INSERT INTO par.t_n_child VALUES (2, 'missing');
+RESET ROLE;
+\o
+SELECT par.cmp('text key, REFERENCES only, violation',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.t_s_child', ARRAY['parent_code'], 'par.t_s_parent', ARRAY['code'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.t_n_child ADD FOREIGN KEY (parent_code) REFERENCES par.t_n_parent (code)$$));
+
+-- FORCE RLS on a parent owned by another role forces native's per-row owner checks. A hidden valid parent therefore
+-- still validates, while a hidden violation is still rejected. This is deliberately different from the same-owner
+-- Q7 case above, where the caller's own LEFT JOIN is allowed and FORCE RLS can hide a violation.
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.r_s_parent (id int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('par.r_s_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('par.r_s_parent', ARRAY['id'], key_type => 'primary', unique_key_name => 'r_s_pk');
+CREATE TABLE par.r_n_parent (id int PRIMARY KEY);
+CREATE TABLE par.r_s_child (id int, parent_id int);
+CREATE TABLE par.r_n_child (id int, parent_id int);
+INSERT INTO par.r_s_parent (id, valid_range) VALUES (1, '[2020-01-01,infinity)'::daterange);
+INSERT INTO par.r_n_parent VALUES (1);
+INSERT INTO par.r_s_child VALUES (1, 1);
+INSERT INTO par.r_n_child VALUES (1, 1);
+RESET ROLE;
+ALTER TABLE par.r_s_child OWNER TO pp_allprivs;
+ALTER TABLE par.r_n_child OWNER TO pp_allprivs;
+ALTER TABLE par.r_s_parent ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.r_n_parent ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.r_s_parent FORCE ROW LEVEL SECURITY;
+ALTER TABLE par.r_n_parent FORCE ROW LEVEL SECURITY;
+CREATE POLICY r_hide ON par.r_s_parent FOR SELECT USING (false);
+CREATE POLICY r_hide ON par.r_n_parent FOR SELECT USING (false);
+RESET ROLE;
+GRANT SELECT, REFERENCES ON par.r_s_parent, par.r_n_parent TO pp_allprivs;
+\o
+SELECT par.cmp('non-owner parent FORCE RLS hides a valid parent',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.r_s_child', ARRAY['parent_id'], 'par.r_s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.r_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.r_n_parent (id)$$));
+\o /dev/null
+SET ROLE pp_allprivs;
+INSERT INTO par.r_s_child VALUES (2, 999);
+INSERT INTO par.r_n_child VALUES (2, 999);
+RESET ROLE;
+\o
+SELECT par.cmp('non-owner parent FORCE RLS does not hide a violation from fallback',
+    par.try('pp_allprivs', $$SELECT sql_saga.add_foreign_key('par.r_s_child', ARRAY['parent_id'], 'par.r_s_parent', ARRAY['id'])$$),
+    par.try('pp_allprivs', $$ALTER TABLE par.r_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.r_n_parent (id)$$));
+
+-- BYPASSRLS permits the caller LEFT JOIN even when the caller is not the parent owner.
+\o /dev/null
+CREATE TABLE par.b_s_child (id int, parent_id int);
+CREATE TABLE par.b_n_child (id int, parent_id int);
+ALTER TABLE par.b_s_child OWNER TO pp_bypass;
+ALTER TABLE par.b_n_child OWNER TO pp_bypass;
+INSERT INTO par.b_s_child VALUES (1, 1);
+INSERT INTO par.b_n_child VALUES (1, 1);
+GRANT SELECT, REFERENCES ON par.r_s_parent, par.r_n_parent TO pp_bypass;
+\o
+SELECT par.cmp('BYPASSRLS caller, hidden valid parent',
+    par.try('pp_bypass', $$SELECT sql_saga.add_foreign_key('par.b_s_child', ARRAY['parent_id'], 'par.r_s_parent', ARRAY['id'])$$),
+    par.try('pp_bypass', $$ALTER TABLE par.b_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.r_n_parent (id)$$));
+\o /dev/null
+SET ROLE pp_bypass;
+INSERT INTO par.b_s_child VALUES (2, 999);
+INSERT INTO par.b_n_child VALUES (2, 999);
+RESET ROLE;
+\o
+SELECT par.cmp('BYPASSRLS caller, hidden violation',
+    par.try('pp_bypass', $$SELECT sql_saga.add_foreign_key('par.b_s_child', ARRAY['parent_id'], 'par.r_s_parent', ARRAY['id'])$$),
+    par.try('pp_bypass', $$ALTER TABLE par.b_n_child ADD FOREIGN KEY (parent_id) REFERENCES par.r_n_parent (id)$$));
+
 \echo '--- B: writes against a regular foreign key and a native one, side by side'
 \o /dev/null
 SET ROLE pp_owner;
@@ -335,7 +502,7 @@ SELECT 'TRUNCATE of a parent with no referencing child row | ' ||
 \o /dev/null
 RESET ROLE;
 DROP SCHEMA par CASCADE;
-DROP OWNED BY pp_member, pp_noinherit, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter, pp_allprivs, pp_owner;
-DROP ROLE pp_member, pp_noinherit, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter;
+DROP OWNED BY pp_member, pp_noinherit, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter, pp_bypass, pp_allprivs, pp_owner;
+DROP ROLE pp_member, pp_noinherit, pp_reader, pp_nobody, pp_maint, pp_writer, pp_colwriter, pp_bypass;
 DROP ROLE pp_allprivs, pp_owner;
 \i sql/include/test_teardown.sql

@@ -83,6 +83,12 @@ BEGIN
     END IF;
 
     IF p_create_index THEN
+        IF NOT has_schema_privilege(sql_saga.__internal_caller(), v_fk_schema_name, 'CREATE') THEN
+            RAISE WARNING 'sql_saga: Skipped automatic index creation for foreign key on table % because the caller lacks CREATE on schema %.',
+                p_fk_table_oid::text, v_fk_schema_name
+            USING HINT = format('Create this index with sufficient schema privileges: %s', v_index_def);
+            RETURN NULL;
+        END IF;
         RAISE NOTICE 'sql_saga: No compatible index found for foreign key on table %. Creating new index: %', p_fk_table_oid::text, v_index_def;
         PERFORM sql_saga.__internal_execute_as_caller(v_index_def);
         RETURN v_index_name;
@@ -641,11 +647,11 @@ BEGIN
     DECLARE
         violating_row_found boolean;
         fk_not_null_clause text;
+        fk_select_list text;
         uk_where_params text;
         child_sql text;
         parent_sql text;
         initial_sql text;
-        i integer;
     BEGIN
         -- MATCH SIMPLE checks rows whose key columns are all non-NULL, MATCH FULL every row that is not all NULL
         -- (a partly NULL key is a violation then).
@@ -655,9 +661,15 @@ BEGIN
         INTO fk_not_null_clause
         FROM unnest(fk_column_names) WITH ORDINALITY AS u(fkc, o);
 
+        -- The fallback cursor returns exactly the child key values, in foreign-key order.
+        SELECT string_agg(format('fk.%I', u.fkc), ', ' ORDER BY u.o)
+        INTO fk_select_list
+        FROM unnest(fk_column_names) WITH ORDINALITY AS u(fkc, o);
+
         -- The comparison the trigger uses: the default btree equality operator of each column type.
-        SELECT string_agg(format('uk.%I OPERATOR(%I.=) fk.%I', u.ukc /* %I */, eq.nspname /* %I */, u.fkc /* %I */), ' AND ' ORDER BY u.o)
-        INTO uk_where_clause
+        SELECT string_agg(format('uk.%I OPERATOR(%I.=) fk.%I', u.ukc /* %I */, eq.nspname /* %I */, u.fkc /* %I */), ' AND ' ORDER BY u.o),
+               string_agg(format('uk.%I OPERATOR(%I.=) $%s', u.ukc /* %I */, eq.nspname /* %I */, u.o /* %s */), ' AND ' ORDER BY u.o)
+        INTO uk_where_clause, uk_where_params
         FROM unnest(v_uk_stable_cols, fk_column_names) WITH ORDINALITY AS u(ukc, fkc, o)
         JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.ukc)
         CROSS JOIN LATERAL (
@@ -678,11 +690,7 @@ BEGIN
         /* Native RI_Initial_Check: use the caller only when its LEFT JOIN is allowed; otherwise use per-row owner checks. */
         initial_sql := format('SELECT EXISTS(SELECT 1 FROM ONLY %1$I.%2$I AS fk WHERE %3$s AND NOT EXISTS (SELECT 1 FROM ONLY %4$I.%5$I AS uk WHERE %6$s))',
             fk_schema_name, fk_table_name, fk_not_null_clause, uk_schema_name, uk_table_name, uk_where_clause);
-        child_sql := format('SELECT 1 FROM ONLY %I.%I AS fk WHERE %s', fk_schema_name, fk_table_name, fk_not_null_clause);
-        uk_where_params := uk_where_clause;
-        FOR i IN 1 .. cardinality(fk_column_names) LOOP
-            uk_where_params := replace(uk_where_params, format('fk.%I', fk_column_names[i]), '$' || i);
-        END LOOP;
+        child_sql := format('SELECT %s FROM ONLY %I.%I AS fk WHERE %s', fk_select_list, fk_schema_name, fk_table_name, fk_not_null_clause);
         parent_sql := format('SELECT 1 FROM ONLY %I.%I AS uk WHERE %s', uk_schema_name, uk_table_name, uk_where_params);
         SELECT sql_saga.__internal_regular_fk_initial_check(initial_sql, child_sql, parent_sql,
             fk_table_oid, uk_table_oid, fk_column_names, v_uk_stable_cols) INTO violating_row_found;

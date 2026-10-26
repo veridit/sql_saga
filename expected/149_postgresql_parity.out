@@ -54,6 +54,20 @@ valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: refuse
 id, valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: allowed
 add-time validation, violating row hidden by FORCE RLS: add_foreign_key vs ADD FOREIGN KEY | same: allowed
 add-time validation, violating row visible under FORCE RLS: add_foreign_key vs ADD FOREIGN KEY | same: refused 23503
+--- A2: native initial-validation identity, column privileges and RLS
+different owners, REFERENCES only, valid row | same: allowed
+different owners, REFERENCES only, visible violation | same: refused 23503
+key-column SELECT only, caller LEFT JOIN validation | same: allowed
+composite prefixed key columns, REFERENCES only | same: allowed
+composite prefixed key columns, violation | same: refused 23503
+text key, REFERENCES only, valid row | same: allowed
+text key, REFERENCES only, violation | same: refused 23503
+non-owner parent FORCE RLS hides a valid parent | same: allowed
+non-owner parent FORCE RLS does not hide a violation from fallback | same: refused 23503
+WARNING:  sql_saga: Skipped automatic index creation for foreign key on table par.b_s_child because the caller lacks CREATE on schema par.
+BYPASSRLS caller, hidden valid parent | same: allowed
+WARNING:  sql_saga: Skipped automatic index creation for foreign key on table par.b_s_child because the caller lacks CREATE on schema par.
+BYPASSRLS caller, hidden violation | same: refused 23503
 --- B: writes against a regular foreign key and a native one, side by side
 column-privilege writer, child insert of a present key (parent unreadable, RLS hides it) | same: allowed
 column-privilege writer, child insert of an absent key | same: refused 23503
