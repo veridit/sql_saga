@@ -195,9 +195,10 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- INSERT/UPDATE/DELETE runs current_view_trigger as the invoker of that DML, and it calls them to evaluate the
 -- clock the view is bound to on a fixed search_path, so PUBLIC must be able to execute them. Both are SECURITY
 -- INVOKER and read only the rule of the given view.
--- 1.4 removals (review round 2, R1): four SECURITY DEFINER workers that acted for any caller are no longer executable
--- by PUBLIC: __internal_add_system_time_era, __internal_ddl_command_affects_managed_object,
--- __internal_reconcile_system_versioning_family and __internal_sync_history_policies. Everything else must match 1.1.
+-- 1.4 removals (review round 2, R1): elevated workers that acted for any caller are no longer executable
+-- by PUBLIC: __internal_add_system_time_era, __internal_reconcile_system_versioning_family and
+-- __internal_sync_history_policies. health_checks is now SECURITY INVOKER. Its pure display/restore inspectors
+-- and the boolean history-policy guard reader are executable by PUBLIC, but perform no elevated user-object SQL.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
@@ -206,7 +207,10 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__internal_current_view_clock(view_oid oid)'),
 ('__internal_current_view_now(view_oid oid, range_subtype regtype)'),
 ('__internal_deny_history(table_oid oid)'),
+('__internal_ddl_command_affects_managed_object()'),
+('__internal_display_function_name(function_identity text)'),
 ('__internal_display_name(object_name regclass)'),
+('__internal_display_name(object_identity text)'),
 ('__internal_generate_pk_consistency_constraints(p_unique_key_name name, p_natural_key_columns name[], p_mutually_exclusive_columns name[], p_primary_key_column name)'),
 ('__internal_history_base_select_policy_name()'),
 ('__internal_history_copy_name(base_policy_name name)'),
@@ -216,9 +220,12 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__internal_history_policies_synchronized(table_oid oid, history_table_oid oid)'),
 ('__internal_history_policy_copies(table_oid oid)'),
 ('__internal_history_policy_drift(table_oid oid, history_table_oid oid, OUT missing integer, OUT stale integer, OUT unmanaged integer)'),
+('__internal_history_policy_sync_active(table_oid oid)'),
 ('__internal_history_reader_policy_name()'),
 ('__internal_installation_token()'),
+('__internal_is_clean_teardown()'),
 ('__internal_is_managed_history_policy(policy_name name)'),
+('__internal_is_parallel_restore()'),
 ('__internal_make_name(resizable text[], fixed text, separator text, extra integer)'),
 ('__internal_make_updatable_view_name(table_name name, era_name name, view_type_suffix text)'),
 ('__internal_policy_missing_history_column(base_policy_oid oid, history_table_oid oid)'),

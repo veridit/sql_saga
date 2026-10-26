@@ -19,7 +19,9 @@ REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_add_system_time_era(regclass, name, name, name, name, name, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_reconcile_system_versioning_family(regclass, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_sync_history_policies(oid, name[]) FROM PUBLIC;
-REVOKE ALL ON FUNCTION sql_saga.__internal_ddl_command_affects_managed_object() FROM PUBLIC;
+/* This inspector is SECURITY INVOKER and reads only public catalogs/event data; health_checks needs it
+ * as an invoker event trigger. The elevated workers below remain private. */
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_ddl_command_affects_managed_object() TO PUBLIC;
 
 /* The private SECURITY DEFINER workers behind the public management functions (src/3h_api_trampolines.sql). */
 REVOKE ALL ON FUNCTION sql_saga.__api_add_current_view(regclass, name, name, text) FROM PUBLIC;

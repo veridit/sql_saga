@@ -658,7 +658,7 @@ SECURITY DEFINER
 
 ```sql
 FUNCTION health_checks() RETURNS event_trigger
-SECURITY DEFINER
+SECURITY INVOKER
 ```
 
 ## Internal and Helper Functions

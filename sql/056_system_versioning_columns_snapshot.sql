@@ -511,6 +511,7 @@ WHERE n.nspname = 'sql_saga'
       'sql_saga.__internal_ddl_command_affects_managed_object()',
       'sql_saga.__internal_reconcile_system_versioning_family(regclass,name[])',
       'sql_saga.__internal_sync_history_policies(oid,name[])',
+      'sql_saga.__internal_history_policy_sync_active(oid)',
       'sql_saga.add_current_view(regclass,name,name,text)',
       'sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[])',
       'sql_saga.add_for_portion_of_view(regclass,name,name[])',

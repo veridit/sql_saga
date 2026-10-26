@@ -250,6 +250,9 @@ RETURNS void
 LANGUAGE c VOLATILE SECURITY INVOKER
 AS 'sql_saga', 'api_trampoline';
 
+/* Also required when hardened databases revoke default PUBLIC EXECUTE: health_checks is an invoker event trigger. */
+GRANT EXECUTE ON FUNCTION sql_saga.sync_history_policies(regclass) TO PUBLIC;
+
 /* The documentation of each public function is its worker's. */
 DO $copy_api_comments$
 DECLARE

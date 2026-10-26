@@ -167,7 +167,8 @@ AS $__internal_history_policy_sync_active$
           AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
           AND (g.base_schema, g.base_table) = (n.nspname, c.relname));
 $__internal_history_policy_sync_active$;
-REVOKE ALL ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) FROM PUBLIC;
+-- The boolean is safe for the SECURITY INVOKER health trigger; the guard table remains private.
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) TO PUBLIC;
 
 /*
  * Desired policy copies on B_history: one per SELECT/ALL policy on B. The USING expression is the

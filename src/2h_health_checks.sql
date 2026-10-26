@@ -1,8 +1,8 @@
 CREATE OR REPLACE FUNCTION sql_saga.health_checks()
  RETURNS event_trigger
  LANGUAGE plpgsql
- SECURITY DEFINER
- -- Set a safe search path for this SECURITY DEFINER function
+ SECURITY INVOKER
+ -- A safe search path for canonical event-trigger checks; generated user-object DDL is fully qualified.
  SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
@@ -14,6 +14,7 @@ DECLARE
     gated_columns text;
     expected_gate text;
     alter_function_resolved text;
+    affected_base_oids oid[];
 BEGIN
     IF tg_tag IN ('ALTER FUNCTION', 'ALTER ROUTINE') THEN
         alter_function_resolved := current_setting('sql_saga.alter_function_resolved', true);
@@ -25,13 +26,15 @@ BEGIN
         END IF;
 
         FOR r IN
-            SELECT to_regclass(format('%I.%I', x.table_schema, x.table_name)) AS table_oid,
+            SELECT t.oid AS table_oid,
                    x.identity
             FROM jsonb_to_recordset(alter_function_resolved::jsonb) AS x(
                 table_schema name,
                 table_name name,
                 role text,
                 identity text)
+            LEFT JOIN pg_catalog.pg_namespace AS tn ON tn.nspname = x.table_schema
+            LEFT JOIN pg_catalog.pg_class AS t ON t.relnamespace = tn.oid AND t.relname = x.table_name
             WHERE to_regprocedure(x.identity) IS NULL
             ORDER BY x.table_schema, x.table_name, x.role
         LOOP
@@ -50,12 +53,76 @@ BEGIN
         RETURN;
     END IF;
 
+    /* Ownership repair is an event-local side effect. ALTER TABLE can report a relation, constraint,
+     * trigger or index depending on its subcommand, so normalize all of those to their base relation.
+     * Unknown objects deliberately produce no repair candidates; never fall back to every family. */
+    WITH event_relations AS (
+        SELECT ev.objid AS rel_oid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        WHERE ev.classid = 'pg_catalog.pg_class'::regclass
+        UNION
+        SELECT c.conrelid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_constraint AS c ON c.oid = ev.objid
+        WHERE ev.classid = 'pg_catalog.pg_constraint'::regclass
+        UNION
+        SELECT t.tgrelid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_trigger AS t ON t.oid = ev.objid
+        WHERE ev.classid = 'pg_catalog.pg_trigger'::regclass
+        UNION
+        SELECT p.polrelid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_policy AS p ON p.oid = ev.objid
+        WHERE ev.classid = 'pg_catalog.pg_policy'::regclass
+        UNION
+        SELECT i.indrelid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_index AS i ON i.indexrelid = ev.objid
+        WHERE ev.classid = 'pg_catalog.pg_class'::regclass
+    ), affected AS (
+        SELECT b.oid AS base_oid
+        FROM event_relations AS er
+        JOIN pg_catalog.pg_class AS rel ON rel.oid = er.rel_oid
+        JOIN pg_catalog.pg_namespace AS rn ON rn.oid = rel.relnamespace
+        JOIN sql_saga.system_versioning AS sv
+          ON (sv.table_schema, sv.table_name) = (rn.nspname, rel.relname)
+          OR (sv.history_schema_name, sv.history_table_name) = (rn.nspname, rel.relname)
+          OR (sv.view_schema_name, sv.view_table_name) = (rn.nspname, rel.relname)
+          OR (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)) = (rn.nspname, rel.relname)
+        JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = sv.table_schema
+        JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = sv.table_name
+        UNION
+        SELECT b.oid
+        FROM event_relations AS er
+        JOIN pg_catalog.pg_class AS rel ON rel.oid = er.rel_oid
+        JOIN pg_catalog.pg_namespace AS rn ON rn.oid = rel.relnamespace
+        JOIN sql_saga.updatable_view AS uv
+          ON (uv.table_schema, uv.table_name) = (rn.nspname, rel.relname)
+          OR (uv.view_schema, uv.view_name) = (rn.nspname, rel.relname)
+        JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = uv.table_schema
+        JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = uv.table_name
+        UNION
+        SELECT b.oid
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN pg_catalog.pg_proc AS p ON p.oid = ev.objid
+        JOIN sql_saga.system_versioning AS sv
+          ON p.oid IN (pg_catalog.to_regprocedure(sv.func_as_of), pg_catalog.to_regprocedure(sv.func_between),
+                       pg_catalog.to_regprocedure(sv.func_between_symmetric), pg_catalog.to_regprocedure(sv.func_from_to))
+        JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = sv.table_schema
+        JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = sv.table_name
+        WHERE ev.classid = 'pg_catalog.pg_proc'::regclass
+    )
+    SELECT coalesce(array_agg(a.base_oid), '{}'::oid[])
+    INTO affected_base_oids
+    FROM affected AS a;
+
     /* Make sure that all of our tables are still persistent */
     FOR r IN
-        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
+        SELECT c.oid AS table_oid
         FROM sql_saga.era AS e
         JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name
-        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
         WHERE c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'table "%" must remain persistent because it has an era',
@@ -64,7 +131,7 @@ BEGIN
 
     /* And the history tables, too */
     FOR r IN
-        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
+        SELECT c.oid AS table_oid
         FROM sql_saga.era AS e
         JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
@@ -84,7 +151,7 @@ BEGIN
         JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
         JOIN pg_class AS ht ON ht.relname = sv.history_table_name
         JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
-        WHERE t.relowner <> ht.relowner
+        WHERE t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> ht.relowner
 
         UNION ALL
 
@@ -96,7 +163,7 @@ BEGIN
         JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
         JOIN pg_class AS vt ON vt.relname = sv.view_table_name
         JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
-        WHERE t.relowner <> vt.relowner
+        WHERE t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> vt.relowner
 
         UNION ALL
 
@@ -107,7 +174,7 @@ BEGIN
         JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
         CROSS JOIN LATERAL sql_saga.__internal_history_family(t.oid) AS f
         JOIN pg_class AS gv ON gv.oid = f.gated_oid
-        WHERE f.base_oid = t.oid AND t.relowner <> gv.relowner
+        WHERE f.base_oid = t.oid AND t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> gv.relowner
 
         UNION ALL
 
@@ -118,7 +185,7 @@ BEGIN
         JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
         JOIN pg_class vt ON vt.relname = v.view_name
         JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
-        WHERE t.relowner <> vt.relowner
+        WHERE t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> vt.relowner
 
         UNION ALL
 
@@ -129,8 +196,10 @@ BEGIN
         JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
         JOIN pg_proc AS p ON p.oid IN (to_regprocedure(sv.func_as_of), to_regprocedure(sv.func_between),
                                        to_regprocedure(sv.func_between_symmetric), to_regprocedure(sv.func_from_to))
-        WHERE t.relowner <> p.proowner
+        WHERE t.oid = ANY (affected_base_oids) AND NOT sql_saga.__internal_rebuilding_system_versioning_views(t.oid) AND t.relowner <> p.proowner
     LOOP
+        /* SECURITY INVOKER: caller DDL is authorized as the caller; approved elevated internal DDL is
+         * already running as the extension owner. Do not expose the generic caller-SQL helper to event callers. */
         EXECUTE cmd;
     END LOOP;
 
@@ -189,26 +258,30 @@ BEGIN
            AND NOT sql_saga.__internal_is_clean_teardown()
            AND NOT sql_saga.__internal_is_parallel_restore()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
-            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
+            PERFORM sql_saga.sync_history_policies(r.base_oid::regclass);
         END IF;
     END LOOP;
 
-    /* The fixed shape of views sql_saga manages. */
+    /* The fixed shape of views sql_saga manages. Resolve catalog names through pg_class joins, not regclass
+     * casts: an invoker event trigger may inspect a family whose schema the DDL caller cannot use. */
     FOR r IN
         SELECT ev.objid AS view_oid, v.base_oid, v.kind
-        FROM pg_event_trigger_ddl_commands() AS ev
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
         JOIN (
-            SELECT format('%I.%I', sv.view_schema_name, sv.view_table_name)::regclass::oid AS view_oid,
-                   format('%I.%I', sv.table_schema, sv.table_name)::regclass::oid AS base_oid,
-                   'SYSTEM VERSIONING'::text AS kind
+            SELECT vv.oid AS view_oid, b.oid AS base_oid, 'SYSTEM VERSIONING'::text AS kind
             FROM sql_saga.system_versioning AS sv
-            WHERE to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL
+            JOIN pg_catalog.pg_namespace AS vn ON vn.nspname = sv.view_schema_name
+            JOIN pg_catalog.pg_class AS vv ON vv.relnamespace = vn.oid AND vv.relname = sv.view_table_name
+            JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = sv.table_schema
+            JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = sv.table_name
             UNION ALL
-            SELECT format('%I.%I', uv.view_schema, uv.view_name)::regclass::oid,
-                   format('%I.%I', uv.table_schema, uv.table_name)::regclass::oid,
+            SELECT vv.oid, b.oid,
                    CASE uv.view_type WHEN 'for_portion_of' THEN 'FOR PORTION OF' ELSE 'a current view' END
             FROM sql_saga.updatable_view AS uv
-            WHERE to_regclass(format('%I.%I', uv.view_schema, uv.view_name)) IS NOT NULL
+            JOIN pg_catalog.pg_namespace AS vn ON vn.nspname = uv.view_schema
+            JOIN pg_catalog.pg_class AS vv ON vv.relnamespace = vn.oid AND vv.relname = uv.view_name
+            JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = uv.table_schema
+            JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = uv.table_name
         ) AS v ON v.view_oid = ev.objid
         WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
     LOOP
@@ -221,10 +294,16 @@ BEGIN
 
     FOR r IN
         SELECT ev.objid AS view_oid, f.base_oid, f.history_oid
-        FROM pg_event_trigger_ddl_commands() AS ev
-        JOIN sql_saga.system_versioning AS sv
-          ON to_regclass(format('%I.%I', sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))::oid = ev.objid
-        CROSS JOIN LATERAL sql_saga.__internal_history_family(format('%I.%I', sv.table_schema, sv.table_name)::regclass) AS f
+        FROM pg_catalog.pg_event_trigger_ddl_commands() AS ev
+        JOIN sql_saga.system_versioning AS sv ON true
+        JOIN pg_catalog.pg_namespace AS hn ON hn.nspname = sv.history_schema_name
+        JOIN pg_catalog.pg_class AS gv
+          ON gv.relnamespace = hn.oid
+         AND gv.relname = sql_saga.__internal_history_gated_name(sv.history_table_name)
+         AND gv.oid = ev.objid
+        JOIN pg_catalog.pg_namespace AS bn ON bn.nspname = sv.table_schema
+        JOIN pg_catalog.pg_class AS b ON b.relnamespace = bn.oid AND b.relname = sv.table_name
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(b.oid) AS f
         WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
     LOOP
         -- The gate must be exactly the generated definition (owner-rights, same body), not just
