@@ -13,6 +13,7 @@ CREATE ROLE snapshot_owner_member;
 GRANT snapshot_table_owner TO snapshot_owner_member;
 GRANT USAGE ON SCHEMA snapshot_test TO snapshot_table_owner, snapshot_unrelated_role;
 GRANT USAGE ON SCHEMA snapshot_test TO snapshot_owner_member;
+GRANT CREATE ON SCHEMA snapshot_test TO snapshot_table_owner, snapshot_owner_member;
 SET search_path = snapshot_test, public;
 
 CREATE FUNCTION snapshot_test.live_columns(base regclass)

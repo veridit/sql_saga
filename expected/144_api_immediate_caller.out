@@ -53,8 +53,10 @@ sql_saga.__internal_reconcile_system_versioning_family(regclass,name[]) | PUBLIC
 sql_saga.__internal_refresh_system_time_columns_snapshot(oid) | PUBLIC no
 sql_saga.__internal_refuse_managed_relation_identity_change(oid) | PUBLIC no
 sql_saga.__internal_refuse_managed_schema_rename(text) | PUBLIC no
+sql_saga.__internal_regular_fk_initial_check(text,text,text,regclass,regclass,name[],name[]) | PUBLIC no
 sql_saga.__internal_set_alter_function_resolved(text) | PUBLIC no
 sql_saga.__internal_sync_history_policies(oid,name[]) | PUBLIC no
+sql_saga.__internal_synchronize_temporal_function_ddl(regclass,name,text) | PUBLIC no
 sql_saga.__internal_updatable_view_follow_shape(oid[]) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_alter_type(oid,text[],text[],boolean) | PUBLIC no
 sql_saga.__internal_updatable_view_prepare_drop_column(oid,text[],boolean) | PUBLIC no

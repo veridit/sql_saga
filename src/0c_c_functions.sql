@@ -179,3 +179,11 @@ RETURNS text
 AS 'sql_saga', 'predicate_for_table'
 LANGUAGE c STABLE SECURITY INVOKER;
 REVOKE ALL ON FUNCTION sql_saga.__internal_predicate_for_table(regclass, text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_regular_fk_initial_check(
+    initial_sql text, child_sql text, parent_sql text,
+    fk_table_oid regclass, uk_table_oid regclass, fk_column_names name[], uk_column_names name[])
+RETURNS boolean
+AS 'sql_saga', 'regular_fk_initial_check'
+LANGUAGE c VOLATILE SECURITY DEFINER SET search_path = sql_saga, pg_catalog, pg_temp;
+REVOKE ALL ON FUNCTION sql_saga.__internal_regular_fk_initial_check(text, text, text, regclass, regclass, name[], name[]) FROM PUBLIC;

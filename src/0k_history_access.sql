@@ -389,14 +389,14 @@ BEGIN
     -- RLS enabled, FORCE mirrored from the base.
     IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid) THEN
         stmt := format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', fam.history_oid::regclass);
-        EXECUTE stmt;
+        PERFORM sql_saga.__internal_execute_as_caller(stmt);
         RAISE DEBUG 'sql_saga: %', stmt;
     END IF;
     IF (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid)
        IS DISTINCT FROM (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid) THEN
         force_mode := CASE WHEN (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid)
                            THEN 'FORCE' ELSE 'NO FORCE' END;
-        EXECUTE format('ALTER TABLE %s %s ROW LEVEL SECURITY', fam.history_oid::regclass, force_mode);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s ROW LEVEL SECURITY', fam.history_oid::regclass, force_mode));
         RAISE NOTICE 'sql_saga: Set row level security on % to %', fam.history_oid::regclass, force_mode;
     END IF;
 
@@ -412,7 +412,7 @@ BEGIN
         IF NOT EXISTS (SELECT FROM pg_catalog.pg_policy AS hp WHERE hp.polrelid = fam.history_oid AND hp.polname = p.name) THEN
             stmt := format('CREATE POLICY %I ON %s AS %s FOR SELECT TO PUBLIC USING (%s)',
                 p.name, fam.history_oid::regclass, CASE WHEN p.permissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END, p.qual);
-            EXECUTE stmt;
+            PERFORM sql_saga.__internal_execute_as_caller(stmt);
             -- Part of creating the history (add_system_versioning), or a repair: no NOTICE.
             RAISE DEBUG 'sql_saga: %', stmt;
         END IF;
@@ -428,7 +428,7 @@ BEGIN
                                  sql_saga.__internal_history_base_select_policy_name())
         ORDER BY hp.polname
     LOOP
-        EXECUTE format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass);
+        PERFORM sql_saga.__internal_execute_as_caller(format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass));
         RAISE DEBUG 'sql_saga: dropped policy % on %, a fixed policy of another installation', p.polname, fam.history_oid::regclass;
     END LOOP;
 
@@ -448,7 +448,7 @@ BEGIN
                OR pg_catalog.pg_get_expr(hp.polqual, hp.polrelid) IS DISTINCT FROM c.qual)
         ORDER BY hp.polname
     LOOP
-        EXECUTE format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass);
+        PERFORM sql_saga.__internal_execute_as_caller(format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass));
         IF p.base_policy IS NOT NULL THEN
             RAISE NOTICE 'sql_saga: Dropped policy % on %, the history copy of policy % on %',
                 p.polname, fam.history_oid::regclass, p.base_policy, fam.base_oid::regclass;
@@ -476,7 +476,7 @@ BEGIN
             CASE WHEN d.permissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END,
             sql_saga.__internal_policy_role_list(d.roles), coalesce(d.qual, 'true'));
         BEGIN
-            EXECUTE stmt;
+            PERFORM sql_saga.__internal_execute_as_caller(stmt);
         EXCEPTION WHEN undefined_table OR undefined_column THEN
             -- A self-reference by the base table's name inside a subquery cannot be resolved on history.
             RAISE EXCEPTION 'sql_saga: policy % on % cannot be applied to %: %',

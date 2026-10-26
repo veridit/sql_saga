@@ -76,6 +76,30 @@ BEGIN
 END;
 $normalize_predicated_key_predicates$;
 
+/* The table owner creates the generated synchronization trigger. Give its function the same PUBLIC execute rule as
+ * the other trigger functions, including on upgraded databases that revoke default PUBLIC EXECUTE. */
+DO $grant_sync_functions$
+DECLARE
+    f record;
+    n integer := 0;
+BEGIN
+    FOR f IN
+        SELECT DISTINCT e.sync_temporal_trg_function_name AS function_name
+        FROM sql_saga.era AS e
+        WHERE e.sync_temporal_trg_function_name IS NOT NULL
+        ORDER BY e.sync_temporal_trg_function_name
+    LOOP
+        IF pg_catalog.to_regprocedure(pg_catalog.format('sql_saga.%I()', f.function_name)) IS NOT NULL THEN
+            EXECUTE pg_catalog.format('GRANT EXECUTE ON FUNCTION sql_saga.%I() TO PUBLIC', f.function_name);
+            n := n + 1;
+        END IF;
+    END LOOP;
+    IF n > 0 THEN
+        RAISE NOTICE 'sql_saga: Granted EXECUTE on % generated synchronization functions to PUBLIC', n;
+    END IF;
+END;
+$grant_sync_functions$;
+
 DO $create_regular_fk_truncate_triggers$
 DECLARE
     fk record;

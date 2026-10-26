@@ -155,11 +155,11 @@ BEGIN
 
             -- The view includes all columns from the base table, but is filtered to only show the current records.
             -- This makes its schema consistent with the for_portion_of view, enabling parameter passing via SET.
-            EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_barrier=true, security_invoker=on) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
-                r.schema_name, view_name, r.table_name, r.range_column_name, now_sql, r.range_subtype);
-            EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
+            PERFORM sql_saga.__internal_execute_as_caller(format('CREATE VIEW %1$I.%2$I WITH (security_barrier=true, security_invoker=on) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
+                r.schema_name, view_name, r.table_name, r.range_column_name, now_sql, r.range_subtype));
+            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole));
             -- security_invoker: the caller's rights on the base decide; the view itself is open.
-            EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO PUBLIC', r.schema_name, view_name);
+            PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO PUBLIC', r.schema_name, view_name));
 
             -- Pass identifier columns, delete mode, and comment column to trigger
             SELECT string_agg(quote_literal(c), ', ')
@@ -171,8 +171,8 @@ BEGIN
                 identifier_columns_quoted
             );
 
-            EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.current_view_trigger(%s)',
-                trigger_name, r.schema_name, view_name, trigger_args);
+            PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.current_view_trigger(%s)',
+                trigger_name, r.schema_name, view_name, trigger_args));
             INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func, generated_columns)
                 VALUES (r.schema_name, view_name, 'current', r.schema_name, r.table_name, r.era_name, trigger_name, now_function, generated_columns);
         END;

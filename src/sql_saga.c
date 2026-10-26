@@ -3687,6 +3687,201 @@ execute_as_caller(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+/* Does the caller have SELECT on the relation or on every key column, as RI_Initial_Check requires? */
+static bool
+regular_fk_select_ok(Oid relid, Oid caller, ArrayType *columns)
+{
+	Datum	   *elems;
+	bool	   *elem_nulls;
+	int			nelems;
+	int			i;
+
+	if (pg_class_aclcheck(relid, caller, ACL_SELECT) == ACLCHECK_OK)
+		return true;
+	deconstruct_array(columns, NAMEOID, NAMEDATALEN, false, TYPALIGN_CHAR, &elems, &elem_nulls, &nelems);
+	for (i = 0; i < nelems; i++)
+	{
+		AttrNumber	attnum;
+
+		if (elem_nulls[i])
+			return false;
+		attnum = get_attnum(relid, NameStr(*DatumGetName(elems[i])));
+		if (attnum == InvalidAttrNumber)
+			return false;
+		if (pg_attribute_aclcheck(relid, attnum, caller, ACL_SELECT) != ACLCHECK_OK)
+			return false;
+	}
+	return nelems > 0;
+}
+
+/*
+ * Native RI_Initial_Check first tries a LEFT JOIN as the caller, but only when SELECT on both relations is present
+ * and RLS does not make that unsafe (owner of each RLS-enabled relation, or BYPASSRLS). Otherwise it validates each
+ * row as the query owner with SECURITY_NOFORCE_RLS. Keep that distinction: the first path preserves caller-visible
+ * RLS, while the fallback does not require SELECT on the parent or expose rows hidden from the caller.
+ */
+PG_FUNCTION_INFO_V1(regular_fk_initial_check);
+Datum
+regular_fk_initial_check(PG_FUNCTION_ARGS)
+{
+	char	   *initial_sql;
+	char	   *child_sql;
+	char	   *parent_sql;
+	Oid			fk_relid;
+	Oid			uk_relid;
+	ArrayType  *columns;
+	ArrayType  *uk_columns;
+	Oid			caller = api_caller();
+	bool		initial_ok;
+	bool		violating = false;
+	Relation	fk_rel;
+	Relation	uk_rel;
+	Oid			child_owner;
+	Oid			parent_owner;
+	SPIPlanPtr	child_plan = NULL;
+	SPIPlanPtr	parent_plan = NULL;
+	Portal		portal = NULL;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	Datum	   *elems;
+	bool	   *elem_nulls;
+	int			ncols;
+	int			i;
+	Datum		values[MAX_FK_COLS];
+	char		nulls[MAX_FK_COLS];
+	Oid			argtypes[MAX_FK_COLS];
+	int			ret;
+	bool		isnull;
+
+	initial_sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	child_sql = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	parent_sql = text_to_cstring(PG_GETARG_TEXT_PP(2));
+	fk_relid = PG_GETARG_OID(3);
+	uk_relid = PG_GETARG_OID(4);
+	columns = PG_GETARG_ARRAYTYPE_P(5);
+	uk_columns = PG_GETARG_ARRAYTYPE_P(6);
+
+	initial_ok = regular_fk_select_ok(fk_relid, caller, columns) &&
+		regular_fk_select_ok(uk_relid, caller, uk_columns);
+	if (initial_ok)
+	{
+		fk_rel = relation_open(fk_relid, AccessShareLock);
+		uk_rel = relation_open(uk_relid, AccessShareLock);
+		if (!has_bypassrls_privilege(caller) &&
+			((fk_rel->rd_rel->relrowsecurity && !object_ownercheck(RelationRelationId, fk_relid, caller)) ||
+			 (uk_rel->rd_rel->relrowsecurity && !object_ownercheck(RelationRelationId, uk_relid, caller))))
+			initial_ok = false;
+		relation_close(fk_rel, AccessShareLock);
+		relation_close(uk_rel, AccessShareLock);
+	}
+	if (initial_ok)
+	{
+		Oid			saved_userid;
+		int			saved_sec_context;
+		char	   *saved_search_path;
+		bool		context_entered = false;
+		bool		context_restored = false;
+		bool		initial_result = false;
+		int			ret;
+
+		if (SPI_connect() != SPI_OK_CONNECT)
+			elog(ERROR, "SPI_connect failed");
+		PG_TRY();
+		{
+			caller_context_enter(fcinfo, &saved_userid, &saved_sec_context, &saved_search_path, &context_entered);
+			ret = SPI_execute(initial_sql, false, 0);
+			if (ret == SPI_OK_SELECT && SPI_processed == 1)
+			{
+				bool		isnull;
+				Datum		d = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull);
+
+				initial_result = !isnull && DatumGetBool(d);
+			}
+			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
+			context_restored = true;
+			if (SPI_finish() != SPI_OK_FINISH)
+				elog(ERROR, "SPI_finish failed");
+		}
+		PG_FINALLY();
+		{
+			if (context_entered && !context_restored)
+				caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
+		}
+		PG_END_TRY();
+		PG_RETURN_BOOL(initial_result);
+	}
+
+	deconstruct_array(columns, NAMEOID, NAMEDATALEN, false, TYPALIGN_CHAR, &elems, &elem_nulls, &ncols);
+	if (ncols < 1 || ncols > MAX_FK_COLS)
+		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid regular foreign key column count %d", ncols)));
+	for (i = 0; i < ncols; i++)
+	{
+		if (elem_nulls[i])
+			ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("key column name must not be NULL")));
+		argtypes[i] = get_atttype(fk_relid, get_attnum(fk_relid, NameStr(*DatumGetName(elems[i]))));
+		nulls[i] = ' ';
+	}
+
+	fk_rel = relation_open(fk_relid, AccessShareLock);
+	uk_rel = relation_open(uk_relid, AccessShareLock);
+	child_owner = fk_rel->rd_rel->relowner;
+	parent_owner = uk_rel->rd_rel->relowner;
+	relation_close(fk_rel, AccessShareLock);
+	relation_close(uk_rel, AccessShareLock);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	PG_TRY();
+	{
+		SetUserIdAndSecContext(child_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		child_plan = SPI_prepare(child_sql, 0, NULL);
+		if (child_plan == NULL)
+			elog(ERROR, "SPI_prepare for regular foreign key child validation failed: %s", SPI_result_code_string(SPI_result));
+		SetUserIdAndSecContext(parent_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		parent_plan = SPI_prepare(parent_sql, ncols, argtypes);
+		if (parent_plan == NULL)
+			elog(ERROR, "SPI_prepare for regular foreign key parent validation failed: %s", SPI_result_code_string(SPI_result));
+		SetUserIdAndSecContext(child_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		portal = SPI_cursor_open(NULL, child_plan, NULL, NULL, true);
+		for (;;)
+		{
+			SPI_cursor_fetch(portal, true, 1);
+			if (SPI_processed == 0)
+				break;
+			for (i = 0; i < ncols; i++)
+			{
+				AttrNumber	attnum = get_attnum(fk_relid, NameStr(*DatumGetName(elems[i])));
+
+				values[i] = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, attnum, &isnull);
+				nulls[i] = isnull ? 'n' : ' ';
+			}
+			SetUserIdAndSecContext(parent_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+			ret = SPI_execute_plan(parent_plan, values, nulls, true, 1);
+			if (ret != SPI_OK_SELECT)
+				elog(ERROR, "SPI_execute_plan for regular foreign key parent validation returned %s", SPI_result_code_string(ret));
+			if (SPI_processed == 0)
+			{
+				violating = true;
+				break;
+			}
+			SetUserIdAndSecContext(child_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
+		}
+		SPI_cursor_close(portal);
+		portal = NULL;
+		if (SPI_finish() != SPI_OK_FINISH)
+			elog(ERROR, "SPI_finish failed");
+	}
+	PG_FINALLY();
+	{
+		if (portal != NULL)
+			SPI_cursor_close(portal);
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
+	PG_RETURN_BOOL(violating);
+}
+
 /*
  * __internal_predicate_for_table(table_oid regclass, predicate text) -- accept exactly one expression, resolve it
  * against the table as the recorded caller under the caller's search_path, then return its canonical deparse with

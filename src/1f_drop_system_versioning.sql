@@ -85,17 +85,17 @@ BEGIN
             RAISE NOTICE 'sql_saga: Left view "%" in place because it is not the sql_saga-generated view for table "%"',
                 public_view_oid::regclass, sql_saga.__internal_display_name(table_oid);
         END IF;
-        IF as_of_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_as_of)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
-        IF between_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
-        IF between_symmetric_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between_symmetric)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
-        IF from_to_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_from_to)); EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF as_of_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_as_of)); PERFORM sql_saga.__internal_execute_as_caller(format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior)); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF between_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between)); PERFORM sql_saga.__internal_execute_as_caller(format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior)); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF between_symmetric_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_between_symmetric)); PERFORM sql_saga.__internal_execute_as_caller(format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior)); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+        IF from_to_attributable THEN function_display := sql_saga.__internal_notice_function_name(to_regprocedure(system_versioning_row.func_from_to)); PERFORM sql_saga.__internal_execute_as_caller(format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior)); RAISE NOTICE 'sql_saga: Dropped function "%" of system-versioned table "%"', function_display, sql_saga.__internal_notice_name(table_schema, table_name); END IF;
         IF public_view_attributable THEN
-            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior));
             RAISE NOTICE 'sql_saga: Dropped view "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.view_schema_name, system_versioning_row.view_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
         IF gated_view_attributable THEN
-            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
-                sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
+                sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior));
             RAISE NOTICE 'sql_saga: Dropped view "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.history_schema_name, sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name)), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
     END IF;
@@ -107,7 +107,7 @@ BEGIN
             PERFORM sql_saga.__internal_require_drop(
                 to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)),
                 'drop_system_versioning');
-            EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior));
             RAISE NOTICE 'sql_saga: Dropped history table "%" of system-versioned table "%"', sql_saga.__internal_notice_name(system_versioning_row.history_schema_name, system_versioning_row.history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         END IF;
     END IF;

@@ -95,16 +95,16 @@ BEGIN
 
                 view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'for_portion_of');
                 trigger_name := 'for_portion_of_' || r.era_name;
-                EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */);
-                EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_owner::regrole /* %s */);
+                PERFORM sql_saga.__internal_execute_as_caller(format('CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */));
+                PERFORM sql_saga.__internal_execute_as_caller(format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_owner::regrole /* %s */));
                 -- security_invoker: the caller's rights on the base decide; the view itself is open.
-                EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO PUBLIC', r.schema_name, view_name);
-                EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.for_portion_of_trigger(%s)',
+                PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE %I.%I TO PUBLIC', r.schema_name, view_name));
+                PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.for_portion_of_trigger(%s)',
                     trigger_name, /* %I */
                     r.schema_name, /* %I */
                     view_name, /* %I */
                     identifier_columns_quoted /* %s */
-                );
+                ));
                 INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, generated_columns, ephemeral_columns)
                     VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name, generated_columns, __api_add_for_portion_of_view.ephemeral_columns);
             END;

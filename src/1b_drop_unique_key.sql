@@ -63,7 +63,7 @@ BEGIN
             IF array_length(cleanup_cmds, 1) > 0 THEN
                 alter_sql := format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(cleanup_cmds, ', '));
                 RAISE NOTICE 'sql_saga: dropping dependent pk consistency constraints: %', alter_sql;
-                EXECUTE alter_sql;
+                PERFORM sql_saga.__internal_execute_as_caller(alter_sql);
             END IF;
         END;
     END IF;
@@ -81,7 +81,7 @@ BEGIN
             LOOP
                 alter_sql := format('ALTER TABLE %I.%I DROP CONSTRAINT %I', table_schema, table_name, constraint_name);
                 RAISE NOTICE 'sql_saga: dropping constraint: %', alter_sql;
-                EXECUTE alter_sql;
+                PERFORM sql_saga.__internal_execute_as_caller(alter_sql);
             END LOOP;
         END;
     END IF;

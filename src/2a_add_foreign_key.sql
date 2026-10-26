@@ -84,7 +84,7 @@ BEGIN
 
     IF p_create_index THEN
         RAISE NOTICE 'sql_saga: No compatible index found for foreign key on table %. Creating new index: %', p_fk_table_oid::text, v_index_def;
-        EXECUTE v_index_def;
+        PERFORM sql_saga.__internal_execute_as_caller(v_index_def);
         RETURN v_index_name;
     ELSE
         RAISE WARNING 'No index found on table % for foreign key columns (%). Performance may be poor.',
@@ -267,6 +267,8 @@ BEGIN
             USING ERRCODE = 'duplicate_object';
     END IF;
 
+    /* D1b: FROM <parent> additionally needs TRIGGER on the parent, whereas native ADD FOREIGN KEY needs only
+     * REFERENCES. Keep this canonical trigger creation with the extension owner, as for the parent-side triggers. */
     EXECUTE pg_catalog.format($$
         CREATE CONSTRAINT TRIGGER %1$I AFTER INSERT OR UPDATE ON %2$I.%3$I FROM %4$I.%5$I DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION
         sql_saga.regular_fk_check_c(%6$L, %2$L, %3$L, %7$L, '', '', '', %4$L, %5$L, %8$L, %9$L, %10$L, %11$L, %12$L, %13$L, %14$L, 'regular_to_temporal');
@@ -639,6 +641,11 @@ BEGIN
     DECLARE
         violating_row_found boolean;
         fk_not_null_clause text;
+        uk_where_params text;
+        child_sql text;
+        parent_sql text;
+        initial_sql text;
+        i integer;
     BEGIN
         -- MATCH SIMPLE checks rows whose key columns are all non-NULL, MATCH FULL every row that is not all NULL
         -- (a partly NULL key is a violation then).
@@ -668,19 +675,17 @@ BEGIN
             LIMIT 1
         ) AS eq;
 
-        /* Native ADD FOREIGN KEY validates as the caller, including FORCE RLS visibility (Q7). */
-        SELECT sql_saga.__internal_execute_as_caller(format('SELECT EXISTS( ' ||
-            'SELECT 1 FROM ONLY %1$I.%2$I AS fk ' ||
-            'WHERE %3$s AND NOT EXISTS ( ' ||
-            '  SELECT 1 FROM ONLY %4$I.%5$I AS uk WHERE %6$s' ||
-            '))',
-            fk_schema_name,       -- %1$I
-            fk_table_name,        -- %2$I
-            fk_not_null_clause,   -- %3$s
-            uk_schema_name,       -- %4$I
-            uk_table_name,        -- %5$I
-            uk_where_clause       -- %6$s
-        ))::boolean INTO violating_row_found;
+        /* Native RI_Initial_Check: use the caller only when its LEFT JOIN is allowed; otherwise use per-row owner checks. */
+        initial_sql := format('SELECT EXISTS(SELECT 1 FROM ONLY %1$I.%2$I AS fk WHERE %3$s AND NOT EXISTS (SELECT 1 FROM ONLY %4$I.%5$I AS uk WHERE %6$s))',
+            fk_schema_name, fk_table_name, fk_not_null_clause, uk_schema_name, uk_table_name, uk_where_clause);
+        child_sql := format('SELECT 1 FROM ONLY %I.%I AS fk WHERE %s', fk_schema_name, fk_table_name, fk_not_null_clause);
+        uk_where_params := uk_where_clause;
+        FOR i IN 1 .. cardinality(fk_column_names) LOOP
+            uk_where_params := replace(uk_where_params, format('fk.%I', fk_column_names[i]), '$' || i);
+        END LOOP;
+        parent_sql := format('SELECT 1 FROM ONLY %I.%I AS uk WHERE %s', uk_schema_name, uk_table_name, uk_where_params);
+        SELECT sql_saga.__internal_regular_fk_initial_check(initial_sql, child_sql, parent_sql,
+            fk_table_oid, uk_table_oid, fk_column_names, v_uk_stable_cols) INTO violating_row_found;
 
         IF violating_row_found THEN
             RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
@@ -840,8 +845,8 @@ BEGIN
         create_index
     );
 
-    /* Create the native temporal foreign key. This automatically validates existing data. */
-    EXECUTE format($$
+    /* Create the native temporal foreign key. This automatically validates existing data as the caller. */
+    PERFORM sql_saga.__internal_execute_as_caller(format($$
         ALTER TABLE %1$s ADD CONSTRAINT %2$I
         FOREIGN KEY (%3$s, PERIOD %4$I) REFERENCES %5$s (%6$s)
         MATCH %7$s ON UPDATE %8$s ON DELETE %9$s
@@ -859,7 +864,7 @@ BEGIN
         match_type,                                                                      /* %7$s */
         update_action,                                                                   /* %8$s */
         delete_action                                                                    /* %9$s */
-    );
+    ));
 
     INSERT INTO sql_saga.foreign_keys
         ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_index_name,

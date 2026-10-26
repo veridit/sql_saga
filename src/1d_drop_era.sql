@@ -56,10 +56,10 @@ BEGIN
         RETURNING * INTO system_time_era_row;
 
         IF FOUND AND NOT is_dropped THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); RAISE NOTICE 'sql_saga: Dropped constraint "%" on table "%" for system time era', quote_ident(system_time_era_row.infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
-            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint)); RAISE NOTICE 'sql_saga: Dropped constraint "%" on table "%" for system time era', quote_ident(system_time_era_row.infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid)); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid)); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid)); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.truncate_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
         END IF;
     END;
 
@@ -107,17 +107,17 @@ BEGIN
 
         /* Delete bounds check constraint (NOT isempty(range)). */
         IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint)); END IF;
         END IF;
 
         /* Delete boundary check constraint (from < until). */
         IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint)); END IF;
         END IF;
 
         /* Drop column default if it was set */
         IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name));
         END IF;
 
         /* Delete columns if purging */
@@ -140,7 +140,7 @@ BEGIN
                 END IF;
 
                 IF array_length(drop_clauses, 1) > 0 THEN
-                     EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                     PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', ')));
                      IF era_name = 'system_time' THEN RAISE NOTICE 'sql_saga: Dropped column "%" from table "%" for system time era', quote_ident(era_row.range_column_name), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
                 END IF;
             END;
@@ -173,17 +173,17 @@ BEGIN
 
     /* Delete bounds check constraint (NOT isempty(range)). */
     IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */));
     END IF;
 
     /* Delete boundary check constraint (from < until). */
     IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */));
     END IF;
 
     /* Drop column default if it was set */
     IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name));
     END IF;
 
     /* Delete columns if purging */
@@ -206,7 +206,7 @@ BEGIN
             END IF;
 
             IF array_length(drop_clauses, 1) > 0 THEN
-                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                 PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', ')));
                  IF era_name = 'system_time' THEN RAISE NOTICE 'sql_saga: Dropped column "%" from table "%" for system time era', quote_ident(era_row.range_column_name), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
             END IF;
         END;

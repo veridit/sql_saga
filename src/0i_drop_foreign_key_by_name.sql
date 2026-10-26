@@ -130,7 +130,11 @@ BEGIN
         -- Drop the auto-created index if it exists and requested.
         IF drop_index AND foreign_key_row.fk_index_name IS NOT NULL THEN
             RAISE NOTICE 'sql_saga: Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
-            EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
+            IF require_owner THEN
+                PERFORM sql_saga.__internal_execute_as_caller(format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name));
+            ELSE
+                EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
+            END IF;
         END IF;
         fk_table_oid := foreign_key_row.fk_table_oid;
 
@@ -139,7 +143,11 @@ BEGIN
                 -- For native temporal FKs, we drop the constraint directly.
                 IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.foreign_key_name) THEN
                     IF native_constraint_attributable THEN
-                        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */);
+                        IF require_owner THEN
+                            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */));
+                        ELSE
+                            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */);
+                        END IF;
                     ELSE
                         RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
                             foreign_key_row.foreign_key_name, sql_saga.__internal_display_name(fk_table_oid);
@@ -149,7 +157,11 @@ BEGIN
                 /* 1.3: the referencing side is a constraint trigger named fk_check_constraint. */
                 IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_check_constraint
                            AND tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()')) THEN
-                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_check_constraint /* %I */, fk_table_oid /* %s */);
+                    IF require_owner THEN
+                        PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', foreign_key_row.fk_check_constraint /* %I */, fk_table_oid /* %s */));
+                    ELSE
+                        EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_check_constraint /* %I */, fk_table_oid /* %s */);
+                    END IF;
                 /* Historical (pre-1.3) form: a CHECK constraint calling the helper function. */
                 ELSIF foreign_key_row.fk_check_constraint IS NOT NULL AND foreign_key_row.fk_helper_function IS NOT NULL AND EXISTS (
                             /* Only the released CHECK: it depends on (calls) the catalogued helper function. */
@@ -159,7 +171,11 @@ BEGIN
                              AND d.refclassid = 'pg_catalog.pg_proc'::regclass
                              AND d.refobjid = pg_catalog.to_regprocedure(foreign_key_row.fk_helper_function)
                             WHERE c.conrelid = fk_table_oid AND c.conname = foreign_key_row.fk_check_constraint AND c.contype = 'c') THEN
-                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */);
+                    IF require_owner THEN
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */));
+                    ELSE
+                        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */);
+                    END IF;
                 ELSIF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
                     RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
                         foreign_key_row.fk_check_constraint, sql_saga.__internal_display_name(fk_table_oid);

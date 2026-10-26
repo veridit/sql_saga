@@ -79,9 +79,9 @@ $__internal_check_history_columns$;
 /*
  * (Re)creates B_history_gated, B_with_history and the four as-of functions of a registered family
  * from the current columns. Callers check arguments and authorization and hold the family's lock.
- * Existing objects are dropped first (without cascading: a user object depending on them makes this
- * fail with PostgreSQL's dependency error). The drops are allowed by drop_protection and the new
- * definitions by health_checks only while sql_saga.rebuilding_system_versioning_views names this table.
+ * Existing objects are dropped before being recreated (without cascading: a user object depending on them makes this
+ * fail with PostgreSQL's dependency error). The drops are allowed by drop_protection and the new definitions by
+ * health_checks only while sql_saga.rebuilding_system_versioning_views names this table.
  */
 CREATE FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid oid)
 RETURNS void
@@ -185,26 +185,26 @@ BEGIN
             SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
             WHERE to_regprocedure(u.f) IS NOT NULL
         LOOP
-            EXECUTE format('DROP ROUTINE %s', fn.f::regprocedure);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP ROUTINE %s', fn.f::regprocedure));
         END LOOP;
         -- add_system_versioning calls this before the views exist.
         IF to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL THEN
-            EXECUTE format('DROP VIEW %I.%I', sv.view_schema_name, sv.view_table_name);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP VIEW %I.%I', sv.view_schema_name, sv.view_table_name));
         END IF;
         IF to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)) IS NOT NULL THEN
-            EXECUTE format('DROP VIEW %I.%I', sv.history_schema_name, gated_view_name);
+            PERFORM sql_saga.__internal_execute_as_caller(format('DROP VIEW %I.%I', sv.history_schema_name, gated_view_name));
         END IF;
 
-        EXECUTE format('CREATE VIEW %I.%I AS %s', sv.history_schema_name, gated_view_name,
-            sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection));
-        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner);
-        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name);
+        PERFORM sql_saga.__internal_execute_as_caller(format('CREATE VIEW %I.%I AS %s', sv.history_schema_name, gated_view_name,
+            sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection)));
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner));
+        PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name));
         IF NOT had_gated THEN
             RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
                 sql_saga.__internal_notice_name(sv.history_schema_name, gated_view_name), base_display;
         END IF;
 
-        EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
+        PERFORM sql_saga.__internal_execute_as_caller(format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
         SELECT %3$s FROM %4$s
         UNION ALL SELECT %5$s FROM %6$I.%7$I
         UNION ALL SELECT %5$s FROM %8$s
@@ -220,9 +220,9 @@ BEGIN
             sql_saga.__internal_qualified_name(history_table_oid), /* %8$s */
             sql_saga.__internal_qualified_name(table_oid), /* %9$L */
             sql_saga.__internal_qualified_name(history_table_oid) /* %10$L */
-        );
-        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner);
-        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name);
+        ));
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner));
+        PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name));
         IF NOT had_view THEN
             RAISE NOTICE 'sql_saga: Created view "%" for system-versioned table "%"',
                 sql_saga.__internal_notice_name(sv.view_schema_name, sv.view_table_name), base_display;
@@ -233,12 +233,12 @@ BEGIN
             SELECT q.identity AS f, q.body
             FROM sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
         LOOP
-            EXECUTE format('CREATE FUNCTION %s RETURNS SETOF %I.%I LANGUAGE sql STABLE AS %L',
+            PERFORM sql_saga.__internal_execute_as_caller(format('CREATE FUNCTION %s RETURNS SETOF %I.%I LANGUAGE sql STABLE AS %L',
                 fn.f, sv.view_schema_name, sv.view_table_name,
-                fn.body);
-            EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
+                fn.body));
+            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner));
             -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
-            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
+            PERFORM sql_saga.__internal_execute_as_caller(format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure));
             IF fn.f <> ALL (had_functions) THEN
                 RAISE NOTICE 'sql_saga: Created function "%" for system-versioned table "%"',
                     sql_saga.__internal_notice_function_name(fn.f::regprocedure), base_display;
@@ -264,7 +264,7 @@ BEGIN
             WHERE x.grantee NOT IN (0, o.owner)
             GROUP BY o.is_function, o.ident
         LOOP
-            EXECUTE fn.stmt;
+            PERFORM sql_saga.__internal_execute_as_caller(fn.stmt);
         END LOOP;
     EXCEPTION WHEN OTHERS THEN
         PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_flag, ''), true);
@@ -330,14 +330,14 @@ BEGIN
             AND b.attname OPERATOR(pg_catalog.=) a.attname)
       AND a.attname <> ALL (coalesce(without_columns, '{}'::name[]));
     BEGIN
-      EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
+      PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass));
       table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
       IF (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) <> table_owner THEN
           PERFORM sql_saga.__internal_require_owner_change(history_table_oid::regclass, table_owner::regrole, 'rebuild_system_versioning_views');
-          EXECUTE pg_catalog.format('ALTER TABLE %s OWNER TO %I', history_table_oid::regclass, table_owner);
+          PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER TABLE %s OWNER TO %I', history_table_oid::regclass, table_owner));
       END IF;
       IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) THEN
-          EXECUTE pg_catalog.format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_oid::regclass);
+          PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_oid::regclass));
       END IF;
       FOR acl IN
         SELECT pg_catalog.format('REVOKE ALL ON TABLE %s FROM %s', history_table_oid::regclass,
@@ -345,13 +345,13 @@ BEGIN
         FROM pg_catalog.pg_class AS c CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
         WHERE c.oid = history_table_oid AND x.grantee NOT IN (0, c.relowner) GROUP BY c.oid
       LOOP
-          EXECUTE acl.stmt;
+          PERFORM sql_saga.__internal_execute_as_caller(acl.stmt);
       END LOOP;
       IF NOT EXISTS (
           SELECT FROM pg_catalog.pg_class AS c
           CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
           WHERE c.oid = history_table_oid AND x.grantee = 0 AND x.privilege_type = 'SELECT') THEN
-          EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_oid::regclass);
+          PERFORM sql_saga.__internal_execute_as_caller(pg_catalog.format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_oid::regclass));
       END IF;
 
       SELECT count(*) INTO expected_columns
@@ -532,15 +532,15 @@ BEGIN
     function_from_to_name := coalesce(function_from_to_name, sql_saga.__internal_make_name(ARRAY[table_name], '_from_to'));
 
     IF history_table_id IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
-        EXECUTE format('SELECT count(*) FROM %s', history_table_id::regclass /* %s */) INTO history_row_count;
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */));
+        SELECT sql_saga.__internal_execute_as_caller(format('SELECT count(*) FROM %s', history_table_id::regclass /* %s */))::bigint INTO history_row_count;
         RAISE NOTICE 'sql_saga: Adopted existing table "%" (% rows) as the history table of system-versioned table "%"',
             sql_saga.__internal_display_name(history_table_id::regclass), history_row_count,
             sql_saga.__internal_display_name(table_oid);
     ELSE
-        EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */));
         history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
-        EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */));
         RAISE NOTICE 'sql_saga: Created history table "%" for system-versioned table "%"',
             sql_saga.__internal_notice_name(table_schema, history_table_name), sql_saga.__internal_notice_name(table_schema, table_name);
         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
@@ -554,8 +554,8 @@ BEGIN
      *   - B_history is read as the caller when B's RLS applies, filtered by the copies of B's
      *     policies (sql_saga.__internal_sync_history_policies), after checking they are in sync.
      */
-    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_id::regclass);
-    EXECUTE format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_id::regclass);
+    PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_id::regclass));
+    PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_id::regclass));
 
     -- Registered first: the generator reads the family's names from the catalog.
     INSERT INTO sql_saga.system_versioning (table_schema, table_name, era_name, history_schema_name, history_table_name, view_schema_name, view_table_name, func_as_of, func_between, func_between_symmetric, func_from_to)
@@ -599,9 +599,9 @@ BEGIN
         FROM unnest(ARRAY[NEW.func_as_of, NEW.func_between, NEW.func_between_symmetric, NEW.func_from_to]) AS u (signature)
         WHERE to_regprocedure(u.signature) IS NOT NULL
     LOOP
-        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', query_function /* %s */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', query_function /* %s */));
     END LOOP;
-    EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', NEW.history_schema_name, NEW.history_table_name);
+    PERFORM sql_saga.__internal_execute_as_caller(format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', NEW.history_schema_name, NEW.history_table_name));
     RETURN NULL;
 END;
 $__internal_grant_query_functions$;

@@ -10,9 +10,7 @@ DECLARE
     v_table_schema name;
     v_table_name name;
 
-    v_func_name name;
     v_trg_name name;
-    v_stored_func_name name;
     v_stored_trg_name name;
 BEGIN
     PERFORM sql_saga.__internal_require_owner(__api_drop_synchronize_temporal_columns_trigger.table_oid, 'drop_synchronize_temporal_columns_trigger');
@@ -26,9 +24,9 @@ BEGIN
         RAISE EXCEPTION 'Table % does not exist', table_oid;
     END IF;
 
-    -- Read stored names from sql_saga.era
-    SELECT e.sync_temporal_trg_name, e.sync_temporal_trg_function_name
-    INTO v_stored_trg_name, v_stored_func_name
+    -- Read the stored trigger name from sql_saga.era.
+    SELECT e.sync_temporal_trg_name
+    INTO v_stored_trg_name
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_drop_synchronize_temporal_columns_trigger.era_name);
 
@@ -39,12 +37,6 @@ BEGIN
         v_trg_name := sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'sync_temporal_trg');
     END IF;
 
-    IF v_stored_func_name IS NOT NULL THEN
-        v_func_name := v_stored_func_name;
-    ELSE
-        v_func_name := sql_saga.__internal_make_name(ARRAY[v_table_schema, v_table_name, era_name], 'template_sync');
-    END IF;
-
     -- Cleanup: earlier development iterations used different naming patterns.
     IF EXISTS (
         SELECT 1
@@ -52,10 +44,10 @@ BEGIN
         WHERE t.tgrelid = __api_drop_synchronize_temporal_columns_trigger.table_oid::oid
           AND t.tgname = sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'template_sync')
     ) THEN
-        EXECUTE format($$DROP TRIGGER %1$I ON %2$s$$,
+        PERFORM sql_saga.__internal_execute_as_caller(format($$DROP TRIGGER %1$I ON %2$s$$,
             sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'template_sync') /* %1$I */,
             table_oid /* %2$s */
-        );
+        ));
     END IF;
 
     IF EXISTS (
@@ -64,18 +56,14 @@ BEGIN
         WHERE t.tgrelid = __api_drop_synchronize_temporal_columns_trigger.table_oid::oid
           AND t.tgname = v_trg_name
     ) THEN
-        EXECUTE format($$DROP TRIGGER %1$I ON %2$s$$,
+        PERFORM sql_saga.__internal_execute_as_caller(format($$DROP TRIGGER %1$I ON %2$s$$,
             v_trg_name /* %1$I */,
             table_oid /* %2$s */
-        );
+        ));
     END IF;
 
-    IF to_regprocedure(format('sql_saga.%I()', v_func_name)) IS NOT NULL THEN
-        -- A reused synchronization function is a user-owned dependency. Let PostgreSQL name it.
-        EXECUTE format($$DROP FUNCTION sql_saga.%1$I()$$,
-            v_func_name /* %1$I */
-        );
-    END IF;
+    -- D1d: only the generated function in sql_saga's own schema is dropped with elevated rights.
+    PERFORM sql_saga.__internal_synchronize_temporal_function_ddl(table_oid, era_name, 'DROP');
 
     -- Clear the stored names after successful cleanup
     UPDATE sql_saga.era AS e
@@ -457,6 +445,52 @@ $__internal_synchronize_temporal_columns_sql$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_columns_sql(regclass, name) FROM PUBLIC;
 
+/*
+ * D1d: the only elevated operation for a table-specific synchronization function. The caller supplies no SQL: the
+ * canonical function is generated from the catalog and created/replaced/dropped in sql_saga's own schema. The
+ * trigger on the user table is handled separately as the caller. Private, with the base-table owner checked.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_synchronize_temporal_function_ddl(
+    table_oid regclass, era_name name, operation text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, pg_temp
+AS $__internal_synchronize_temporal_function_ddl$
+#variable_conflict use_variable
+DECLARE
+    generated record;
+    stored_name name;
+BEGIN
+    PERFORM sql_saga.__internal_require_owner(table_oid, 'synchronize_temporal_function_ddl');
+    IF operation NOT IN ('CREATE', 'REPLACE', 'DROP') THEN
+        RAISE EXCEPTION 'invalid synchronization function operation %', operation USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    generated := sql_saga.__internal_synchronize_temporal_columns_sql(table_oid, era_name);
+
+    IF operation = 'DROP' THEN
+        SELECT e.sync_temporal_trg_function_name INTO stored_name
+        FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name, e.era_name) = (
+            SELECT c.relnamespace::regnamespace::name, c.relname, __internal_synchronize_temporal_function_ddl.era_name
+            FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+        stored_name := coalesce(stored_name, generated.function_name);
+        IF stored_name <> generated.function_name THEN
+            RAISE EXCEPTION 'synchronization function name % is not the canonical name % for era % on %',
+                stored_name, generated.function_name, era_name, table_oid;
+        END IF;
+        IF to_regprocedure(format('sql_saga.%I()', stored_name)) IS NOT NULL THEN
+            EXECUTE format('DROP FUNCTION sql_saga.%I()', stored_name);
+        END IF;
+    ELSE
+        EXECUTE generated.function_sql;
+        /* The trigger is created by the table owner, also in databases that revoke default PUBLIC EXECUTE. */
+        EXECUTE format('GRANT EXECUTE ON FUNCTION sql_saga.%I() TO PUBLIC', generated.function_name);
+    END IF;
+END;
+$__internal_synchronize_temporal_function_ddl$;
+REVOKE ALL ON FUNCTION sql_saga.__internal_synchronize_temporal_function_ddl(regclass, name, text) FROM PUBLIC;
+
 CREATE OR REPLACE PROCEDURE sql_saga.__api_add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, pg_temp
@@ -480,8 +514,8 @@ BEGIN
 
     CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
 
-    EXECUTE generated.function_sql;
-    EXECUTE generated.trigger_sql;
+    PERFORM sql_saga.__internal_synchronize_temporal_function_ddl(table_oid, era_name, 'REPLACE');
+    PERFORM sql_saga.__internal_execute_as_caller(generated.trigger_sql);
 
     -- Update sql_saga.era with the trigger and function names
     UPDATE sql_saga.era AS e

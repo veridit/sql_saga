@@ -744,7 +744,7 @@ CREATE FUNCTION separate_user_dep(p_at timestamptz) RETURNS SETOF sv_with_histor
 SELECT integrity_g4.dependency_restrict_attempt(
     'separate dependent RESTRICT v1.1 parity',
     $$SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'RESTRICT')$$,
-    'cannot drop view integrity_g4.sv_with_history because other objects depend on it');
+    'cannot drop view sv_with_history because other objects depend on it');
 SELECT to_regprocedure('integrity_g4.separate_user_dep(timestamptz)') IS NOT NULL AS restrict_separate_dependent_survives;
 SELECT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS restrict_separate_family_metadata_survives;
 ROLLBACK TO SAVEPOINT separate_dependent_restrict;
@@ -772,7 +772,7 @@ RESET session_replication_role;
 SELECT integrity_g4.dependency_restrict_attempt(
     'dependent replacement RESTRICT',
     $$SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'RESTRICT')$$,
-    'cannot drop view integrity_g4.sv_with_history because other objects depend on it');
+    'cannot drop view sv_with_history because other objects depend on it');
 SELECT to_regprocedure('integrity_g4.sv__as_of(timestamptz)') IS NOT NULL AS restrict_dependent_replacement_survives;
 SELECT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS restrict_family_metadata_survives;
 ROLLBACK TO SAVEPOINT dependent_replacement_restrict;

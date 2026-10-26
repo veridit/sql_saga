@@ -140,7 +140,7 @@ BEGIN
             END IF;
 
             IF array_length(add_clauses, 1) > 0 THEN
-                EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(add_clauses, ', '));
+                PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid, array_to_string(add_clauses, ', ')));
             END IF;
         END;
     END IF;
@@ -343,7 +343,7 @@ BEGIN
 
     /* If we've created any work for ourselves, do it now */
     IF alter_commands <> '{}' THEN
-        EXECUTE format('ALTER TABLE %s %s', table_oid /* %s */, array_to_string(alter_commands, ', ') /* %s */);
+        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid /* %s */, array_to_string(alter_commands, ', ') /* %s */));
     END IF;
 
     -- Warn about schemas that are incompatible with temporal primary keys (SCD-2 history).

@@ -111,8 +111,8 @@ BEGIN
             WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
         THEN
             IF unique_key_row.check_constraint IS NOT NULL AND check_object_attributable THEN
-                EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',
-                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.check_constraint);
+                PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',
+                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.check_constraint));
             ELSIF unique_key_row.check_constraint IS NOT NULL
                   AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
                              WHERE c.conrelid = table_oid AND c.conname = unique_key_row.check_constraint) THEN
@@ -131,26 +131,26 @@ BEGIN
 
                     -- 3. Execute the ALTER TABLE command for all constraints.
                     IF cardinality(alter_parts) > 0 THEN
-                        EXECUTE format('ALTER TABLE %I.%I %s',
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s',
                             unique_key_row.table_schema,
                             unique_key_row.table_name,
                             array_to_string(alter_parts, ', ')
-                        );
+                        ));
                     END IF;
                 END;
             ELSIF unique_key_row.key_type = 'predicated' THEN
                 BEGIN
                     IF unique_object_attributable THEN
                         IF unique_key_row.unique_constraint IS NOT NULL THEN
-                            EXECUTE format('DROP INDEX %I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint);
+                            PERFORM sql_saga.__internal_execute_as_caller(format('DROP INDEX %I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint));
                         END IF;
                     ELSIF to_regclass(format('%I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint)) IS NOT NULL THEN
                         RAISE NOTICE 'sql_saga: Left index "%" on table "%" in place because it is not the sql_saga-managed index',
                             unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
                     END IF;
                     IF exclude_object_attributable AND unique_key_row.exclude_constraint IS NOT NULL THEN
-                        EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', unique_key_row.table_schema,
-                            unique_key_row.table_name, unique_key_row.exclude_constraint);
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I DROP CONSTRAINT %I', unique_key_row.table_schema,
+                            unique_key_row.table_name, unique_key_row.exclude_constraint));
                     ELSIF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = unique_key_row.exclude_constraint) THEN
                         RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
                             unique_key_row.exclude_constraint, sql_saga.__internal_display_name(table_oid);
@@ -182,11 +182,11 @@ BEGIN
                     END IF;
 
                     IF cardinality(alter_parts) > 0 THEN
-                        EXECUTE format('ALTER TABLE %I.%I %s',
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s',
                             unique_key_row.table_schema,
                             unique_key_row.table_name,
                             array_to_string(alter_parts, ', ')
-                        );
+                        ));
                     END IF;
                 END;
             END IF;

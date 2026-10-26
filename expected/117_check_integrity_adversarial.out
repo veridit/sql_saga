@@ -88,14 +88,14 @@ t
 t
 t
 t
-separate dependent RESTRICT v1.1 parity | 2BP01: cannot drop view integrity_g4.sv_with_history because other objects depend on it | atomic
+separate dependent RESTRICT v1.1 parity | 2BP01: cannot drop view sv_with_history because other objects depend on it | atomic
 t
 t
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__as_of(timestamp with time zone)" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
-NOTICE:  drop cascades to function integrity_g4.separate_user_dep(timestamp with time zone)
+NOTICE:  drop cascades to function separate_user_dep(timestamp with time zone)
 NOTICE:  sql_saga: Dropped view "integrity_g4.sv_with_history" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped view "integrity_g4.sv_history_gated" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped constraint "sv_system_valid_range_infinity_check" on table "integrity_g4.sv" for system time era
@@ -107,13 +107,13 @@ NOTICE:  sql_saga: Dropped history table "integrity_g4.sv_history" of system-ver
 t
 t
 t
-dependent replacement RESTRICT | 2BP01: cannot drop view integrity_g4.sv_with_history because other objects depend on it | atomic
+dependent replacement RESTRICT | 2BP01: cannot drop view sv_with_history because other objects depend on it | atomic
 t
 t
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__between(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__between_symmetric(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped function "integrity_g4.sv__from_to(timestamp with time zone,timestamp with time zone)" of system-versioned table "integrity_g4.sv"
-NOTICE:  drop cascades to function integrity_g4.sv__as_of(timestamp with time zone)
+NOTICE:  drop cascades to function sv__as_of(timestamp with time zone)
 NOTICE:  sql_saga: Dropped view "integrity_g4.sv_with_history" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped view "integrity_g4.sv_history_gated" of system-versioned table "integrity_g4.sv"
 NOTICE:  sql_saga: Dropped constraint "sv_system_valid_range_infinity_check" on table "integrity_g4.sv" for system time era

@@ -385,7 +385,26 @@ CONTEXT:  SQL statement "
         MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
         DEFERRABLE
         "
-PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at EXECUTE
+SQL statement "SELECT sql_saga.__internal_execute_as_caller(format($$
+        ALTER TABLE %1$s ADD CONSTRAINT %2$I
+        FOREIGN KEY (%3$s, PERIOD %4$I) REFERENCES %5$s (%6$s)
+        MATCH %7$s ON UPDATE %8$s ON DELETE %9$s
+        DEFERRABLE
+        $$,
+        fk_table_oid::text,                                                              /* %1$s */
+        foreign_key_name,                                                                /* %2$I */
+        (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(fk_column_names) WITH ORDINALITY AS u (c, o)), /* %3$s */
+        fk_era_row.range_column_name,                                                    /* %4$I */
+        uk_table_oid::text,                                                              /* %5$s */
+        CASE
+            WHEN v_uk_stable_cols_list IS NULL THEN format('PERIOD %I', uk_era_row.range_column_name)
+            ELSE format('%s, PERIOD %I', v_uk_stable_cols_list, uk_era_row.range_column_name)
+        END,                                                                             /* %6$s */
+        match_type,                                                                      /* %7$s */
+        update_action,                                                                   /* %8$s */
+        delete_action                                                                    /* %9$s */
+    ))"
+PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at PERFORM
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a completely-uncovered foreign key
 SAVEPOINT s;
@@ -455,7 +474,26 @@ CONTEXT:  SQL statement "
         MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
         DEFERRABLE
         "
-PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at EXECUTE
+SQL statement "SELECT sql_saga.__internal_execute_as_caller(format($$
+        ALTER TABLE %1$s ADD CONSTRAINT %2$I
+        FOREIGN KEY (%3$s, PERIOD %4$I) REFERENCES %5$s (%6$s)
+        MATCH %7$s ON UPDATE %8$s ON DELETE %9$s
+        DEFERRABLE
+        $$,
+        fk_table_oid::text,                                                              /* %1$s */
+        foreign_key_name,                                                                /* %2$I */
+        (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(fk_column_names) WITH ORDINALITY AS u (c, o)), /* %3$s */
+        fk_era_row.range_column_name,                                                    /* %4$I */
+        uk_table_oid::text,                                                              /* %5$s */
+        CASE
+            WHEN v_uk_stable_cols_list IS NULL THEN format('PERIOD %I', uk_era_row.range_column_name)
+            ELSE format('%s, PERIOD %I', v_uk_stable_cols_list, uk_era_row.range_column_name)
+        END,                                                                             /* %6$s */
+        match_type,                                                                      /* %7$s */
+        update_action,                                                                   /* %8$s */
+        delete_action                                                                    /* %9$s */
+    ))"
+PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at PERFORM
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a partially-covered foreign key
 SAVEPOINT s;
@@ -525,7 +563,26 @@ CONTEXT:  SQL statement "
         MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
         DEFERRABLE
         "
-PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at EXECUTE
+SQL statement "SELECT sql_saga.__internal_execute_as_caller(format($$
+        ALTER TABLE %1$s ADD CONSTRAINT %2$I
+        FOREIGN KEY (%3$s, PERIOD %4$I) REFERENCES %5$s (%6$s)
+        MATCH %7$s ON UPDATE %8$s ON DELETE %9$s
+        DEFERRABLE
+        $$,
+        fk_table_oid::text,                                                              /* %1$s */
+        foreign_key_name,                                                                /* %2$I */
+        (SELECT string_agg(quote_ident(c), ', ' ORDER BY o) FROM unnest(fk_column_names) WITH ORDINALITY AS u (c, o)), /* %3$s */
+        fk_era_row.range_column_name,                                                    /* %4$I */
+        uk_table_oid::text,                                                              /* %5$s */
+        CASE
+            WHEN v_uk_stable_cols_list IS NULL THEN format('PERIOD %I', uk_era_row.range_column_name)
+            ELSE format('%s, PERIOD %I', v_uk_stable_cols_list, uk_era_row.range_column_name)
+        END,                                                                             /* %6$s */
+        match_type,                                                                      /* %7$s */
+        update_action,                                                                   /* %8$s */
+        delete_action                                                                    /* %9$s */
+    ))"
+PL/pgSQL function __api_add_temporal_foreign_key(regclass,name[],name,name,fk_match_types,fk_actions,fk_actions,name,name,name,boolean) line 124 at PERFORM
 ROLLBACK TO SAVEPOINT s;
 ROLLBACK;
 \i sql/include/test_teardown.sql
