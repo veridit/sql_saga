@@ -240,9 +240,12 @@ fixed. New findings, each fixed test-first:
       (still needs parent-trigger maintenance and adds hot-path state/overhead); or upstream native regular-to-temporal
       FK support (core work, later). No separate sketches or prototypes exist: these were conceptual alternatives
       formulated during this discussion, not ready designs to substitute for the narrow 1.4 helpers
-- [ ] D1d: generated per-era sync functions live in schema sql_saga. Namespace principle points to keeping them there
-      with a narrow canonical-function helper rather than moving them to user schemas; confirm when reached, and
-      measure performance either way
+- [x] D1d APPROVED 2026-10-26: keep generated sync functions in schema sql_saga. A narrow helper accepts only
+      table_oid, era_name and CREATE/REPLACE/DROP, generates the canonical function itself and accepts no SQL text;
+      the generated runtime function remains SECURITY INVOKER with its specialized performance
+- [ ] Release evidence: account for every 1.4 change by origin (requested CASCADE/TRUNCATE feature, independent review,
+      self-found defect, packaging, D1 root-cause conversion), including which defects already existed in 1.0; use it
+      for the final release notes and scope review
 - [ ] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
       SECURITY INVOKER; verify/close the caller-forgeable clean-teardown bypass; review view-trigger replay as caller
 - [ ] D1 performance gate: benchmark every converted hot path before/after (regular-FK check/cascade/load,
