@@ -1311,7 +1311,7 @@ $__internal_era_ephemeral_and_pk_consistency_rename_follow$;
 REVOKE ALL ON FUNCTION sql_saga.__internal_era_ephemeral_and_pk_consistency_rename_follow() FROM PUBLIC;
 -- ---- end 1.3 small2 ----
 
-CREATE FUNCTION sql_saga.rename_following()
+CREATE FUNCTION sql_saga.__internal_rename_following()
  RETURNS event_trigger
  LANGUAGE plpgsql
  SECURITY DEFINER

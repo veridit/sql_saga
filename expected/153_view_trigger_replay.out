@@ -1,0 +1,5 @@
+\set ECHO none
+replay without function EXECUTE | 42501: permission denied for function vt_other.user_trigger
+column and view preserved after refusal | true
+replay with function EXECUTE | ok
+column dropped after grant | true

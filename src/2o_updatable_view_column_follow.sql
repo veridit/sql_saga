@@ -406,7 +406,7 @@ BEGIN
         IF v_trigger->>'definition' !~ '^CREATE (CONSTRAINT )?TRIGGER ' THEN
             RAISE EXCEPTION 'sql_saga: unexpected trigger definition for view "%.%"', pending.view_schema, pending.view_name;
         END IF;
-        EXECUTE v_trigger->>'definition';
+        PERFORM sql_saga.__internal_execute_as_caller(v_trigger->>'definition');
         IF v_trigger->>'enabled' IS DISTINCT FROM 'O' THEN
             EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', v_view_oid::pg_catalog.regclass,
                 CASE v_trigger->>'enabled' WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' ELSE 'ENABLE ALWAYS' END,
