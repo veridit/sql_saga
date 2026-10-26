@@ -272,6 +272,10 @@ fixed. New findings, each fixed test-first:
 - [x] Independent review: BLOCK with F1-F10; F1, F2, F3 reproduced on a private cluster
 
 ## Backlog (after 1.4)
+- [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
+      without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
+      and CASCADE semantics). Separate project, not part of 1.4; use the 1.4 C-trigger behavior and parity tests as
+      the semantic baseline. Owner agreed 2026-10-26: practical narrow helpers for 1.4, upstream changes for another time
 - [ ] Upstream parallel-restore report and patch (section below)
 - [ ] Automate README.md example testing (literate programming approach)
 - [ ] Improve test documentation for complex/expected-failure cases
