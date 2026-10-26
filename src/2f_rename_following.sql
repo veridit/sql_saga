@@ -1844,10 +1844,10 @@ BEGIN
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
           AND pc.oid = ANY (v_touched_relation_oids)
           AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = (
-            SELECT format('EXCLUDE USING gist (%s, %I WITH &&) WHERE (%s) DEFERRABLE',
+            SELECT format('EXCLUDE USING gist (%s, %I WITH &&) WHERE %s DEFERRABLE',
                 string_agg(quote_ident(u.name) || ' WITH =', ', ' ORDER BY u.ordinality),
                 e.range_column_name,
-                uk.predicate
+                CASE WHEN left(uk.predicate, 1) = '(' THEN uk.predicate ELSE '(' || uk.predicate || ')' END
             )
             FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
           )

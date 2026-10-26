@@ -167,7 +167,8 @@ SELECT sql_saga.add_unique_key(
 ERROR:  could not create exclusion constraint "contractors_name_valid_excl"
 DETAIL:  Key (name, valid_range)=(David, [2020-01-01,2022-01-01)) conflicts with key (name, valid_range)=(David, [2021-01-01,2023-01-01)).
 CONTEXT:  SQL statement "ALTER TABLE public.contractors ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE"
-PL/pgSQL function __api_add_unique_key(regclass,name[],name,unique_key_type,boolean,name,name,name,text,name[]) line 460 at EXECUTE
+SQL statement "SELECT sql_saga.__internal_execute_as_caller(sql)"
+PL/pgSQL function __api_add_unique_key(regclass,name[],name,unique_key_type,boolean,name,name,name,text,name[]) line 468 at PERFORM
 -- Correct the data by deleting one of the conflicting records.
 DELETE FROM contractors WHERE id = 102;
 -- Try adding the unique key again. This should now succeed.

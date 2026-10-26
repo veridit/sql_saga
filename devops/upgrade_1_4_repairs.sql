@@ -45,6 +45,37 @@ BEGIN
 END;
 $refuse_unsupported_regular_fks$;
 
+/* 1.4 stores predicated keys as PostgreSQL's canonical deparse, so function calls and qualified names compare
+ * correctly in integrity checks. Existing catalogs hold the user's original text; normalize it from the constraint
+ * itself, without rebuilding user constraints or evaluating their predicates. */
+DO $normalize_predicated_key_predicates$
+DECLARE
+    k record;
+    canonical text;
+    n integer := 0;
+BEGIN
+    FOR k IN
+        SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.exclude_constraint, uk.predicate
+        FROM sql_saga.unique_keys AS uk
+        WHERE uk.key_type = 'predicated' AND uk.predicate IS NOT NULL
+        ORDER BY uk.unique_key_name
+    LOOP
+        SELECT pg_catalog.pg_get_expr(i.indpred, i.indrelid) INTO canonical
+        FROM pg_catalog.pg_constraint AS c
+        JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+        WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', k.table_schema, k.table_name))
+          AND c.conname = k.exclude_constraint AND c.contype = 'x';
+        IF canonical IS NOT NULL AND canonical IS DISTINCT FROM k.predicate THEN
+            UPDATE sql_saga.unique_keys AS uk SET predicate = canonical WHERE uk.unique_key_name = k.unique_key_name;
+            n := n + 1;
+        END IF;
+    END LOOP;
+    IF n > 0 THEN
+        RAISE NOTICE 'sql_saga: Canonicalized % predicated unique-key predicates', n;
+    END IF;
+END;
+$normalize_predicated_key_predicates$;
+
 DO $create_regular_fk_truncate_triggers$
 DECLARE
     fk record;

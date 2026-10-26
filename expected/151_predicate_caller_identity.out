@@ -1,0 +1,18 @@
+\set ECHO none
+--- part 1: an ALTER TABLE action smuggled into the predicate is refused
+refused 42601
+owner after the attempt | pred_owner
+injected constraint exists | 0
+catalog row exists | 0
+--- part 2: a qualified predicate is evaluated as the caller, not the extension owner
+qualified predicate | allowed
+qualified key integrity | 
+--- part 3: an unqualified predicate resolves on the caller's search_path
+unqualified predicate | allowed
+unqualified key integrity | 
+--- part 4: helpers are private and cannot lend the outer caller to nested user code
+direct execute helper | refused 42501
+direct predicate helper | refused 42501
+nested definer function | refused 42501
+hijack column exists | 0
+evil key catalog row exists | 0

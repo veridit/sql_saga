@@ -571,13 +571,8 @@ AS $__internal_unique_key_inventory$
                   AND i.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
                   AND i.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
                   AND i.indexprs IS NULL AND am.amname = 'btree'
-                  AND pg_catalog.regexp_replace(
-                          pg_catalog.regexp_replace(
-                              pg_catalog.pg_get_expr(i.indpred, i.indrelid),
-                              '::(text|character varying)', '', 'g'),
-                          '\(([[:alnum:]_".]+)\)', '\1', 'g')
-                      IS NOT DISTINCT FROM
-                      CASE WHEN uk.predicate IS NULL THEN NULL ELSE '(' || uk.predicate || ')' END)
+                  /* Stored predicates are canonical deparses (1.4); compare them exactly. */
+                  AND pg_catalog.pg_get_expr(i.indpred, i.indrelid) IS NOT DISTINCT FROM uk.predicate)
             ELSE EXISTS (
                 SELECT 1 FROM pg_catalog.pg_constraint AS c
                 JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
@@ -607,13 +602,7 @@ AS $__internal_unique_key_inventory$
                   AND i.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
                   AND i.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
                   AND i.indexprs IS NULL AND am.amname = 'gist'
-                  AND pg_catalog.regexp_replace(
-                          pg_catalog.regexp_replace(
-                              pg_catalog.pg_get_expr(i.indpred, i.indrelid),
-                              '::(text|character varying)', '', 'g'),
-                          '\(([[:alnum:]_".]+)\)', '\1', 'g')
-                      IS NOT DISTINCT FROM
-                      CASE WHEN uk.predicate IS NULL THEN NULL ELSE '(' || uk.predicate || ')' END
+                  AND pg_catalog.pg_get_expr(i.indpred, i.indrelid) IS NOT DISTINCT FROM uk.predicate
                   AND pg_catalog.cardinality(c.conexclop) = pg_catalog.cardinality(k.expected_attnums)
                   AND NOT EXISTS (
                       SELECT 1
@@ -669,11 +658,7 @@ AS $__internal_unique_key_attribution$
                    AND ui.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
                    AND ui.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
                    AND ui.indexprs IS NULL AND uam.amname = 'btree'
-                   AND pg_catalog.regexp_replace(
-                           pg_catalog.regexp_replace(pg_catalog.pg_get_expr(ui.indpred, ui.indrelid),
-                               '::(text|character varying)', '', 'g'),
-                           '\(([[:alnum:]_".]+)\)', '\1', 'g')
-                       IS NOT DISTINCT FROM '(' || k.predicate || ')'
+                   AND pg_catalog.pg_get_expr(ui.indpred, ui.indrelid) IS NOT DISTINCT FROM k.predicate
                ELSE uc.oid IS NOT NULL
                    AND uc.contype = CASE k.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
                    AND uc.conkey = k.expected_attnums AND uc.conperiod
@@ -692,11 +677,7 @@ AS $__internal_unique_key_attribution$
                    AND ei.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
                    AND ei.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
                    AND ei.indexprs IS NULL AND eam.amname = 'gist'
-                   AND pg_catalog.regexp_replace(
-                           pg_catalog.regexp_replace(pg_catalog.pg_get_expr(ei.indpred, ei.indrelid),
-                               '::(text|character varying)', '', 'g'),
-                           '\(([[:alnum:]_".]+)\)', '\1', 'g')
-                       IS NOT DISTINCT FROM CASE WHEN k.predicate IS NULL THEN NULL ELSE '(' || k.predicate || ')' END
+                   AND pg_catalog.pg_get_expr(ei.indpred, ei.indrelid) IS NOT DISTINCT FROM k.predicate
                    AND pg_catalog.cardinality(ec.conexclop) = pg_catalog.cardinality(k.expected_attnums)
                    AND NOT EXISTS (
                        SELECT 1

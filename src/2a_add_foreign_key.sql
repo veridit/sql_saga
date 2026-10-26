@@ -668,7 +668,8 @@ BEGIN
             LIMIT 1
         ) AS eq;
 
-        EXECUTE format('SELECT EXISTS( ' ||
+        /* Native ADD FOREIGN KEY validates as the caller, including FORCE RLS visibility (Q7). */
+        SELECT sql_saga.__internal_execute_as_caller(format('SELECT EXISTS( ' ||
             'SELECT 1 FROM ONLY %1$I.%2$I AS fk ' ||
             'WHERE %3$s AND NOT EXISTS ( ' ||
             '  SELECT 1 FROM ONLY %4$I.%5$I AS uk WHERE %6$s' ||
@@ -679,7 +680,7 @@ BEGIN
             uk_schema_name,       -- %4$I
             uk_table_name,        -- %5$I
             uk_where_clause       -- %6$s
-        ) INTO violating_row_found;
+        ))::boolean INTO violating_row_found;
 
         IF violating_row_found THEN
             RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',

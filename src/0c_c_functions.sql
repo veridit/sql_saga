@@ -164,3 +164,18 @@ RETURNS text
 AS 'sql_saga', 'api_caller_search_path_sql'
 LANGUAGE c STABLE;
 REVOKE ALL ON FUNCTION sql_saga.__internal_caller_search_path() FROM PUBLIC;
+
+-- D0/D1: these helpers never grant extra rights. A direct caller acts as itself; inside a catalog-owning definer
+-- worker they restore the recorded caller before touching a user object or parsing user text. They are private:
+-- an unrelated nested function must not inherit the outer management call as a capability (also guarded in C).
+CREATE OR REPLACE FUNCTION sql_saga.__internal_execute_as_caller(sql text)
+RETURNS text
+AS 'sql_saga', 'execute_as_caller'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+REVOKE ALL ON FUNCTION sql_saga.__internal_execute_as_caller(text) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_predicate_for_table(table_oid regclass, predicate text)
+RETURNS text
+AS 'sql_saga', 'predicate_for_table'
+LANGUAGE c STABLE SECURITY INVOKER;
+REVOKE ALL ON FUNCTION sql_saga.__internal_predicate_for_table(regclass, text) FROM PUBLIC;

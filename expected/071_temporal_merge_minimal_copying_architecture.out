@@ -243,7 +243,7 @@ NOTICE:  sql_saga: Added constraints to table etl.location: ALTER COLUMN id SET 
 -- A legal unit can only have one 'physical' address at any given time.
 -- This is a predicated natural key.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], key_type => 'predicated', predicate => 'type = ''physical''', unique_key_name => 'location_legal_unit_id_type_valid');
-NOTICE:  sql_saga: Added constraints to table etl.location: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, valid_range WITH &&) WHERE (type = 'physical') DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table etl.location: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, valid_range WITH &&) WHERE (type = 'physical'::text) DEFERRABLE
           add_unique_key           
 -----------------------------------
  location_legal_unit_id_type_valid

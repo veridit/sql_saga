@@ -66,11 +66,14 @@
 #include "nodes/bitmapset.h"
 #include "nodes/makefuncs.h"
 #include "nodes/parsenodes.h"
+#include "parser/analyze.h"
 #include "parser/parse_func.h"
+#include "parser/parser.h"
 #include "tcop/deparse_utility.h"
 #include "utils/date.h"
 #if (PG_VERSION_NUM >= 100000)
 #include "utils/fmgrprotos.h"
+#include "utils/guc.h"
 #endif
 #include "utils/hsearch.h"
 #include "utils/rangetypes.h"
@@ -3578,6 +3581,177 @@ api_caller_search_path_sql(PG_FUNCTION_ARGS)
 	if (api_caller_depth == 0)
 		PG_RETURN_NULL();
 	PG_RETURN_TEXT_P(cstring_to_text(api_caller_search_path_stack[api_caller_depth - 1]));
+}
+
+/*
+ * Enter the identity and name-resolution context of the role that called the management API. The private workers
+ * are SECURITY DEFINER for sql_saga's catalog state, but statements on user objects must be authorized by native
+ * PostgreSQL as this caller (D0/D1), including the caller's RLS. Direct calls have no recorded outer caller and
+ * therefore simply retain the current identity.
+ */
+static void
+caller_context_enter(FunctionCallInfo fcinfo, Oid *saved_userid, int *saved_sec_context, char **saved_search_path, bool *context_entered)
+{
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+
+	GetUserIdAndSecContext(saved_userid, saved_sec_context);
+	*saved_search_path = namespace_search_path ? pstrdup(namespace_search_path) : NULL;
+	*context_entered = true;
+
+	/* A nested user function must not inherit the outer management call as a confused-deputy capability. */
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+	if (GetUserId() != api_caller() && GetUserId() != function_owner)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("%s may only be called by the management worker or the current caller",
+						get_func_name(fcinfo->flinfo->fn_oid))));
+
+	SetUserIdAndSecContext(api_caller(), *saved_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	if (api_caller_depth > 0 && api_caller_search_path_stack[api_caller_depth - 1] != NULL)
+		(void) set_config_option("search_path", api_caller_search_path_stack[api_caller_depth - 1],
+								 PGC_USERSET, PGC_S_SESSION, GUC_ACTION_LOCAL, true, 0, false);
+}
+
+static void
+caller_context_restore(Oid saved_userid, int saved_sec_context, char *saved_search_path)
+{
+	SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	if (saved_search_path != NULL)
+	{
+		(void) set_config_option("search_path", saved_search_path,
+								 PGC_USERSET, PGC_S_SESSION, GUC_ACTION_LOCAL, true, 0, false);
+		pfree(saved_search_path);
+	}
+}
+
+/*
+ * __internal_execute_as_caller(sql text) -- execute one SQL string with the recorded caller's identity, search_path
+ * and RLS. This is deliberately not an elevated helper: a direct caller can do only what it could do itself. For a
+ * SELECT of one row and one column, return that value as text; otherwise return NULL. Used for user-object DDL and
+ * add-time validation by the catalog-owning workers, never for sql_saga's own catalog writes.
+ */
+PG_FUNCTION_INFO_V1(execute_as_caller);
+Datum
+execute_as_caller(PG_FUNCTION_ARGS)
+{
+	char	   *sql;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	char	   *saved_search_path;
+	int			ret;
+	char	   *result = NULL;
+	char	   *value;
+	bool		context_entered = false;
+	bool		context_restored = false;
+
+	if (PG_ARGISNULL(0))
+		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("SQL statement must not be NULL")));
+	sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	PG_TRY();
+	{
+		caller_context_enter(fcinfo, &saved_userid, &saved_sec_context, &saved_search_path, &context_entered);
+		ret = SPI_execute(sql, false, 0);
+		if (ret == SPI_OK_SELECT && SPI_processed > 0)
+		{
+			if (SPI_processed != 1 || SPI_tuptable->tupdesc->natts != 1)
+				ereport(ERROR, (errcode(ERRCODE_CARDINALITY_VIOLATION),
+								errmsg("expected one row and one column, got %llu rows and %d columns",
+									   (unsigned long long) SPI_processed, SPI_tuptable->tupdesc->natts)));
+			value = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+			if (value != NULL)
+				result = pstrdup(value);
+		}
+		/* set_config_option needs the statement's ResourceOwner to still be alive. */
+		caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
+		context_restored = true;
+		if (SPI_finish() != SPI_OK_FINISH)
+			elog(ERROR, "SPI_finish failed");
+	}
+	PG_FINALLY();
+	{
+		if (context_entered && !context_restored)
+			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
+	}
+	PG_END_TRY();
+	pfree(sql);
+	if (result != NULL)
+		PG_RETURN_TEXT_P(cstring_to_text(result));
+	PG_RETURN_NULL();
+}
+
+/*
+ * __internal_predicate_for_table(table_oid regclass, predicate text) -- accept exactly one expression, resolve it
+ * against the table as the recorded caller under the caller's search_path, then return its canonical deparse with
+ * every non-visible function/operator/type qualified as sql_saga's integrity checks print it. Storing and using this
+ * form prevents predicate text from becoming another ALTER TABLE action and makes qualified and unqualified input
+ * describe the same constraint and catalog text (Q4).
+ */
+PG_FUNCTION_INFO_V1(predicate_for_table);
+Datum
+predicate_for_table(PG_FUNCTION_ARGS)
+{
+	Oid			relid;
+	char	   *predicate;
+	char	   *query_text;
+	Relation	rel;
+	List	   *raw;
+	RawStmt    *rawstmt;
+	Query	   *query;
+	TargetEntry *target;
+	Node	   *transformed;
+	List	   *deparse_context;
+	char	   *result;
+	Oid			saved_userid;
+	int			saved_sec_context;
+	char	   *saved_search_path;
+	bool		context_entered = false;
+
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("table and predicate must not be NULL")));
+	relid = PG_GETARG_OID(0);
+	predicate = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	rel = relation_open(relid, AccessShareLock);
+
+	PG_TRY();
+	{
+		caller_context_enter(fcinfo, &saved_userid, &saved_sec_context, &saved_search_path, &context_entered);
+		query_text = psprintf("SELECT (%s) FROM %s", predicate,
+							  quote_qualified_identifier(get_namespace_name(RelationGetNamespace(rel)),
+														 RelationGetRelationName(rel)));
+		raw = raw_parser(query_text, RAW_PARSE_DEFAULT);
+		if (list_length(raw) != 1)
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("predicate must be a single expression")));
+		rawstmt = linitial_node(RawStmt, raw);
+		if (!IsA(rawstmt->stmt, SelectStmt))
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("predicate must be a single expression")));
+		query = parse_analyze_fixedparams(rawstmt, query_text, NULL, 0, NULL);
+		if (list_length(query->targetList) != 1)
+			ereport(ERROR, (errcode(ERRCODE_SYNTAX_ERROR), errmsg("predicate must be a single expression")));
+		target = linitial_node(TargetEntry, query->targetList);
+		transformed = (Node *) target->expr;
+
+		/* Match the namespace used by the catalog/integrity deparsers, not the caller's, for stable text. */
+		(void) set_config_option("search_path", "sql_saga, pg_catalog, pg_temp",
+								 PGC_USERSET, PGC_S_SESSION, GUC_ACTION_LOCAL, true, 0, false);
+		deparse_context = deparse_context_for(RelationGetRelationName(rel), relid);
+		result = deparse_expression(transformed, deparse_context, false, false);
+	}
+	PG_FINALLY();
+	{
+		if (context_entered)
+			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
+		relation_close(rel, AccessShareLock);
+	}
+	PG_END_TRY();
+	PG_RETURN_TEXT_P(cstring_to_text(result));
 }
 
 /* __internal_caller() -- the role the running management function acts for (see api_caller). */

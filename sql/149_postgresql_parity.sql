@@ -225,6 +225,43 @@ SELECT par.cmp(c.grant_cols || ': add_foreign_key (temporal) vs FOREIGN KEY ... 
         ALTER TABLE par.n_tchild ADD FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES par.n_tparent (id, PERIOD valid_range)$$, c.grant_cols)))
 FROM (VALUES (1, 'id'), (2, 'valid_range'), (3, 'id, valid_range')) AS c (n, grant_cols) ORDER BY c.n;
 
+-- Add-time validation runs as the caller, including the caller's RLS (review round 3 follow-up, Q7). A violating
+-- row hidden from the caller by FORCE RLS is invisible to native ADD FOREIGN KEY too. A visible violation is refused.
+\o /dev/null
+SET ROLE pp_owner;
+CREATE TABLE par.q7_s_parent (id int NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('par.q7_s_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('par.q7_s_parent', ARRAY['id'], key_type => 'primary', unique_key_name => 'q7_s_pk');
+CREATE TABLE par.q7_n_parent (id int PRIMARY KEY);
+CREATE TABLE par.q7_s_hidden (id int);
+CREATE TABLE par.q7_n_hidden (id int);
+CREATE TABLE par.q7_s_visible (id int);
+CREATE TABLE par.q7_n_visible (id int);
+INSERT INTO par.q7_s_hidden VALUES (999);
+INSERT INTO par.q7_n_hidden VALUES (999);
+INSERT INTO par.q7_s_visible VALUES (999);
+INSERT INTO par.q7_n_visible VALUES (999);
+ALTER TABLE par.q7_s_hidden ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_n_hidden ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_s_visible ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_n_visible ENABLE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_s_hidden FORCE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_n_hidden FORCE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_s_visible FORCE ROW LEVEL SECURITY;
+ALTER TABLE par.q7_n_visible FORCE ROW LEVEL SECURITY;
+CREATE POLICY q7_hide ON par.q7_s_hidden FOR SELECT USING (false);
+CREATE POLICY q7_hide ON par.q7_n_hidden FOR SELECT USING (false);
+CREATE POLICY q7_show ON par.q7_s_visible FOR SELECT USING (true);
+CREATE POLICY q7_show ON par.q7_n_visible FOR SELECT USING (true);
+RESET ROLE;
+\o
+SELECT par.cmp('add-time validation, violating row hidden by FORCE RLS: add_foreign_key vs ADD FOREIGN KEY',
+    par.try('pp_owner', $$SELECT sql_saga.add_foreign_key('par.q7_s_hidden', ARRAY['id'], 'par.q7_s_parent', ARRAY['id'])$$),
+    par.try('pp_owner', $$ALTER TABLE par.q7_n_hidden ADD FOREIGN KEY (id) REFERENCES par.q7_n_parent (id)$$));
+SELECT par.cmp('add-time validation, violating row visible under FORCE RLS: add_foreign_key vs ADD FOREIGN KEY',
+    par.try('pp_owner', $$SELECT sql_saga.add_foreign_key('par.q7_s_visible', ARRAY['id'], 'par.q7_s_parent', ARRAY['id'])$$),
+    par.try('pp_owner', $$ALTER TABLE par.q7_n_visible ADD FOREIGN KEY (id) REFERENCES par.q7_n_parent (id)$$));
+
 \echo '--- B: writes against a regular foreign key and a native one, side by side'
 \o /dev/null
 SET ROLE pp_owner;

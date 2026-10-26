@@ -99,7 +99,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
-NOTICE:  sql_saga: Added constraints to table readme.legal_unit: ADD CONSTRAINT legal_unit_active_name_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (status = 'active') DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table readme.legal_unit: ADD CONSTRAINT legal_unit_active_name_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (status = 'active'::text) DEFERRABLE
         add_unique_key        
 ------------------------------
  legal_unit_active_name_valid

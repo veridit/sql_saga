@@ -185,7 +185,15 @@ BEGIN
         RAISE EXCEPTION 'enforce_consistency_with_primary_key can only be used with key_type = ''natural''';
     END IF;
 
-    where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
+    IF predicate IS NOT NULL THEN
+        /* One expression only, resolved as the caller; store and use its canonical deparse (Q4). */
+        predicate := sql_saga.__internal_predicate_for_table(table_oid, predicate);
+    END IF;
+    where_clause := CASE
+        WHEN predicate IS NULL THEN ''
+        WHEN left(predicate, 1) = '(' THEN format(' WHERE %s', predicate /* already parenthesized canonical deparse */)
+        ELSE format(' WHERE (%s)', predicate /* %s */)
+    END;
 
     IF key_type IN ('primary', 'natural') THEN
         -- When creating a primary key, validate that the table schema is compatible with SCD Type 2 history.
@@ -520,7 +528,7 @@ BEGIN
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
         WHERE c.oid = table_oid;
 
-        EXECUTE sql;
+        PERFORM sql_saga.__internal_execute_as_caller(sql);
         RAISE NOTICE 'sql_saga: Added constraints to table %: %', table_oid, array_to_string(alter_cmds, '; ');
     END IF;
 
@@ -579,7 +587,7 @@ BEGIN
                 );
 
                 RAISE DEBUG 'add_unique_key: Creating compound index for temporal_merge performance: %', compound_index_sql;
-                EXECUTE compound_index_sql;
+                PERFORM sql_saga.__internal_execute_as_caller(compound_index_sql);
                 RAISE DEBUG 'sql_saga: created compound index % on % for temporal_merge performance', compound_index_name, table_oid::regclass;
             END IF;
         END;
@@ -634,7 +642,7 @@ BEGIN
 
                     IF consistency_cmds IS NOT NULL AND array_length(consistency_cmds, 1) > 0 THEN
                         RAISE NOTICE 'sql_saga: Applied retroactive primary key consistency constraints to table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, '; ');
-                        EXECUTE format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', '));
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', ')));
                     END IF;
                 END IF;
             END;
@@ -647,6 +655,7 @@ BEGIN
     DECLARE
         index_name name;
         index_sql text;
+        index_columns text;
         existing_index_oid oid;
     BEGIN
         -- Find an existing B-Tree index on exactly these columns in this order
@@ -665,13 +674,15 @@ BEGIN
             index_name := sql_saga.__internal_make_name(
                 ARRAY[table_name] || column_names || ARRAY['idx']
             );
+            SELECT string_agg(quote_ident(c), ', ') INTO index_columns FROM unnest(column_names) AS u(c);
             index_sql := format('CREATE INDEX %I ON %I.%I USING btree (%s)',
                 index_name, /* %I */
                 table_schema, /* %I */
                 table_name, /* %I */
-                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names) AS u(c)) /* %s */
+                index_columns /* %s */
             );
-            EXECUTE index_sql;
+            RAISE DEBUG 'add_unique_key: Creating lookup index: %', index_sql;
+            PERFORM sql_saga.__internal_execute_as_caller(index_sql);
         END IF;
     END;
 

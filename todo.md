@@ -170,9 +170,17 @@ fixed. New findings, each fixed test-first:
       workers check the caller's rights but execute as superuser. Proposed fix (owner's design): execute DDL on user
       tables as the recorded caller under the caller's search_path (native rules decide), catalog writes stay with
       the extension owner; predicate must parse as one condition. Scope is decision D1 below
-- [ ] (original Q4 text) LOW: the recorded caller search_path is unused; a predicate text such as pred_fn(id) with pred_fn in public
-      worked in 1.3 and fails now when the constraint is built. Decide and implement (parse user text under the
-      caller's path, or document that names must be qualified); fix the comment in 3h and todo R8
+- [x] Q4 DONE: the predicate was both an injection surface and a resolution/canonicalization problem. New C helpers
+      execute user-object SQL as the recorded caller (with caller search_path and RLS), and parse one predicate as a
+      normal SELECT expression before storing its canonical deparse. Helpers are private and entry-guarded against
+      unrelated nested functions, including an explicitly granted attacker. ResourceOwner lifetimes and error exits
+      are covered. add_unique_key uses canonical text for constraints and integrity checks; rename_following and the
+      1.4 upgrade normalize old predicates. Test 151 covers injection, qualified/unqualified functions, integrity,
+      direct helper refusal and nested confused-deputy refusal. Fast 136/136
+- [x] Q7 DONE: regular-FK add-time validation now runs as the caller with caller RLS. Test 149 adds hidden-vs-visible
+      FORCE-RLS parity cases; hidden invalid row accepted like native, visible invalid row refused like native.
+      The 063 planner expectation was independently checked against a pre-D1 build: the type-first fallback order is
+      pre-existing, not a D1 regression, and the stale expected text was corrected explicitly
 - [ ] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
       144 part 5 lists PUBLIC definer functions without asserting the set
 - [ ] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code

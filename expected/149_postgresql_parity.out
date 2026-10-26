@@ -52,6 +52,8 @@ child owner, REFERENCES on another column only: add_foreign_key (regular) vs ADD
 id: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: refused 42501
 valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: refused 42501
 id, valid_range: add_foreign_key (temporal) vs FOREIGN KEY ... PERIOD | same: allowed
+add-time validation, violating row hidden by FORCE RLS: add_foreign_key vs ADD FOREIGN KEY | same: allowed
+add-time validation, violating row visible under FORCE RLS: add_foreign_key vs ADD FOREIGN KEY | same: refused 23503
 --- B: writes against a regular foreign key and a native one, side by side
 column-privilege writer, child insert of a present key (parent unreadable, RLS hides it) | same: allowed
 column-privilege writer, child insert of an absent key | same: refused 23503
