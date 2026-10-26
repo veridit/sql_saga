@@ -187,9 +187,26 @@ fixed. New findings, each fixed test-first:
       minimal rights, because elevated code must otherwise re-create PostgreSQL's whole security system, which opens
       many holes (Q1-Q4 are examples). Target: API workers SECURITY INVOKER (native checks decide); only tiny,
       auditable definer functions remain, for writes to sql_saga's own catalog, each checking the caller's rights
-- [ ] D1 step 1: inventory every statement in the 44 SECURITY DEFINER functions (24 API workers, 14 internal helpers,
-      6 trigger functions); classify each as "runs as caller" or "needs an exception"; present the exceptions with
-      reasons for the owner's approval before implementing
+- [ ] Q7 (found by D1 inventory, 2026-10-26): add-time regular-FK validation currently runs as the extension owner and
+      sees rows hidden from the caller by FORCE RLS. Native ADD FOREIGN KEY validates as the caller: with an invalid
+      child row hidden by a FORCE-RLS policy, native accepts the FK but sql_saga refuses it (reproduced side by side
+      on the private cluster). D1's run-as-caller conversion should fix this; add a parity test first. Do NOT treat
+      this as an exception requiring elevated rights
+- [x] D1 step 1 DONE 2026-10-26: all 44 definers plus every C identity switch inventoried. Consolidated report
+      `tmp/d1_inventory.md`; per-function evidence in `tmp/d1_api_inventory_agent.md` and
+      `tmp/d1_helper_inventory_agent.md`. API: 14 need only catalog helpers, 10 have an additional case. Five
+      definers are redundant. Event triggers verified to run as the DDL issuer when SECURITY INVOKER. Decisions D1a-D1d
+      below; no implementation yet
+- [ ] D1a (first exception to ask): allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog
+      writes and the two private-read tables (never a generic execute-as-owner helper)
+- [ ] D1b: regular-FK parent-side trigger DDL needs a narrow helper for exact native parity (child owner has
+      REFERENCES but need not have TRIGGER on the parent), or a different enforcement design
+- [ ] D1c: native-CASCADE cleanup on third-party child tables needs the same narrowly scoped treatment as native
+      internal cascade, or more native constraints
+- [ ] D1d: generated per-era sync functions live in schema sql_saga. Choose a narrow canonical-function helper or
+      move them to the user's schema/ownership; measure performance either way
+- [ ] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
+      SECURITY INVOKER; verify/close the caller-forgeable clean-teardown bypass; review view-trigger replay as caller
 - [ ] D2: message texts name tables schema-qualified (public.t); StatBus test/expected/007 changes
 - [ ] D3: catalog_format 1.4: a 1.3 dump restores at 1.3, then ALTER EXTENSION UPDATE
 - [ ] D4: history writes run as the history table's owner
