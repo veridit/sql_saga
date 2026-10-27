@@ -111,7 +111,7 @@ fixed. New findings, each fixed test-first:
       (data-based: an empty child does not block, unlike native) in README and doc/api.md
       DONE: README TRUNCATE paragraph (refusal, uk_truncate_trigger, data-based difference), decision-log identity
       and TRUNCATE, test 137 comment. doc/api.md is generated (functions only), so no table column docs there
-- [ ] R3 upgrade (done in packaging below): partitioned-child regular FKs from 1.3 (cloned triggers now refused,
+- [x] R3 upgrade (done in packaging below): partitioned-child regular FKs from 1.3 (cloned triggers now refused,
       every write would fail), backfill `uk_truncate_trigger` and create the triggers, report/refuse regular FKs to
       predicated keys
 - [x] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
@@ -432,6 +432,20 @@ failure so an upstream fix is noticed.
 - CASE→OR optimization (36-56% speedup)
 - Range-only view tests and same-day DELETE fix
 - Makefile `renumber-tests-from` target
+
+## 2026-10-27: 1.4 release candidate accepted locally
+- [x] D1 authorization boundary: private API/elevated workers require a management or event entry point;
+      caller SQL uses a backend-global suspension stack with volatile cleanup flags, so nested user code cannot borrow
+      management authority. Direct/nested attack tests 154 and 155 and independent D1 APPROVE (05ddbbf).
+- [x] Teardown performance and correctness: catalog-family-safe system_time cleanup, conservative managed-object
+      detection including inheritance, correlated attribution checks, and native error/NOTICE preservation.
+      Regular era literally named system_time covered by test 156. Independent performance APPROVE (53f4bd5).
+- [x] Verification: fast regression 141/141, native 5/5, generator 28/28 plus Makefile wiring, fresh install and
+      integrity, all four 1.0-1.3 to 1.4 upgrade paths GREEN, all six split cases 20/20, and both concurrency suites.
+- [x] Performance: targeted d521 and released-1.3 comparisons in tmp/bench_d1_final.md; hard drop gate GREEN with
+      drop_system_versioning 13.516 ms (<15 ms), drop_foreign_key 5.115 ms, drop_unique_key 3.267 ms.
+- [x] Release accounting updated in tmp/release_1_4_accounting.md. Local acceptance only: no tag, push, StatBus
+      change, or external action has been performed.
 
 ## Earlier
 - PostgreSQL 18 native temporal features (WITHOUT OVERLAPS, temporal FKs)
