@@ -18,6 +18,23 @@ AS 'sql_saga', 'sql_saga_event_trampoline'
 LANGUAGE c VOLATILE SECURITY INVOKER;
 GRANT EXECUTE ON FUNCTION sql_saga.health_checks() TO PUBLIC;
 
+CREATE OR REPLACE FUNCTION sql_saga.refuse_managed_relation_identity_change()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.refuse_managed_relation_identity_change() TO PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.record_alter_function_resolved()
+RETURNS event_trigger
+AS 'sql_saga', 'sql_saga_event_trampoline'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+GRANT EXECUTE ON FUNCTION sql_saga.record_alter_function_resolved() TO PUBLIC;
+
+COMMENT ON FUNCTION sql_saga.refuse_managed_relation_identity_change() IS
+'An event trigger function that protects managed relation identity changes and records managed-view shape changes.';
+COMMENT ON FUNCTION sql_saga.record_alter_function_resolved() IS
+'An event trigger function that records ALTER FUNCTION or ALTER ROUTINE targets for generated SYSTEM VERSIONING functions.';
+
 COMMENT ON FUNCTION sql_saga.drop_protection() IS
 'An event trigger function that prevents accidental dropping of sql_saga-managed objects. During the teardown phase of pg_restore --clean (see sql_saga.__internal_is_clean_teardown) it lets the drops through and removes the managed history policies the dump cannot name.';
 COMMENT ON FUNCTION sql_saga.rename_following() IS
@@ -29,11 +46,11 @@ CREATE EVENT TRIGGER sql_saga_drop_protection ON sql_drop EXECUTE PROCEDURE sql_
 
 CREATE EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ON ddl_command_start
     WHEN TAG IN ('ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA')
-    EXECUTE PROCEDURE sql_saga.__internal_refuse_managed_relation_identity_change();
+    EXECUTE PROCEDURE sql_saga.refuse_managed_relation_identity_change();
 
 CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start
     WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE')
-    EXECUTE PROCEDURE sql_saga.__internal_record_alter_function_resolved();
+    EXECUTE PROCEDURE sql_saga.record_alter_function_resolved();
 
 CREATE EVENT TRIGGER sql_saga_rename_following ON ddl_command_end EXECUTE PROCEDURE sql_saga.rename_following();
 

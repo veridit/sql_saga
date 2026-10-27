@@ -13,6 +13,7 @@ DECLARE
     target_schema_name name;
     target_table_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'table_oid must be specified';
     END IF;

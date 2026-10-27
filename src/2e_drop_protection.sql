@@ -18,6 +18,7 @@ DECLARE
     v_object_types text[];
     v_teardown_family boolean := false;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     /* Materialize this invocation once. Nested DDL gets its own function frame. */
     SELECT coalesce(
         array_agg(to_jsonb(dobj) ORDER BY dobj.ordinality),

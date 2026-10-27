@@ -202,8 +202,8 @@ SAVEPOINT dropped;
 ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
 DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
 SELECT integrity_hint.attempt('record_alter_function_resolved dropped',
-    $$sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger is missing; repair with CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved$$);
-CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved();
+    $$sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger is missing; repair with CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved$$);
+CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.record_alter_function_resolved();
 ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved;
 SELECT integrity_hint.valid('record_alter_function_resolved recreated and added back');
 ROLLBACK TO SAVEPOINT dropped;
@@ -270,11 +270,11 @@ RELEASE SAVEPOINT dropped_each;
 SAVEPOINT drifted;
 ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
 DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
-CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved();
+CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION') EXECUTE FUNCTION sql_saga.record_alter_function_resolved();
 ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved;
 SELECT integrity_hint.shape('sql_saga_record_alter_function_resolved');
 SELECT integrity_hint.attempt('record_alter_function_resolved definition drifted',
-    $$sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger definition differs from the extension's; repair with ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.__internal_record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved$$);
+    $$sql_saga: integrity violation for event trigger "sql_saga_record_alter_function_resolved": event trigger definition differs from the extension's; repair with ALTER EXTENSION sql_saga DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; DROP EVENT TRIGGER sql_saga_record_alter_function_resolved; CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE') EXECUTE FUNCTION sql_saga.record_alter_function_resolved(); ALTER EXTENSION sql_saga ADD EVENT TRIGGER sql_saga_record_alter_function_resolved$$);
 SELECT integrity_hint.advertised_repair() \gexec
 SELECT integrity_hint.shape('sql_saga_record_alter_function_resolved');
 SELECT integrity_hint.valid('record_alter_function_resolved definition restored');

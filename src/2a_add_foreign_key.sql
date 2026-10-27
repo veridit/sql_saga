@@ -134,6 +134,7 @@ DECLARE
     v_key_ordered_fk_columns name[];
     v_fk_era_name name := fk_era_name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     -- Get schema and table names for both tables
     SELECT n.nspname, c.relname INTO v_fk_schema_name, v_fk_table_name
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
@@ -400,6 +401,7 @@ DECLARE
     v_uk_stable_cols name[];
     v_missing_equality boolean;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
@@ -748,6 +750,7 @@ DECLARE
     v_uk_stable_cols_list text;
     v_uk_stable_cols name[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;

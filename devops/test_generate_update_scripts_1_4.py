@@ -314,6 +314,15 @@ class RealBuild(unittest.TestCase):
                 if targets and all(t in existing for t in targets) and not deliberate:
                     self.assertNotIn(stmt.text, self.delta, (code, targets))
 
+    def test_default_only_public_entrypoint_grants(self):
+        self.assertIn("$grant_public_event_entrypoints$", self.delta)
+        self.assertIn("p.proacl = pg_catalog.acldefault('f', p.proowner)", self.delta)
+        self.assertIn("FROM pg_catalog.pg_default_acl AS d", self.delta)
+        self.assertIn("d.defaclnamespace IN (0, ns.oid)", self.delta)
+        self.assertIn("d.defaclacl = p.proacl", self.delta)
+        for routine in ("drop_protection()", "health_checks()", "rename_following()", "sync_history_policies(regclass)"):
+            self.assertIn("sql_saga.%s" % routine, self.delta)
+
     def test_deliberate_revokes_are_emitted(self):
         found = set()
         for code in self.g.ACL_SOURCES:

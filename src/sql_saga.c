@@ -3429,6 +3429,27 @@ static Oid	api_caller_stack[SQL_SAGA_MAX_API_DEPTH];
 /* The caller's search_path at the call, in TopMemoryContext: user-supplied SQL text is parsed under it (R8). */
 static char *api_caller_search_path_stack[SQL_SAGA_MAX_API_DEPTH];
 static int	api_caller_depth = 0;
+/* While caller SQL runs, direct private workers at or below this depth are not trusted entry points. */
+static int	api_caller_suspended_at = -1;
+static int	api_caller_suspension_stack[SQL_SAGA_MAX_API_DEPTH];
+static int	api_caller_suspension_depth = 0;
+
+static void
+caller_context_push(void)
+{
+	if (api_caller_suspension_depth >= SQL_SAGA_MAX_API_DEPTH)
+		elog(ERROR, "sql_saga caller contexts nested too deeply");
+	api_caller_suspension_stack[api_caller_suspension_depth++] = api_caller_suspended_at;
+	api_caller_suspended_at = api_caller_depth;
+}
+
+static void
+caller_context_pop(void)
+{
+	if (api_caller_suspension_depth <= 0)
+		elog(ERROR, "sql_saga caller context stack underflow");
+	api_caller_suspended_at = api_caller_suspension_stack[--api_caller_suspension_depth];
+}
 
 static Oid
 api_caller(void)
@@ -3603,6 +3624,8 @@ sql_saga_event_trampoline(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+static void management_entry_guard_check(FunctionCallInfo fcinfo, bool invoker_entry);
+
 /*
  * __internal_truncate_as_owner(table regclass) -- TRUNCATE the table as its owner (the history TRUNCATE that follows a
  * base TRUNCATE, src/0h). Private.
@@ -3618,6 +3641,8 @@ truncate_as_owner(PG_FUNCTION_ARGS)
 	Oid			saved_userid;
 	int			saved_sec_context;
 	int			ret = 0;
+
+	management_entry_guard_check(fcinfo, true);
 
 	tup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tup))
@@ -3657,20 +3682,73 @@ api_caller_search_path_sql(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Private definer workers may be entered through a recorded management/event caller, or directly by their owner.
+ * Caller SQL pushes a suspension marker: user code at or below that marker cannot borrow the management context,
+ * while a fresh public/event trampoline enters above it. At positive depth only the worker owner is accepted.
+ */
+static Oid
+management_outer_caller(void)
+{
+	const char *role_name = GetConfigOption("role", true, false);
+
+	if (role_name == NULL || strcmp(role_name, "none") == 0)
+		return GetSessionUserId();
+	return get_role_oid(role_name, false);
+}
+
+static void
+management_entry_guard_check(FunctionCallInfo fcinfo, bool invoker_entry)
+{
+	HeapTuple	proc_tuple;
+	Oid			function_owner;
+	Oid			entry_caller;
+	bool		suspended;
+
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+	entry_caller = invoker_entry ? GetUserId() : management_outer_caller();
+	suspended = api_caller_suspended_at >= 0 && api_caller_depth <= api_caller_suspended_at;
+
+	if ((suspended && (!invoker_entry || GetUserId() != function_owner)) ||
+		(!suspended && api_caller_depth == 0 && entry_caller != function_owner) ||
+		(!suspended && api_caller_depth > 0 && GetUserId() != function_owner))
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("%s may only be called by a management worker, an event worker, or the current caller",
+						get_func_name(fcinfo->flinfo->fn_oid))));
+}
+
+PG_FUNCTION_INFO_V1(management_entry_guard);
+Datum
+management_entry_guard(PG_FUNCTION_ARGS)
+{
+	management_entry_guard_check(fcinfo, false);
+	PG_RETURN_BOOL(true);
+}
+
+/*
  * Enter the identity and name-resolution context of the role that called the management API. The private workers
  * are SECURITY DEFINER for sql_saga's catalog state, but statements on user objects must be authorized by native
  * PostgreSQL as this caller (D0/D1), including the caller's RLS. Direct calls have no recorded outer caller and
  * therefore simply retain the current identity.
  */
 static void
-caller_context_enter(FunctionCallInfo fcinfo, Oid *saved_userid, int *saved_sec_context, char **saved_search_path, bool *context_entered)
+caller_context_enter(FunctionCallInfo fcinfo, Oid *saved_userid, int *saved_sec_context, char **saved_search_path, volatile bool *context_entered)
 {
 	HeapTuple	proc_tuple;
 	Oid			function_owner;
+	Oid			caller;
+	char	   *caller_search_path;
 
-	GetUserIdAndSecContext(saved_userid, saved_sec_context);
-	*saved_search_path = namespace_search_path ? pstrdup(namespace_search_path) : NULL;
+	caller_context_push();
 	*context_entered = true;
+	GetUserIdAndSecContext(saved_userid, saved_sec_context);
+	*saved_search_path = NULL;
+	if (namespace_search_path != NULL)
+		*saved_search_path = pstrdup(namespace_search_path);
 
 	/* A nested user function must not inherit the outer management call as a confused-deputy capability. */
 	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
@@ -3684,9 +3762,12 @@ caller_context_enter(FunctionCallInfo fcinfo, Oid *saved_userid, int *saved_sec_
 				 errmsg("%s may only be called by the management worker or the current caller",
 						get_func_name(fcinfo->flinfo->fn_oid))));
 
-	SetUserIdAndSecContext(api_caller(), *saved_sec_context | SECURITY_LOCAL_USERID_CHANGE);
-	if (api_caller_depth > 0 && api_caller_search_path_stack[api_caller_depth - 1] != NULL)
-		(void) set_config_option("search_path", api_caller_search_path_stack[api_caller_depth - 1],
+	caller = api_caller();
+	caller_search_path = api_caller_depth > 0 ? api_caller_search_path_stack[api_caller_depth - 1] : NULL;
+	api_caller_suspended_at = api_caller_depth;
+	SetUserIdAndSecContext(caller, *saved_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	if (caller_search_path != NULL)
+		(void) set_config_option("search_path", caller_search_path,
 								 PGC_USERSET, PGC_S_SESSION, GUC_ACTION_LOCAL, true, 0, false);
 }
 
@@ -3698,7 +3779,7 @@ caller_context_restore(Oid saved_userid, int saved_sec_context, char *saved_sear
 	{
 		(void) set_config_option("search_path", saved_search_path,
 								 PGC_USERSET, PGC_S_SESSION, GUC_ACTION_LOCAL, true, 0, false);
-		pfree(saved_search_path);
+		/* The per-call memory context owns saved_search_path, including during subtransaction unwind. */
 	}
 }
 
@@ -3719,8 +3800,8 @@ execute_as_caller(PG_FUNCTION_ARGS)
 	int			ret;
 	char	   *result = NULL;
 	char	   *value;
-	bool		context_entered = false;
-	bool		context_restored = false;
+	volatile bool context_entered = false;
+	volatile bool context_restored = false;
 
 	if (PG_ARGISNULL(0))
 		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("SQL statement must not be NULL")));
@@ -3743,13 +3824,15 @@ execute_as_caller(PG_FUNCTION_ARGS)
 				result = pstrdup(value);
 		}
 		/* set_config_option needs the statement's ResourceOwner to still be alive. */
-		caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 		context_restored = true;
+		caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 		if (SPI_finish() != SPI_OK_FINISH)
 			elog(ERROR, "SPI_finish failed");
 	}
 	PG_FINALLY();
 	{
+		if (context_entered)
+			caller_context_pop();
 		if (context_entered && !context_restored)
 			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 	}
@@ -3829,6 +3912,8 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 	int			ret;
 	bool		isnull;
 
+	management_entry_guard_check(fcinfo, false);
+
 	initial_sql = text_to_cstring(PG_GETARG_TEXT_PP(0));
 	child_sql = text_to_cstring(PG_GETARG_TEXT_PP(1));
 	parent_sql = text_to_cstring(PG_GETARG_TEXT_PP(2));
@@ -3855,8 +3940,8 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 		Oid			saved_userid;
 		int			saved_sec_context;
 		char	   *saved_search_path;
-		bool		context_entered = false;
-		bool		context_restored = false;
+		volatile bool context_entered = false;
+		volatile bool context_restored = false;
 		bool		initial_result = false;
 		int			ret;
 
@@ -3873,13 +3958,15 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 
 				initial_result = !isnull && DatumGetBool(d);
 			}
-			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 			context_restored = true;
+			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 			if (SPI_finish() != SPI_OK_FINISH)
 				elog(ERROR, "SPI_finish failed");
 		}
 		PG_FINALLY();
 		{
+			if (context_entered)
+				caller_context_pop();
 			if (context_entered && !context_restored)
 				caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 		}
@@ -3909,6 +3996,7 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	caller_context_push();
 	PG_TRY();
 	{
 		SetUserIdAndSecContext(child_owner, saved_sec_context | SECURITY_LOCAL_USERID_CHANGE | SECURITY_NOFORCE_RLS);
@@ -3958,6 +4046,7 @@ regular_fk_initial_check(PG_FUNCTION_ARGS)
 	}
 	PG_FINALLY();
 	{
+		caller_context_pop();
 		if (portal != NULL)
 			SPI_cursor_close(portal);
 		SetUserIdAndSecContext(saved_userid, saved_sec_context);
@@ -3991,7 +4080,7 @@ predicate_for_table(PG_FUNCTION_ARGS)
 	Oid			saved_userid;
 	int			saved_sec_context;
 	char	   *saved_search_path;
-	bool		context_entered = false;
+	volatile bool context_entered = false;
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		ereport(ERROR, (errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED), errmsg("table and predicate must not be NULL")));
@@ -4025,6 +4114,8 @@ predicate_for_table(PG_FUNCTION_ARGS)
 	}
 	PG_FINALLY();
 	{
+		if (context_entered)
+			caller_context_pop();
 		if (context_entered)
 			caller_context_restore(saved_userid, saved_sec_context, saved_search_path);
 		relation_close(rel, AccessShareLock);

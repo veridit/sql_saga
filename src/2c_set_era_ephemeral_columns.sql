@@ -13,6 +13,7 @@ DECLARE
     table_schema name;
     table_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(table_class, 'set_era_ephemeral_columns');
     SELECT n.nspname, c.relname
     INTO table_schema, table_name

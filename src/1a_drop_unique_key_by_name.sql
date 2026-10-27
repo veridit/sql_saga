@@ -22,6 +22,7 @@ DECLARE
     range_column_name name;
     expected_attnums smallint[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;

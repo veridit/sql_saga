@@ -5,7 +5,8 @@ CREATE FUNCTION sql_saga.__api_drop_system_time_era(table_oid regclass, drop_beh
  SET search_path = sql_saga, pg_catalog, pg_temp
 AS
 $function$
-SELECT sql_saga.drop_era(table_oid, 'system_time', drop_behavior, cleanup);
+SELECT sql_saga.drop_era(table_oid, 'system_time', drop_behavior, cleanup)
+WHERE sql_saga.__internal_entry_guard();
 $function$;
 
 COMMENT ON FUNCTION sql_saga.__api_drop_system_time_era(regclass, sql_saga.drop_behavior, boolean) IS

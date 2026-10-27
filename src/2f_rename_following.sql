@@ -10,6 +10,7 @@ DECLARE
     object_display_name text;
     base_display_name text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     SELECT candidate.managed_class, candidate.object_schema, candidate.object_name,
            candidate.base_schema, candidate.base_table, candidate.era_name, candidate.detail
     INTO managed
@@ -162,6 +163,7 @@ DECLARE
     history_name name;
     managed record;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     SELECT n.nspname, c.relname,
            sql_saga.__internal_display_name(pg_catalog.format('%I.%I', n.nspname, c.relname))
     INTO relation_schema, relation_name, relation_display_name
@@ -1337,6 +1339,7 @@ DECLARE
     v_altered_table_oids oid[];
     v_touched_relation_oids oid[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     /* DROP statements cannot rename or reshape surviving managed objects. */
     IF tg_tag LIKE 'DROP %' THEN
         RETURN;

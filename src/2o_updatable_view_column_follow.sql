@@ -596,6 +596,7 @@ DECLARE
     v_view record;
     v_dependent text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL OR column_names IS NULL OR pg_catalog.cardinality(column_names) = 0 THEN
         RETURN;
     END IF;
@@ -675,6 +676,7 @@ DECLARE
     v_dependent text;
     v_tables oid[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL OR type_column_names IS NULL OR pg_catalog.cardinality(type_column_names) = 0 THEN
         RETURN;
     END IF;
@@ -829,6 +831,7 @@ DECLARE
     v_dependent text;
     v_replaced boolean;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_updatable_view_restore_pending();
 
     IF table_oids IS NULL OR pg_catalog.cardinality(table_oids) = 0 THEN

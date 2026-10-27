@@ -19,6 +19,7 @@ DECLARE
     constraint_name name;
     alter_sql text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(table_oid, 'drop_unique_key');
     SELECT n.nspname, c.relname
     INTO table_schema, table_name

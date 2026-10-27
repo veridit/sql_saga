@@ -15,6 +15,7 @@ Datum api_trampoline(PG_FUNCTION_ARGS);
 Datum sql_saga_event_trampoline(PG_FUNCTION_ARGS);
 Datum api_caller_sql(PG_FUNCTION_ARGS);
 Datum api_caller_is_superuser_sql(PG_FUNCTION_ARGS);
+Datum management_entry_guard(PG_FUNCTION_ARGS);
 Datum api_caller_search_path_sql(PG_FUNCTION_ARGS);
 Datum truncate_as_owner(PG_FUNCTION_ARGS);
 Datum require_references(PG_FUNCTION_ARGS);

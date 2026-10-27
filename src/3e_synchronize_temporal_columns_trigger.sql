@@ -13,6 +13,7 @@ DECLARE
     v_trg_name name;
     v_stored_trg_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(__api_drop_synchronize_temporal_columns_trigger.table_oid, 'drop_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name
@@ -462,6 +463,7 @@ DECLARE
     generated record;
     stored_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(table_oid, 'synchronize_temporal_function_ddl');
     IF operation NOT IN ('CREATE', 'REPLACE', 'DROP') THEN
         RAISE EXCEPTION 'invalid synchronization function operation %', operation USING ERRCODE = 'invalid_parameter_value';
@@ -500,6 +502,7 @@ DECLARE
     v_table_name name;
     generated record;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(__api_add_synchronize_temporal_columns_trigger.table_oid, 'add_synchronize_temporal_columns_trigger');
     SELECT n.nspname, c.relname
     INTO v_table_schema, v_table_name

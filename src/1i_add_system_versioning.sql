@@ -98,7 +98,8 @@ AS $__internal_refresh_system_time_columns_snapshot$
           AND a.attnum > 0
           AND NOT a.attisdropped
     ) AS live
-    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = table_oid;
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = table_oid
+      AND sql_saga.__internal_entry_guard();
 $__internal_refresh_system_time_columns_snapshot$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) FROM PUBLIC;
@@ -293,6 +294,7 @@ DECLARE
     expected_columns integer;
     actual_columns integer;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'sql_saga: cannot reconcile a NULL table'
             USING ERRCODE = 'null_value_not_allowed',
@@ -416,6 +418,7 @@ DECLARE
     other_schema name;
     other_family record;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
@@ -635,6 +638,7 @@ DECLARE
     excluded name;
     previous_rebuild_flag text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;

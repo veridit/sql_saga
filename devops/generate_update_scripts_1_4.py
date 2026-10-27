@@ -264,6 +264,11 @@ def delta(src_dir, devops_dir, frozen13):
                     raise GeneratorError("privilege statement at line %d of src %s mixes 1.3 and new routines" % (s.line, code))
             elif k == "do" and code == TRAMPOLINES and "$copy_api_comments$" in s.text:
                 chunk.append(s.text)
+            elif code == "2j" and k == "other" and re.match(
+                    r"CREATE\s+EVENT\s+TRIGGER\s+sql_saga_(?:refuse_managed_relation_identity_change|record_alter_function_resolved)\b",
+                    g13._core(s), re.I):
+                # The repairs fragment drops the old private binding and recreates it after all routines exist.
+                continue
             elif k == "create_table":
                 raise GeneratorError("new table in src %s at line %d: catalog changes belong in the schema fragment" % (code, s.line))
             else:

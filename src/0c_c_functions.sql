@@ -78,6 +78,12 @@ AS 'sql_saga', 'api_caller_is_superuser_sql'
 LANGUAGE c STABLE SECURITY INVOKER;
 REVOKE ALL ON FUNCTION sql_saga.__internal_caller_is_superuser() FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION sql_saga.__internal_entry_guard()
+RETURNS boolean
+AS 'sql_saga', 'management_entry_guard'
+LANGUAGE c VOLATILE SECURITY INVOKER;
+REVOKE ALL ON FUNCTION sql_saga.__internal_entry_guard() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger
 AS 'sql_saga', 'generated_always_as_row_start_end'

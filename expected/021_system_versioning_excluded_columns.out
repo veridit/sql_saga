@@ -110,11 +110,11 @@ SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_range
 -- Test that excluding a non-existent column fails.
 SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{nonexistent}');
 ERROR:  column "nonexistent" does not exist in table public.excl
-CONTEXT:  PL/pgSQL function __api_set_system_time_era_excluded_columns(regclass,name[]) line 25 at RAISE
+CONTEXT:  PL/pgSQL function __api_set_system_time_era_excluded_columns(regclass,name[]) line 26 at RAISE
 -- Test that excluding a system column fails.
 SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{xmin}');
 ERROR:  cannot exclude system column "xmin"
-CONTEXT:  PL/pgSQL function __api_set_system_time_era_excluded_columns(regclass,name[]) line 35 at RAISE
+CONTEXT:  PL/pgSQL function __api_set_system_time_era_excluded_columns(regclass,name[]) line 36 at RAISE
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql

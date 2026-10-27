@@ -1,0 +1,12 @@
+\set ECHO none
+direct API worker with named grant | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+nested definer worker with named grant | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+direct validator with named grant | 42501: __internal_regular_fk_initial_check may only be called by a management worker, an event worker, or the current caller
+direct snapshot writer with named grant | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+direct history state helper with named grant | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+direct TRUNCATE helper with named grant | 42501: __internal_truncate_as_owner may only be called by a management worker, an event worker, or the current caller
+direct guard with named grant | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+table and catalog unchanged | true
+table row preserved after direct TRUNCATE | true
+public API positive control | true
+public TRUNCATE positive control | true

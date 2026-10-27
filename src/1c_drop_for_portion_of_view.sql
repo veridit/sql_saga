@@ -13,6 +13,7 @@ DECLARE
     target_schema_name name;
     target_table_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     /*
      * If table_oid and era_name are specified, then just drop the views for that.
      *

@@ -11,6 +11,7 @@ DECLARE
     view_name name;
     trigger_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'table_oid must not be NULL';
     END IF;

@@ -85,6 +85,7 @@ DECLARE
     v_enforce_consistency_original boolean := enforce_consistency_with_primary_key;
     v_stable_cols_to_store name[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(table_oid, 'add_unique_key');
     RAISE DEBUG 'add_unique_key entry: table_oid=%, column_names=%, era_name=%, key_type=%', table_oid, column_names, era_name, key_type;
     -- If the parameter is NULL (the default), set it to true for natural keys and false otherwise.

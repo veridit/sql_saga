@@ -25,6 +25,7 @@ DECLARE
     range_notnull boolean;
     excluded_column_name name;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;

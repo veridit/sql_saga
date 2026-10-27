@@ -1,0 +1,6 @@
+\set ECHO none
+nested TRUNCATE through predicate | 42501: __internal_truncate_as_owner may only be called by a management worker, an event worker, or the current caller
+nested API worker through predicate | 42501: __internal_entry_guard may only be called by a management worker, an event worker, or the current caller
+nested FK validator through predicate | 42501: __internal_regular_fk_initial_check may only be called by a management worker, an event worker, or the current caller
+victim rows and catalogs preserved | true
+public predicated API positive control | true

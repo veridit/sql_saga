@@ -158,14 +158,15 @@ STABLE
 SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, pg_temp
 AS $__internal_history_policy_sync_active$
-    SELECT EXISTS (
+    SELECT CASE WHEN sql_saga.__internal_entry_guard() THEN EXISTS (
         SELECT 1
         FROM sql_saga.history_policy_sync_guard AS g
         JOIN pg_catalog.pg_class AS c ON c.oid = table_oid
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
         WHERE g.backend_pid = pg_catalog.pg_backend_pid()
           AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
-          AND (g.base_schema, g.base_table) = (n.nspname, c.relname));
+          AND (g.base_schema, g.base_table) = (n.nspname, c.relname)
+    ) ELSE false END;
 $__internal_history_policy_sync_active$;
 REVOKE ALL ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) FROM PUBLIC;
 
@@ -336,6 +337,7 @@ DECLARE
     reader_qual text;
     base_select_qual text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     SELECT * INTO fam FROM sql_saga.__internal_history_family(table_oid) AS f WHERE f.base_oid = table_oid;
     IF NOT FOUND THEN
         RETURN;
@@ -518,6 +520,7 @@ SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, pg_temp
 AS $sync_history_policies$
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF NOT EXISTS (SELECT FROM sql_saga.__internal_history_family(table_oid) AS f WHERE f.base_oid = table_oid) THEN
         RAISE EXCEPTION 'table % does not have SYSTEM VERSIONING', table_oid;
     END IF;
@@ -542,6 +545,7 @@ AS $sync_all_history_policies$
 DECLARE
     table_oid regclass;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     SELECT c.oid::regclass INTO table_oid
     FROM sql_saga.system_versioning AS sv
     JOIN pg_catalog.pg_class AS c ON c.oid = pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)::regclass

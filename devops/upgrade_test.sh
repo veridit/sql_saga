@@ -1873,6 +1873,14 @@ SELECT 1/0;" | sql "$ACL10_PROBE" | grep -m1 '^ERROR')"
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
 acl_entries "$OLD" >"$WORK/acl_entries.before"
+# The 1.4 default-ACL repair grants these existing entry points only when their pre-update ACL is the applicable
+# default. Capture that exact set before the update so a site REVOKE is never mistaken for a new PUBLIC grant.
+if [ "$NEW_VERSION" = 1.4 ]; then
+    printf '%s\n' "SELECT format('fn %s|PUBLIC|EXECUTE', p.oid::regprocedure) FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid=p.pronamespace WHERE n.nspname='sql_saga' AND p.oid IN (to_regprocedure('sql_saga.drop_protection()'), to_regprocedure('sql_saga.health_checks()'), to_regprocedure('sql_saga.rename_following()'), to_regprocedure('sql_saga.sync_history_policies(regclass)')) AND (p.proacl IS NULL OR p.proacl=acldefault('f',p.proowner) OR EXISTS (SELECT 1 FROM pg_default_acl AS d WHERE d.defaclrole=p.proowner AND d.defaclnamespace IN (0,n.oid) AND d.defaclobjtype='f' AND d.defaclacl=p.proacl)) ORDER BY 1;" \
+        | sql "$OLD" >"$WORK/default_event_entries.before"
+else
+    : >"$WORK/default_event_entries.before"
+fi
 # Catalogued regular-FK helpers of the baseline, as acl_entries prints them (oid::regprocedure text).
 # One row per helper through sql (q keeps only the first line).
 printf '%s\n' "SELECT DISTINCT to_regprocedure(fk.fk_helper_function)::text FROM sql_saga.foreign_keys AS fk WHERE fk.type = 'regular_to_temporal' AND to_regprocedure(fk.fk_helper_function) IS NOT NULL ORDER BY 1;" | sql "$OLD" >"$WORK/fk_helpers.before"
@@ -3405,8 +3413,8 @@ else
         NEW_ROUTINES="sql_saga.regular_fk_check_c() sql_saga.__internal_current_view_clock(oid) sql_saga.__internal_current_view_now(oid,regtype)"
         [ "$BASELINE_VERSION" = 1.3 ] && NEW_ROUTINES=""
         [ "$BASELINE_VERSION" = 1.1 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.sync_all_history_policies()"
-        # 1.4 adds the TRUNCATE check of regular foreign keys (granted to PUBLIC, as the other RI trigger functions).
-        [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c()"
+        # 1.4 adds the TRUNCATE check and two caller-recording public event entry points.
+        [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c() sql_saga.record_alter_function_resolved() sql_saga.refuse_managed_relation_identity_change()"
         # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
         # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
         if [ "$NEW_VERSION" = 1.4 ]; then
@@ -3424,6 +3432,22 @@ else
                 echo "$entry" >>"$WORK/acl_entries.expected"
             fi
         done
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            grep -qFx "$entry" "$WORK/acl_entries.expected" || echo "$entry" >>"$WORK/acl_entries.expected"
+        done <"$WORK/default_event_entries.before"
+        # The 1.4 repair grants every existing generated synchronization function to PUBLIC, exactly as a fresh
+        # install does. Enumerate those functions from the catalog; this is an explicit addition, not an inference
+        # from an absent ACL row. Existing PUBLIC entries are kept only once.
+        if [ "$NEW_VERSION" = 1.4 ]; then
+            printf '%s\n' "SELECT DISTINCT format('sql_saga.%I()', e.sync_temporal_trg_function_name) FROM sql_saga.era AS e WHERE e.sync_temporal_trg_function_name IS NOT NULL AND to_regprocedure(format('sql_saga.%I()', e.sync_temporal_trg_function_name)) IS NOT NULL ORDER BY 1;" \
+                | sql "$OLD" >"$WORK/sync_functions.after"
+            while IFS= read -r routine; do
+                [ -n "$routine" ] || continue
+                entry="fn $routine|PUBLIC|EXECUTE"
+                grep -qFx "$entry" "$WORK/acl_entries.expected" || echo "$entry" >>"$WORK/acl_entries.expected"
+            done <"$WORK/sync_functions.after"
+        fi
         # Regular-FK helpers the Design B conversion actually dropped: only catalogued baseline helper signatures that
         # no longer exist leave the expected set. A helper that still exists (kept, e.g. with dependents) keeps its ACL.
         : >"$WORK/fk_helpers.dropped"

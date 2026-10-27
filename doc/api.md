@@ -330,7 +330,7 @@ SECURITY INVOKER
 
 ### add_foreign_key
 
-> Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name. The two column arrays are paired positionally. The referenced columns may be listed in another order than the registered unique key, provided they name the same set; both arrays are normalized together to the unique key's order, preserving each child-to-parent pairing. When the optional automatic child index cannot be created because the caller lacks CREATE on the child schema, it is skipped with a warning and an exact CREATE INDEX hint.
+> Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name. The two column arrays are paired positionally. The referenced columns may be listed in another order than the registered unique key, provided they name the same set; both arrays are normalized together to the unique key's order, preserving each child-to-parent pairing.
 
 ```sql
 FUNCTION add_foreign_key(
@@ -350,7 +350,7 @@ SECURITY INVOKER
 
 ### add_regular_foreign_key
 
-> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000. delete_action NO ACTION (the default) and RESTRICT refuse deleting the last parent row that has a referenced key; CASCADE (since 1.4) deletes the child rows of that key instead. Deleting one timeline row while another row of the same key remains never cascades, and temporal_merge reshaping a timeline does not either. SET NULL and SET DEFAULT, and every update_action other than NO ACTION and RESTRICT, are refused with SQLSTATE 0A000. If the optional automatic child index cannot be created because the caller lacks CREATE on the child schema, it is skipped with a warning and an exact CREATE INDEX hint.
+> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history. Since 1.3 the referencing-side check is a DEFERRABLE INITIALLY IMMEDIATE constraint trigger; fk_check_constraint names that trigger and its constraint, not a CHECK expression. fk_helper_function remains in the signature for call compatibility but must be NULL: no helper function is created, and an explicit one is refused with SQLSTATE 0A000. MATCH SIMPLE and MATCH FULL are supported; MATCH PARTIAL is refused with SQLSTATE 0A000. delete_action NO ACTION (the default) and RESTRICT refuse deleting the last parent row that has a referenced key; CASCADE (since 1.4) deletes the child rows of that key instead. Deleting one timeline row while another row of the same key remains never cascades, and temporal_merge reshaping a timeline does not either. SET NULL and SET DEFAULT, and every update_action other than NO ACTION and RESTRICT, are refused with SQLSTATE 0A000.
 
 ```sql
 FUNCTION add_regular_foreign_key(
@@ -372,7 +372,7 @@ SECURITY INVOKER
 
 ### add_temporal_foreign_key
 
-> Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table. If the optional automatic child index cannot be created because the caller lacks CREATE on the child schema, it is skipped with a warning and an exact CREATE INDEX hint.
+> Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.
 
 ```sql
 FUNCTION add_temporal_foreign_key(
@@ -707,6 +707,24 @@ FUNCTION get_allen_relation(
     y_from anycompatible,
     y_until anycompatible
 ) RETURNS sql_saga.allen_interval_relation
+SECURITY INVOKER
+```
+
+### record_alter_function_resolved
+
+> An event trigger function that records ALTER FUNCTION or ALTER ROUTINE targets for generated SYSTEM VERSIONING functions.
+
+```sql
+FUNCTION record_alter_function_resolved() RETURNS event_trigger
+SECURITY INVOKER
+```
+
+### refuse_managed_relation_identity_change
+
+> An event trigger function that protects managed relation identity changes and records managed-view shape changes.
+
+```sql
+FUNCTION refuse_managed_relation_identity_change() RETURNS event_trigger
 SECURITY INVOKER
 ```
 

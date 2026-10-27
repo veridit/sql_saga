@@ -100,6 +100,56 @@ BEGIN
 END;
 $grant_sync_functions$;
 
+/* Fresh installations explicitly make these four entry points PUBLIC, including under hardened defaults. The
+ * update must reach the same state without replaying a site's custom ACL: only an unmodified default ACL is changed
+ * (NULL, acldefault, or the exact applicable pg_default_acl for the routine owner, global or schema-local). A custom
+ * REVOKE that differs from the applicable default is preserved. */
+DO $grant_public_event_entrypoints$
+DECLARE
+    r record;
+    n integer := 0;
+BEGIN
+    FOR r IN
+        SELECT p.oid::regprocedure AS routine
+        FROM pg_catalog.pg_proc AS p
+        JOIN pg_catalog.pg_namespace AS ns ON ns.oid = p.pronamespace
+        WHERE ns.nspname = 'sql_saga'
+          AND p.oid IN (
+              'sql_saga.drop_protection()'::regprocedure,
+              'sql_saga.health_checks()'::regprocedure,
+              'sql_saga.rename_following()'::regprocedure,
+              'sql_saga.sync_history_policies(regclass)'::regprocedure)
+          AND (p.proacl IS NULL
+               OR p.proacl = pg_catalog.acldefault('f', p.proowner)
+               OR EXISTS (
+                   SELECT 1
+                   FROM pg_catalog.pg_default_acl AS d
+                   WHERE d.defaclrole = p.proowner
+                     AND d.defaclnamespace IN (0, ns.oid)
+                     AND d.defaclobjtype = 'f'
+                     AND d.defaclacl = p.proacl))
+        ORDER BY p.oid::regprocedure::text
+    LOOP
+        EXECUTE pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', r.routine);
+        n := n + 1;
+    END LOOP;
+    IF n > 0 THEN
+        RAISE NOTICE 'sql_saga: Granted EXECUTE on % public event/API entry points to PUBLIC', n;
+    END IF;
+END;
+$grant_public_event_entrypoints$;
+
+/* The two C event bodies remain private. Rebind their event triggers only after all public trampolines and
+ * private workers have been declared, so an upgrade never leaves an active trigger without its worker. */
+DROP EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change;
+DROP EVENT TRIGGER sql_saga_record_alter_function_resolved;
+CREATE EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ON ddl_command_start
+    WHEN TAG IN ('ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA')
+    EXECUTE PROCEDURE sql_saga.refuse_managed_relation_identity_change();
+CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start
+    WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE')
+    EXECUTE PROCEDURE sql_saga.record_alter_function_resolved();
+
 DO $create_regular_fk_truncate_triggers$
 DECLARE
     fk record;

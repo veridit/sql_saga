@@ -8,6 +8,7 @@ $function$
 DECLARE
     resolved text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     /* Every start invocation replaces any prior statement's consumed value. */
     IF function_identity IS NULL THEN
         PERFORM set_config('sql_saga.alter_function_resolved', '', true);

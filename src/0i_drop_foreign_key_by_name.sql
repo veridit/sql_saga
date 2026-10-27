@@ -24,6 +24,7 @@ DECLARE
     fk_table_name name;
     native_constraint_attributable boolean;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL AND key_name IS NULL THEN
         RAISE EXCEPTION 'no table or key name specified';
     END IF;
@@ -223,5 +224,6 @@ CREATE FUNCTION sql_saga.__api_drop_foreign_key_by_name(
 AS
 $function$
     /* As ALTER TABLE ... DROP CONSTRAINT: the caller must own the referencing table (also when found by name). */
-    SELECT sql_saga.__internal_drop_foreign_key_by_name(table_oid, key_name, drop_index, require_owner => true);
+    SELECT sql_saga.__internal_drop_foreign_key_by_name(table_oid, key_name, drop_index, require_owner => true)
+    WHERE sql_saga.__internal_entry_guard();
 $function$;
