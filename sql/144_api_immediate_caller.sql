@@ -145,7 +145,7 @@ RESET ROLE;
 SELECT p.oid::regprocedure::text || ' | PUBLIC ' || CASE WHEN has_function_privilege('public', p.oid, 'EXECUTE') THEN 'yes' ELSE 'no' END
 FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
 WHERE n.nspname = 'sql_saga' AND p.prosecdef
-ORDER BY 1;
+ORDER BY p.oid::regprocedure::text COLLATE "C";
 
 SELECT ARRAY(
     SELECT p.oid::regprocedure::text

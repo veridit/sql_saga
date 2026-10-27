@@ -33,13 +33,13 @@ sql_saga.__api_add_unique_key(regclass,name[],name,sql_saga.unique_key_type,bool
 sql_saga.__api_drop_current_view(regclass,name,sql_saga.drop_behavior) | PUBLIC no
 sql_saga.__api_drop_era(regclass,name,sql_saga.drop_behavior,boolean) | PUBLIC no
 sql_saga.__api_drop_for_portion_of_view(regclass,name,sql_saga.drop_behavior,boolean) | PUBLIC no
-sql_saga.__api_drop_foreign_key_by_name(regclass,name,boolean) | PUBLIC no
 sql_saga.__api_drop_foreign_key(regclass,name[],name,sql_saga.drop_behavior,boolean) | PUBLIC no
+sql_saga.__api_drop_foreign_key_by_name(regclass,name,boolean) | PUBLIC no
 sql_saga.__api_drop_synchronize_temporal_columns_trigger(regclass,name) | PUBLIC no
 sql_saga.__api_drop_system_time_era(regclass,sql_saga.drop_behavior,boolean) | PUBLIC no
 sql_saga.__api_drop_system_versioning(regclass,sql_saga.drop_behavior,boolean) | PUBLIC no
-sql_saga.__api_drop_unique_key_by_name(regclass,name,sql_saga.drop_behavior,boolean) | PUBLIC no
 sql_saga.__api_drop_unique_key(regclass,name[],name,sql_saga.drop_behavior,boolean) | PUBLIC no
+sql_saga.__api_drop_unique_key_by_name(regclass,name,sql_saga.drop_behavior,boolean) | PUBLIC no
 sql_saga.__api_rebuild_system_versioning_views(regclass,name[]) | PUBLIC no
 sql_saga.__api_set_era_ephemeral_columns(regclass,name,name[]) | PUBLIC no
 sql_saga.__api_set_system_time_era_excluded_columns(regclass,name[]) | PUBLIC no

@@ -40,16 +40,19 @@ SELECT 'writer has USAGE on sql_saga | ' || has_schema_privilege('hs_writer', 's
 SELECT 'writer has USAGE on sql_saga | ' || has_schema_privilege('hs_writer', 'sql_saga', 'USAGE');
 
 \echo '--- child insert, fresh session'
-\c - hs_writer
+\c - :test_superuser
+SET ROLE hs_writer;
 \set VERBOSITY terse
 INSERT INTO hs.note VALUES (1, 1);
 SELECT 'child insert with a present key | ok';
-\c - hs_writer
+\c - :test_superuser
+SET ROLE hs_writer;
 \set VERBOSITY terse
 INSERT INTO hs.note VALUES (2, 99);
 
 \echo '--- parent delete with cascade, fresh session'
-\c - hs_writer
+\c - :test_superuser
+SET ROLE hs_writer;
 \set VERBOSITY terse
 DELETE FROM hs.unit WHERE id = 1;
 SELECT 'notes left after deleting unit 1 | ' || count(*) FROM hs.note;
