@@ -22,6 +22,7 @@ DECLARE
     function_depends_on_public_view boolean;
     function_display text;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
@@ -101,7 +102,7 @@ BEGIN
     END IF;
 
     IF NOT is_dropped AND cleanup THEN
-        PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
+        PERFORM sql_saga.__api_drop_system_time_era(table_oid, drop_behavior, cleanup);
         IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
             /* Stands for DROP TABLE <history> (1.4, review round 3, Q1). */
             PERFORM sql_saga.__internal_require_drop(

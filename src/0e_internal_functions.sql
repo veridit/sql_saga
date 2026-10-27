@@ -75,10 +75,66 @@ BEGIN
         RETURN false;
     END IF;
 
-    -- For ALTER TABLE we must always proceed, because objid is unreliable.
-    -- Policy DDL is examined by health_checks, which looks up the policy's table.
+    -- ALTER TABLE needs relation normalization because its objid can name a constraint, trigger, index,
+    -- or policy rather than the base relation. Unknown or empty event payloads remain conservative.
     IF 'ALTER TABLE' = ANY(tags) OR 'CREATE POLICY' = ANY(tags) OR 'ALTER POLICY' = ANY(tags) THEN
-        RETURN true;
+        IF NOT EXISTS (SELECT FROM pg_event_trigger_ddl_commands()) THEN
+            RETURN true;
+        END IF;
+        IF EXISTS (SELECT FROM pg_event_trigger_ddl_commands() AS ev WHERE ev.objid = 0) THEN
+            RETURN true;
+        END IF;
+        RETURN EXISTS (
+            WITH event_relations AS (
+                SELECT ev.objid AS rel_oid
+                FROM pg_event_trigger_ddl_commands() AS ev
+                WHERE ev.classid = 'pg_catalog.pg_class'::regclass
+                UNION
+                SELECT c.conrelid
+                FROM pg_event_trigger_ddl_commands() AS ev
+                JOIN pg_catalog.pg_constraint AS c ON c.oid = ev.objid
+                WHERE ev.classid = 'pg_catalog.pg_constraint'::regclass
+                UNION
+                SELECT t.tgrelid
+                FROM pg_event_trigger_ddl_commands() AS ev
+                JOIN pg_catalog.pg_trigger AS t ON t.oid = ev.objid
+                WHERE ev.classid = 'pg_catalog.pg_trigger'::regclass
+                UNION
+                SELECT i.indrelid
+                FROM pg_event_trigger_ddl_commands() AS ev
+                JOIN pg_catalog.pg_index AS i ON i.indexrelid = ev.objid
+                WHERE ev.classid = 'pg_catalog.pg_class'::regclass
+                UNION
+                SELECT p.polrelid
+                FROM pg_event_trigger_ddl_commands() AS ev
+                JOIN pg_catalog.pg_policy AS p ON p.oid = ev.objid
+                WHERE ev.classid = 'pg_catalog.pg_policy'::regclass
+            )
+            SELECT 1
+            FROM event_relations AS er
+            JOIN pg_catalog.pg_class AS c ON c.oid = er.rel_oid
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE EXISTS (SELECT 1 FROM sql_saga.era AS e
+                          WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname)
+                             OR (e.audit_schema_name, e.audit_table_name) = (n.nspname, c.relname))
+               OR EXISTS (SELECT 1 FROM sql_saga.system_time_era AS ste
+                          WHERE (ste.table_schema, ste.table_name) = (n.nspname, c.relname))
+               OR EXISTS (SELECT 1 FROM sql_saga.unique_keys AS uk
+                          WHERE (uk.table_schema, uk.table_name) = (n.nspname, c.relname))
+               OR EXISTS (SELECT 1 FROM sql_saga.foreign_keys AS fk
+                          WHERE (fk.table_schema, fk.table_name) = (n.nspname, c.relname))
+               OR EXISTS (SELECT 1 FROM sql_saga.updatable_view AS uv
+                          WHERE (uv.table_schema, uv.table_name) = (n.nspname, c.relname)
+                             OR (uv.view_schema, uv.view_name) = (n.nspname, c.relname))
+               OR EXISTS (SELECT 1 FROM sql_saga.system_versioning AS sv
+                          WHERE (sv.table_schema, sv.table_name) = (n.nspname, c.relname)
+                             OR (sv.history_schema_name, sv.history_table_name) = (n.nspname, c.relname)
+                             OR (sv.view_schema_name, sv.view_table_name) = (n.nspname, c.relname)
+                             OR (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)) = (n.nspname, c.relname))
+               -- An ALTER can reach managed descendants or ancestors even when this relation is unmanaged.
+               OR EXISTS (SELECT 1 FROM pg_catalog.pg_inherits AS i
+                          WHERE i.inhparent = er.rel_oid OR i.inhrelid = er.rel_oid)
+        );
     END IF;
 
     -- For other commands (e.g., CREATE TABLE), we can safely use objid to

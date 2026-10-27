@@ -1,0 +1,4 @@
+\set ECHO none
+regular era named system_time, cleanup false | true
+regular era named system_time, cleanup true | true
+integrity after regular era name | ok

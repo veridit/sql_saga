@@ -15,6 +15,8 @@ GIT=${GIT:-git}
 MAKE=${MAKE:-make}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FIXTURE="$ROOT/devops/drop_api_performance_fixture.sql"
+CURRENT_VERSION=$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$ROOT/sql_saga.control")
+[ -n "$CURRENT_VERSION" ] || { echo "HARNESS ERROR: cannot determine current extension version" >&2; exit 2; }
 SCRATCH_BASE=${JCODE_SCRATCH_DIR:-${TMPDIR:-/tmp}}
 WORK=$(mktemp -d "$SCRATCH_BASE/sql_saga_drop_perf.XXXXXX") || exit 2
 PGDATA="$WORK/pgdata"
@@ -117,6 +119,7 @@ SQL
         grep -qxF "$1" "$check" || { cat "$check" >&2; harness_error "$database: expected '$1'"; }
     }
     expect_line "extversion=$version"
+    expect_line "native_version=$version"
     expect_line "available_comment=$(build_marker "$label")"
     expect_line "extension_comment=$(build_marker "$label")"
     expect_line "probin=sql_saga,sql_saga_native"
@@ -192,9 +195,9 @@ run_logged "$WORK/initdb.log" "$INITDB" -D "$PGDATA" --no-locale --encoding=UTF8
 SERVER_STARTED=1
 
 setup_database perf_v11 "$WORK/install/v11" 1.1
-setup_database perf_current "$WORK/install/current" 1.2
+setup_database perf_current "$WORK/install/current" "$CURRENT_VERSION"
 assert_private_build perf_v11 "$WORK/install/v11" v11 1.1
-assert_private_build perf_current "$WORK/install/current" current 1.2
+assert_private_build perf_current "$WORK/install/current" current "$CURRENT_VERSION"
 
 warm=1
 while [ "$warm" -le 3 ]; do

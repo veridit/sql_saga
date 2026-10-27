@@ -12,7 +12,11 @@ DECLARE
     is_dropped boolean;
     table_schema name;
     table_name name;
+    restrict_violation text;
+    system_time_era_row sql_saga.system_time_era;
+    system_time_era_present boolean := false;
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
@@ -47,15 +51,41 @@ BEGIN
         RETURN false;
     END IF;
 
-    /* If this is a system_time era, get rid of the triggers */
-    DECLARE
-        system_time_era_row sql_saga.system_time_era;
-    BEGIN
+    /* system_time has no synchronized-column trigger. Remove its era row before the managed DDL so
+     * health_checks need not revalidate an era that is already being torn down. RESTRICT reasons are
+     * captured first and raised at the original point below; any refusal rolls back the whole operation. */
+    IF era_name = 'system_time' AND drop_behavior = 'RESTRICT'
+       AND EXISTS (SELECT FROM sql_saga.system_time_era AS ste
+                   WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)) THEN
+        SELECT CASE
+            WHEN EXISTS (SELECT FROM sql_saga.unique_keys AS uk
+                         WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name)) THEN 'unique'
+            WHEN EXISTS (SELECT FROM sql_saga.foreign_keys AS fk
+                         WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name)) THEN 'foreign'
+            WHEN EXISTS (SELECT FROM sql_saga.updatable_view AS v
+                         WHERE (v.table_schema, v.table_name, v.era_name) = (table_schema, table_name, era_name)) THEN 'view'
+            WHEN EXISTS (SELECT FROM sql_saga.system_versioning AS sv
+                         WHERE (sv.table_schema, sv.table_name, sv.era_name) = (table_schema, table_name, era_name)) THEN 'system'
+        END INTO restrict_violation;
         DELETE FROM sql_saga.system_time_era AS ste
         WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)
         RETURNING * INTO system_time_era_row;
+        system_time_era_present := FOUND;
+        DELETE FROM sql_saga.era AS p
+        WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+    END IF;
 
-        IF FOUND AND NOT is_dropped THEN
+    /* If this is a system_time era, get rid of the triggers */
+    DECLARE
+    BEGIN
+        IF NOT system_time_era_present THEN
+            DELETE FROM sql_saga.system_time_era AS ste
+            WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)
+            RETURNING * INTO system_time_era_row;
+            system_time_era_present := FOUND;
+        END IF;
+
+        IF system_time_era_present AND NOT is_dropped THEN
             IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint)); RAISE NOTICE 'sql_saga: Dropped constraint "%" on table "%" for system time era', quote_ident(system_time_era_row.infinity_check_constraint), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
             IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid)); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.generated_always_trigger), sql_saga.__internal_notice_name(table_schema, table_name); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
             IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN PERFORM sql_saga.__internal_execute_as_caller(format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid)); RAISE NOTICE 'sql_saga: Dropped trigger "%" on table "%" for system time era', quote_ident(system_time_era_row.write_history_trigger), sql_saga.__internal_notice_name(table_schema, table_name); END IF;
@@ -63,7 +93,18 @@ BEGIN
         END IF;
     END;
 
+    IF restrict_violation = 'unique' THEN
+        RAISE EXCEPTION 'era % is part of a UNIQUE or PRIMARY KEY', era_name;
+    ELSIF restrict_violation = 'foreign' THEN
+        RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
+    ELSIF restrict_violation = 'view' THEN
+        RAISE EXCEPTION 'era % is used by an updatable view', era_name;
+    ELSIF restrict_violation = 'system' THEN
+        RAISE EXCEPTION 'era % has SYSTEM VERSIONING, use drop_system_versioning() instead', era_name;
+    END IF;
+
     IF drop_behavior = 'RESTRICT' THEN
+        IF NOT system_time_era_present THEN
         /* Check for UNIQUE or PRIMARY KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.unique_keys AS uk
@@ -104,21 +145,27 @@ BEGIN
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
-
-        /* Delete bounds check constraint (NOT isempty(range)). */
-        IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint)); END IF;
         END IF;
 
-        /* Delete boundary check constraint (from < until). */
-        IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
-            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint)); END IF;
-        END IF;
-
-        /* Drop column default if it was set */
-        IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
-            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name));
-        END IF;
+        /* Delete bounds and boundary constraints and any synchronized default in one native ALTER TABLE. */
+        DECLARE
+            alter_clauses text[] := '{}';
+        BEGIN
+            IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL
+               AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN
+                alter_clauses := alter_clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
+            END IF;
+            IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL
+               AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN
+                alter_clauses := alter_clauses || format('DROP CONSTRAINT %I', era_row.boundary_check_constraint);
+            END IF;
+            IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+                alter_clauses := alter_clauses || format('ALTER COLUMN %I DROP DEFAULT', era_row.valid_until_column_name);
+            END IF;
+            IF coalesce(array_length(alter_clauses, 1), 0) > 0 THEN
+                PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid, array_to_string(alter_clauses, ', ')));
+            END IF;
+        END;
 
         /* Delete columns if purging */
         IF NOT is_dropped AND cleanup THEN
@@ -171,20 +218,25 @@ BEGIN
     DELETE FROM sql_saga.era AS p
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
 
-    /* Delete bounds check constraint (NOT isempty(range)). */
-    IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */));
-    END IF;
-
-    /* Delete boundary check constraint (from < until). */
-    IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
-        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */));
-    END IF;
-
-    /* Drop column default if it was set */
-    IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
-        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name));
-    END IF;
+    /* Delete bounds and boundary constraints and any synchronized default in one native ALTER TABLE. */
+    DECLARE
+        alter_clauses text[] := '{}';
+    BEGIN
+        IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL
+           AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN
+            alter_clauses := alter_clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
+        END IF;
+        IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL
+           AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN
+            alter_clauses := alter_clauses || format('DROP CONSTRAINT %I', era_row.boundary_check_constraint);
+        END IF;
+        IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+            alter_clauses := alter_clauses || format('ALTER COLUMN %I DROP DEFAULT', era_row.valid_until_column_name);
+        END IF;
+        IF coalesce(array_length(alter_clauses, 1), 0) > 0 THEN
+            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %s %s', table_oid, array_to_string(alter_clauses, ', ')));
+        END IF;
+    END;
 
     /* Delete columns if purging */
     IF NOT is_dropped AND cleanup THEN

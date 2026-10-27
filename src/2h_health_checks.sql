@@ -16,6 +16,7 @@ DECLARE
     alter_function_resolved text;
     affected_base_oids oid[];
 BEGIN
+    PERFORM sql_saga.__internal_entry_guard();
     IF tg_tag IN ('ALTER FUNCTION', 'ALTER ROUTINE') THEN
         alter_function_resolved := current_setting('sql_saga.alter_function_resolved', true);
         /* Consume the statement snapshot before doing any comparison or raising. */
@@ -408,7 +409,6 @@ RETURNS TABLE(
     gated_view_attributable boolean)
 LANGUAGE sql
 STABLE
-SET search_path = sql_saga, pg_catalog
 AS $__internal_system_versioning_member_attribution$
     WITH family AS (
         SELECT base.relowner,
@@ -430,50 +430,43 @@ AS $__internal_system_versioning_member_attribution$
           ON gated_view.relnamespace = hn.oid
          AND gated_view.relname = sql_saga.__internal_history_gated_name(sv.history_table_name)
         WHERE base.oid = table_oid
-    ), function_objects AS (
-        SELECT q.role, q.body, p.*
-        FROM family AS f
-        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
-        LEFT JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(q.identity)
-    ), function_acl AS (
-        SELECT fo.oid,
-               pg_catalog.bool_and(x.grantee IN (0, fo.proowner)
-                   AND (x.grantee <> 0 OR x.privilege_type = 'EXECUTE')) AS valid,
-               pg_catalog.bool_or(x.grantee = 0 AND x.privilege_type = 'EXECUTE') AS public_execute
-        FROM function_objects AS fo
-        LEFT JOIN LATERAL pg_catalog.aclexplode(
-            coalesce(fo.proacl, pg_catalog.acldefault('f', fo.proowner))) AS x ON true
-        WHERE fo.oid IS NOT NULL
-        GROUP BY fo.oid
-    ), function_dependencies AS (
-        SELECT d.objid,
-               pg_catalog.count(*) AS dependency_count,
-               pg_catalog.bool_or(d.refobjid = f.public_view_type) AS depends_on_public_view
-        FROM family AS f
-        JOIN pg_catalog.pg_depend AS d
-          ON d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
-         AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
-         AND d.deptype = 'n'
-        JOIN function_objects AS fo ON fo.oid = d.objid
-        GROUP BY d.objid
     ), functions AS (
-        SELECT fo.role,
+        SELECT q.role,
                fo.oid IS NOT NULL
                AND fo.prokind = 'f'
                AND fo.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
                AND fo.prorettype = f.public_view_type AND fo.proretset AND fo.provolatile = 's'
                AND NOT fo.proisstrict AND NOT fo.prosecdef AND NOT fo.proleakproof
                AND fo.proparallel = 'u' AND fo.prosupport = 0 AND fo.procost = 100 AND fo.prorows = 1000
-               AND fo.proconfig IS NULL AND fo.proowner = f.relowner AND fo.prosrc = fo.body
+               AND fo.proconfig IS NULL AND fo.proowner = f.relowner AND fo.prosrc = q.body
                AND fo.prosqlbody IS NULL AND fo.proargnames IS NULL AND fo.proallargtypes IS NULL
                AND fo.proargmodes IS NULL
-               AND fo.proargtypes = CASE fo.role WHEN 'as_of' THEN '1184'::pg_catalog.oidvector ELSE '1184 1184'::pg_catalog.oidvector END
-               AND acl.valid AND acl.public_execute
-               AND dep.dependency_count = 1 AND dep.depends_on_public_view AS attributable
+               AND fo.proargtypes = CASE q.role WHEN 'as_of' THEN '1184'::pg_catalog.oidvector ELSE '1184 1184'::pg_catalog.oidvector END
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(fo.proacl, pg_catalog.acldefault('f', fo.proowner))) AS x
+                   WHERE x.grantee NOT IN (0, fo.proowner)
+                      OR (x.grantee = 0 AND x.privilege_type <> 'EXECUTE'))
+               AND EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(fo.proacl, pg_catalog.acldefault('f', fo.proowner))) AS x
+                   WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE')
+               AND 1 = (
+                   SELECT pg_catalog.count(*)
+                   FROM pg_catalog.pg_depend AS d
+                   WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+                     AND d.objid = fo.oid
+                     AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                     AND d.deptype = 'n')
+               AND EXISTS (
+                   SELECT 1
+                   FROM pg_catalog.pg_depend AS d
+                   WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+                     AND d.objid = fo.oid
+                     AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                     AND d.refobjid = f.public_view_type
+                     AND d.deptype = 'n') AS attributable
         FROM family AS f
-        CROSS JOIN function_objects AS fo
-        LEFT JOIN function_acl AS acl ON acl.oid = fo.oid
-        LEFT JOIN function_dependencies AS dep ON dep.objid = fo.oid
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        LEFT JOIN LATERAL (SELECT p.* FROM pg_catalog.pg_proc AS p WHERE p.oid = pg_catalog.to_regprocedure(q.identity) LIMIT 1) AS fo ON true
     ), view_objects AS (
         SELECT 'public'::text AS role, v.*, f.relowner AS base_owner,
                f.history_oid, f.gated_view_oid
@@ -481,39 +474,39 @@ AS $__internal_system_versioning_member_attribution$
         UNION ALL
         SELECT 'gated', v.*, f.relowner, f.history_oid, f.gated_view_oid
         FROM family AS f JOIN pg_catalog.pg_class AS v ON v.oid = f.gated_view_oid
-    ), view_acl AS (
-        SELECT vo.oid,
-               pg_catalog.bool_and(x.grantee IN (0, vo.relowner)
-                   AND (x.grantee <> 0 OR x.privilege_type = 'SELECT')) AS valid,
-               pg_catalog.bool_or(x.grantee = 0 AND x.privilege_type = 'SELECT') AS public_select
-        FROM view_objects AS vo
-        LEFT JOIN LATERAL pg_catalog.aclexplode(
-            coalesce(vo.relacl, pg_catalog.acldefault('r', vo.relowner))) AS x ON true
-        GROUP BY vo.oid
-    ), view_dependencies AS (
-        SELECT vo.oid,
-               pg_catalog.bool_or(d.refobjid = table_oid) AS depends_on_base,
-               pg_catalog.bool_or(d.refobjid = vo.history_oid) AS depends_on_history,
-               pg_catalog.bool_or(d.refobjid = vo.gated_view_oid) AS depends_on_gated,
-               pg_catalog.bool_or(d.refobjid = 'sql_saga.__internal_deny_history(oid)'::pg_catalog.regprocedure) AS depends_on_deny
-        FROM view_objects AS vo
-        LEFT JOIN pg_catalog.pg_rewrite AS rw ON rw.ev_class = vo.oid
-        LEFT JOIN pg_catalog.pg_depend AS d
-          ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
-        GROUP BY vo.oid
     ), views AS (
         SELECT vo.role,
                vo.relkind = 'v' AND vo.relpersistence = 'p' AND vo.relowner = vo.base_owner
-               AND acl.valid AND acl.public_select
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(vo.relacl, pg_catalog.acldefault('r', vo.relowner))) AS x
+                   WHERE x.grantee NOT IN (0, vo.relowner)
+                      OR (x.grantee = 0 AND x.privilege_type <> 'SELECT'))
+               AND EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(vo.relacl, pg_catalog.acldefault('r', vo.relowner))) AS x
+                   WHERE x.grantee = 0 AND x.privilege_type = 'SELECT')
                AND CASE vo.role
                    WHEN 'public' THEN vo.reloptions = ARRAY['security_invoker=on']::text[]
-                       AND dep.depends_on_base AND dep.depends_on_history AND dep.depends_on_gated
-                   WHEN 'gated' THEN vo.reloptions IS NULL AND dep.depends_on_deny
+                       AND EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                           JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                           WHERE rw.ev_class = vo.oid AND d.refobjid = table_oid)
+                       AND EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                           JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                           WHERE rw.ev_class = vo.oid AND d.refobjid = vo.history_oid)
+                       AND EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                           JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                           WHERE rw.ev_class = vo.oid AND d.refobjid = vo.gated_view_oid)
+                   WHEN 'gated' THEN vo.reloptions IS NULL
+                       AND EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                           JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                           WHERE rw.ev_class = vo.oid
+                             AND d.refobjid = 'sql_saga.__internal_deny_history(oid)'::pg_catalog.regprocedure)
                    ELSE false
                END AS attributable
         FROM view_objects AS vo
-        LEFT JOIN view_acl AS acl ON acl.oid = vo.oid
-        LEFT JOIN view_dependencies AS dep ON dep.oid = vo.oid
     )
     SELECT coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'as_of'), false),
            coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'between'), false),
@@ -963,9 +956,9 @@ BEGIN
             ('sql_saga_drop_protection'::name, 'sql_drop'::name, NULL::text[], 'sql_saga.drop_protection'::text),
             ('sql_saga_health_checks', 'ddl_command_end', NULL, 'sql_saga.health_checks'),
             ('sql_saga_record_alter_function_resolved', 'ddl_command_start', ARRAY['ALTER FUNCTION', 'ALTER ROUTINE'],
-             'sql_saga.__internal_record_alter_function_resolved'),
+             'sql_saga.record_alter_function_resolved'),
             ('sql_saga_refuse_managed_relation_identity_change', 'ddl_command_start', ARRAY['ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA'],
-             'sql_saga.__internal_refuse_managed_relation_identity_change'),
+             'sql_saga.refuse_managed_relation_identity_change'),
             ('sql_saga_rename_following', 'ddl_command_end', NULL, 'sql_saga.rename_following')
         ) AS d (evtname, evtevent, evttags, evtfoid_text)
         LEFT JOIN pg_catalog.pg_event_trigger AS et ON et.evtname = d.evtname
