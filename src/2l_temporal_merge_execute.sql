@@ -747,6 +747,7 @@ BEGIN
         -- DELETE -> UPDATE -> INSERT order is critical for PostgreSQL 18 temporal FK compatibility.
         DECLARE
             v_deferrable_constraints text[];
+            v_restore_constraints text[];
             v_set_constraints_sql text;
             v_old_search_path TEXT;
         BEGIN
@@ -837,8 +838,11 @@ BEGIN
                     END IF;
 
                     -- Names are schema-qualified: SET CONSTRAINTS resolves a bare name through search_path.
-                    SELECT array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname))
-                    INTO v_deferrable_constraints
+                    SELECT array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname)),
+                           array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname))
+                               FILTER (WHERE c.oid <> ALL (COALESCE(NULLIF(current_setting(
+                                   'sql_saga.temporal_merge.commit_deferred_constraints', true), '')::oid[], '{}'::oid[])))
+                    INTO v_deferrable_constraints, v_restore_constraints
                     FROM pg_catalog.pg_constraint AS c
                     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
                     WHERE c.oid = ANY (v_intended);
@@ -1189,9 +1193,9 @@ BEGIN
                 WHEN OTHERS THEN
                     -- If an error occurs, ensure constraints and search_path are reset before re-raising.
                     IF v_old_search_path IS NOT NULL THEN
-                        IF v_deferrable_constraints IS NOT NULL THEN
+                        IF v_restore_constraints IS NOT NULL THEN
                             v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
-                                array_to_string(v_deferrable_constraints, ', ')
+                                array_to_string(v_restore_constraints, ', ')
                             );
                             IF v_log_execute THEN RAISE NOTICE '(%) Executing on error: %', v_log_id, v_set_constraints_sql; END IF;
                             EXECUTE v_set_constraints_sql;
@@ -1203,9 +1207,9 @@ BEGIN
 
             -- Restore constraints and search_path on successful completion.
             IF v_old_search_path IS NOT NULL THEN
-                IF v_deferrable_constraints IS NOT NULL THEN
+                IF v_restore_constraints IS NOT NULL THEN
                     v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
-                        array_to_string(v_deferrable_constraints, ', ')
+                        array_to_string(v_restore_constraints, ', ')
                     );
                     IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
                     EXECUTE v_set_constraints_sql;

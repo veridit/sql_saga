@@ -75,3 +75,110 @@ END;
 $procedure$;
 COMMENT ON PROCEDURE sql_saga.enable_temporal_triggers(VARIADIC regclass[]) IS
 'Re-enables all sql_saga-managed temporal foreign key triggers for the specified tables. This should be called at the end of an ETL batch transaction to restore integrity checks.';
+
+/* STATBUS-591 prototype. Native constraint queues own all validation and error handling. */
+CREATE PROCEDURE sql_saga.defer_temporal_checks(VARIADIC table_oids regclass[])
+LANGUAGE plpgsql SECURITY INVOKER
+SET search_path = pg_catalog, sql_saga, pg_temp
+AS $defer_temporal_checks$
+DECLARE
+    v_intended oid[];
+    v_registered oid[];
+    v_names text;
+    v_invalid text;
+    v_conflict record;
+BEGIN
+    IF table_oids IS NULL OR pg_catalog.array_position(table_oids, NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: defer_temporal_checks requires non-NULL table names'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF EXISTS (SELECT FROM pg_catalog.unnest(table_oids) AS requested(table_oid)
+               WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = requested.table_oid)) THEN
+        RAISE EXCEPTION 'sql_saga: defer_temporal_checks names a table that no longer exists'
+            USING ERRCODE = 'undefined_table';
+    END IF;
+
+    WITH related AS (
+        SELECT fk.*, child.oid AS child_oid, parent.oid AS parent_oid
+        FROM sql_saga.foreign_keys AS fk
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        JOIN pg_catalog.pg_namespace AS cn ON cn.nspname = fk.table_schema
+        JOIN pg_catalog.pg_class AS child ON (child.relnamespace, child.relname) = (cn.oid, fk.table_name)
+        JOIN pg_catalog.pg_namespace AS pn ON pn.nspname = uk.table_schema
+        JOIN pg_catalog.pg_class AS parent ON (parent.relnamespace, parent.relname) = (pn.oid, uk.table_name)
+        WHERE child.oid = ANY (table_oids::oid[]) OR parent.oid = ANY (table_oids::oid[])
+    ), expected AS (
+        SELECT r.child_oid AS table_oid, r.foreign_key_name AS constraint_name, 'f'::"char" AS kind,
+               NULL::oid AS function_oid
+        FROM related AS r WHERE r.type = 'temporal_to_temporal'
+        UNION ALL
+        SELECT e.table_oid, e.constraint_name, 't'::"char", e.function_oid
+        FROM related AS r
+        CROSS JOIN LATERAL (VALUES
+            (r.child_oid, r.fk_check_constraint, 'sql_saga.regular_fk_check_c()'::regprocedure::oid),
+            (r.parent_oid, r.uk_update_trigger, 'sql_saga.uk_update_check_c()'::regprocedure::oid),
+            (r.parent_oid, r.uk_delete_trigger, 'sql_saga.uk_delete_check_c()'::regprocedure::oid)
+        ) AS e(table_oid, constraint_name, function_oid)
+        WHERE r.type = 'regular_to_temporal'
+    )
+    SELECT pg_catalog.array_agg(DISTINCT c.oid),
+           pg_catalog.min(pg_catalog.format('%s constraint %I', e.table_oid::regclass, e.constraint_name))
+               FILTER (WHERE c.oid IS NULL OR NOT c.condeferrable
+                       OR (e.kind = 't' AND NOT EXISTS (
+                           SELECT FROM pg_catalog.pg_trigger AS t
+                           WHERE t.tgconstraint = c.oid AND t.tgrelid = e.table_oid
+                             AND t.tgname = e.constraint_name AND t.tgfoid = e.function_oid
+                             AND t.tgenabled IN ('O', 'A')))
+                       OR (e.kind = 'f' AND EXISTS (
+                           SELECT FROM pg_catalog.pg_trigger AS t
+                           WHERE t.tgconstraint = c.oid AND t.tgenabled NOT IN ('O', 'A'))))
+    INTO v_intended, v_invalid
+    FROM expected AS e
+    LEFT JOIN pg_catalog.pg_constraint AS c
+      ON (c.conrelid, c.conname, c.contype) = (e.table_oid, e.constraint_name, e.kind);
+
+    IF v_invalid IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: cannot defer %: expected an enabled, deferrable foreign-key check', v_invalid
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Restore the managed constraint or trigger definition before deferring checks.';
+    END IF;
+    IF v_intended IS NULL THEN
+        RETURN;
+    END IF;
+
+    -- PostgreSQL addresses constraint names within a schema, not individual OIDs. Never widen the selection.
+    SELECT pg_catalog.format('%I.%I', n.nspname, c.conname) AS constraint_name,
+           other.conrelid::regclass AS other_table
+    INTO v_conflict
+    FROM pg_catalog.pg_constraint AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+    JOIN pg_catalog.pg_constraint AS other
+      ON (other.connamespace, other.conname) = (c.connamespace, c.conname)
+     AND other.oid <> ALL (v_intended)
+    WHERE c.oid = ANY (v_intended)
+    ORDER BY c.oid, other.oid LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'sql_saga: cannot defer constraint %: that name also selects a constraint on unselected table %',
+            v_conflict.constraint_name, v_conflict.other_table
+            USING ERRCODE = 'duplicate_object', HINT = 'Rename one of the constraints to make its schema-qualified name unique.';
+    END IF;
+
+    SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname), ', ')
+    INTO v_names
+    FROM pg_catalog.pg_constraint AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+    WHERE c.oid = ANY (v_intended);
+    EXECUTE pg_catalog.format('SET CONSTRAINTS %s DEFERRED', v_names);
+
+    -- SET LOCAL and native constraint modes both follow savepoints and transaction end. This registry is
+    -- only an executor checking-moment preference, never an authorization token or a way to skip validation.
+    v_registered := COALESCE(NULLIF(pg_catalog.current_setting('sql_saga.temporal_merge.commit_deferred_constraints', true), '')::oid[], '{}'::oid[]);
+    SELECT pg_catalog.array_agg(DISTINCT u.constraint_oid ORDER BY u.constraint_oid)
+    INTO v_registered
+    FROM pg_catalog.unnest(v_registered || v_intended) AS u(constraint_oid);
+    PERFORM pg_catalog.set_config('sql_saga.temporal_merge.commit_deferred_constraints', v_registered::text, true);
+END;
+$defer_temporal_checks$;
+GRANT EXECUTE ON PROCEDURE sql_saga.defer_temporal_checks(VARIADIC regclass[]) TO PUBLIC;
+COMMENT ON PROCEDURE sql_saga.defer_temporal_checks(VARIADIC regclass[]) IS
+'EXPERIMENTAL: defer enabled sql_saga foreign-key checks touching the given tables to transaction end, including across temporal_merge calls. Call inside BEGIN/COMMIT. Native PostgreSQL still validates at COMMIT or explicit SET CONSTRAINTS IMMEDIATE. TRUNCATE protection and synchronized columns remain immediate. No shared-table DDL or elevation. No effect in other sessions. Not part of released 1.4.';
