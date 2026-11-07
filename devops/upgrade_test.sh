@@ -3415,6 +3415,9 @@ else
         [ "$BASELINE_VERSION" = 1.1 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.sync_all_history_policies()"
         # 1.4 adds the TRUNCATE check and two caller-recording public event entry points.
         [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c() sql_saga.record_alter_function_resolved() sql_saga.refuse_managed_relation_identity_change()"
+        # Experimental branch only: the additive invoker procedure is public when the fresh candidate has it.
+        # Keep the exact signature here, not in the private-worker allowlist. The loop below verifies its ACL.
+        [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.defer_temporal_checks(regclass[])"
         # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
         # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
         if [ "$NEW_VERSION" = 1.4 ]; then
