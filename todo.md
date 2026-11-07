@@ -327,25 +327,43 @@ fixed. New findings, each fixed test-first:
       - **Keep.** `disable_temporal_triggers` stays as is for callers that want it; the new call is additive.
       - **StatBus side (not here):** switch `admin.import_job_process_batch` to the new call, then run update
         batches concurrently. Contact: the StatBus agent on STATBUS-591.
-      - **Prototype evidence, 2026-11-07:** branch `prototype/defer-temporal-checks`, tested source `a62f05a`.
-        See `doc/prototypes/deferred_temporal_checks.md` and its 60-pair raw CSV for measurements and boundaries.
+      - **Prototype evidence, 2026-11-07:** branch `prototype/defer-temporal-checks`, final measured source `956ce96`.
+        See `doc/prototypes/deferred_temporal_checks.md` and its final 60-pair CSV. Initial a62 data is retained
+        separately as historical evidence, not attributed to the final source.
         - [x] Prove the released executor's per-call IMMEDIATE reset prevents plain SET CONSTRAINTS from spanning
           merge calls. Prototype native deferral plus transaction-local constraint-OID selection, no new C queue
           or management elevation. Existing toggle APIs unchanged.
-        - [x] Local fast regression 142/142, native 5/5, generator 28/28 plus wiring, new regression 157 and
+        - [x] Local fast regression 142/142, native 5/5, generator 29/29 plus wiring, new regression 157 and
           independent-session correctness passed. Both disjoint-key sessions finish before either commits,
           zero strong shared-table locks, toggle control waits, six same-key commit races leave no orphans.
         - [x] Measure six balanced rounds of 8,000 entities per session, each merging parent and native child
-          sources. Concurrent toggle/defer pair medians 3.876/2.574 s, 33.6% less wall time and 50.6% more throughput.
-          This includes COMMIT: per-session concurrent median 5.2/578.6 ms. Sequential pair median is 6.1% slower.
-        - [x] Compare ordinary enabled checks and exact released-executor controls. Enabled checks already allow
-          this fixture's concurrency and are faster than deferral here. Unopted executor controls show +0.5%
-          sequential/+3.2% concurrent aggregate medians with inconsistent block deltas on a loaded machine,
-          not proof of zero overhead. Every timed session generated exactly 8,000 parent DELETEs.
+          sources. Final concurrent toggle/defer medians 3.524/2.167 s, 38.5% less wall time and 62.6% more
+          throughput, 6/6 paired wins. Includes COMMIT: per-session concurrent median 4.4/515.4 ms. Sequential
+          pair median is 10.5% slower, 6/6 paired losses. Every timed session generated 8,000 parent DELETEs.
+        - [x] Compare ordinary enabled checks and full immutable v1.4 SQL controls, with live bodies verified
+          before/after. Enabled checks already allow concurrency and are faster (2.080 s) than deferral here.
+          Unopted controls: sequential -1.2%, concurrent +3.8%, with concurrent slower in all three blocks
+          (+5.6%, +4.3%, +1.4%). Treat this possible default-path cost honestly, not as proof of zero overhead.
+          Main host load 16.5-30.7, controls 15.9-23.3 on 10 CPUs. Actual application/less-loaded trials remain.
+        - [x] Stabilize pre-existing unordered key-expression construction exposed by two Linux test 063 failures.
+          Minimal ordinal ORDER BY, three-strategy rollback proof, no expected-output changes, local and Linux
+          142-test regressions pass. Repeat all 60 measurements after the planner change, do not reuse old timings.
+        - [x] Repair test-only GNU/BSD migration scanner error handling, with 27 safe/unsafe/literal/error assertions.
+          Linux 42401605316 passed those assertions and all four actual no-CASCADE scans.
+        - [x] Fix planner manifest omission caught by fresh-versus-upgraded equivalence in all four CI paths.
+          Packaging-only 1018d3e adds 2k, with explicit source-based regression RED before/GREEN after.
+          All four generated scripts contain the exact current planner. Real local 1.1/1.2/1.3 upgrades pass
+          routine/semantic/ACL equivalence and restores. Measured runtime source and fresh SQL are unchanged.
         - [x] Restore all five globally installed 1.4 SQL scripts from immutable v1.4 and verify a fresh disposable
           database has no prototype API/executor and passes integrity. Existing application databases untouched.
-          Removed only the three owned verification/experiment databases after preserving reports.
-        - [ ] Confirm final Linux branch CI conclusion, including restore and all released-version upgrades.
+          Final tests installed SQL privately. All five global hashes still match released v1.4, all three new
+          final-test databases and the owned 17 MB stage removed after preserving reports, no application changes.
+          The later owned 18 MB packaging-test stage and all three upgrade fixture DB/role prefixes were cleaned too.
+        - [x] Full Linux CI 42403855569 on packaging fix 1018d3e concluded SUCCESS, exact head and complete log
+          verified: 142 regressions, 5 native, 29 generator plus wiring, independent-session harness, all four
+          genuine old-binary upgrades with exact fresh/upgraded equivalence, attribution 8/8 and regular-FK
+          concurrency passed. All six documented split restores passed 20/20 each. Unsupported parallel restore
+          still failed 9/20 on catalog load order, explicitly excluded. Prior planner packaging failure fixed.
         - [ ] Owner decision before adoption: real batches may be valid after every merge and need only ordinary
           enabled checks. If commit-scoped checks are needed, accept or reject delayed regular CASCADE visibility
           explicitly. Prototype preserves final-key semantics, not earlier action visibility. Measure the actual

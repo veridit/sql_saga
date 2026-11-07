@@ -4,6 +4,13 @@ Status: experimental branch `prototype/defer-temporal-checks`, STATBUS-591.
 This is **not a release** and not part of the published `v1.4` tag. The owner decides
 whether to adopt it after reviewing measurements. StatBus is not modified here.
 
+**Final measured source: `956ce96`.** Concurrent toggle/defer pair medians are
+3.524/2.167 seconds including COMMIT, a 38.5% wall-time reduction over six paired
+rounds. Sequential deferral is 10.5% slower and ordinary enabled checks remain faster.
+See **Final-source remeasurement** below for costs and full-release controls.
+Full Linux CI **42403855569** passed on packaging follow-up `1018d3e`, with the
+measured runtime SQL unchanged. This closes the prototype validation gate, not adoption.
+
 ## Proposed public call
 
 ```sql
@@ -111,7 +118,12 @@ Concurrency acceptance requires both deferred sessions to finish merge work befo
 either commits and no ShareRowExclusive/AccessExclusive locks on shared fixture tables.
 Temporary-table locks are not claimed to disappear.
 
-## Measured result, November 7, 2026
+## Initial measured result at a62f05a, November 7, 2026
+
+This section preserves the initial source-specific evidence. It is not the final
+candidate's measurement. The later planner-ordering fix changes product SQL, so all
+60 pairs were repeated on `956ce96`, reported separately below. Do not pool these runs
+or attribute the initial timings to the final source.
 
 **The prototype removes the demonstrated toggle-lock bottleneck, but is not an
 unconditional speed improvement or an adoption decision.** Both disjoint-key sessions
@@ -205,8 +217,8 @@ default-path regression ceiling is an adoption requirement.
 
 ### Correctness evidence and reproducibility
 
-- Final local fast regression: **142/142**, native unit tests **5/5**, generator tests
-  **28/28** plus Makefile wiring. Existing fast tests exercise unchanged default
+- At the initial measured source, local fast regression passed **142/142**, native unit
+  tests **5/5**, generator tests **28/28** plus Makefile wiring. Existing fast tests exercise unchanged default
   behavior. New test 157 and the independent-session harness exercise the opt-in.
 - The large-run harness passed all six same-key commit race schedules across READ
   COMMITTED and REPEATABLE READ. Exactly one conflicting transaction committed in
@@ -249,6 +261,175 @@ were not modified. Evidence: `tmp/defer_release_install_verify.log` and
 `cbb4682b601d42223661149416120bcbf8f2b2cb4d2c44f33f64c8786ca7fda7`.
 The two owned experiment databases were also dropped after preserving their reports.
 No extra PostgreSQL cluster was started for this experiment.
+
+## Final-source remeasurement, November 7, 2026
+
+### Exact source and workload
+
+Final measured runtime code is `956ce96b9931a68625d61005db1283279e2fab0f`.
+Packaging follow-up `1018d3e` includes the refreshed planner in every upgrade script
+and adds an explicit generator regression. It changes no `src/` or native runtime
+code, and the complete fresh-install SQL retains the measured SHA-256 below.
+Two exact-commit Linux attempts on its predecessor exposed a pre-existing unordered
+`string_agg` over key columns joined to `pg_attribute`: test 063's generated SQL and
+EXPLAIN filter could print equivalent AND operands in a different order. The minimal
+fix preserves declared key/column order with ordinality and aggregate ORDER BY in
+both explicit-key and fallback construction. A rollback-only proof passed under
+three join strategies. Existing expected outputs needed **no changes**. All timing
+runs below were repeated after this product change, rather than reusing old numbers.
+
+The fixture, 8,000 entities per session, 32,000 source rows per pair, two targets,
+two sessions, modes, rotating order and timing boundaries are the same as above.
+The full main run has six balanced rounds, 36 timed pairs. Three further blocks
+compare full released SQL with final prototype SQL, 24 pairs. Every one of these
+60 pairs passed final orphan/count/payload/coverage/synchronization assertions.
+Every one of the 120 session batches generated exactly 8,000 parent DELETEs.
+No slow trials were removed.
+
+All local builds and other test suites stopped before timing. PostgreSQL and server
+settings are unchanged. One-minute host load ranged **16.5 to 30.7** during the main
+run and **15.9 to 23.3** during controls on the 10-CPU Mac. These remain loaded-machine
+measurements, not production capacity predictions.
+
+### Main result including COMMIT
+
+Pair wall medians/ranges have six trials each. Body and COMMIT medians have twelve
+session observations each, computed separately, not added to obtain pair wall.
+
+| Scheduling | Mode | Pair wall median, s | Pair wall range, s | Session body median, s | Session COMMIT median, ms |
+|---|---|---:|---|---:|---:|
+| Sequential | Toggle | 3.565 | 3.452 to 3.658 | 1.771 | 4.9 |
+| Sequential | Defer | 3.940 | 3.814 to 4.048 | 1.454 | 507.1 |
+| Sequential | Enabled | 3.670 | 3.579 to 3.825 | 1.834 | 4.7 |
+| Concurrent | Toggle | 3.524 | 3.458 to 3.627 | 2.649 | 4.4 |
+| Concurrent | Defer | 2.167 | 2.015 to 2.282 | 1.620 | 515.4 |
+| Concurrent | Enabled | 2.080 | 1.855 to 2.278 | 2.025 | 5.5 |
+
+Concurrent deferral reduced median pair wall time by **38.5%** relative to toggling,
+with **62.6% more aggregate throughput**: approximately 4,541 to 7,383 entities/s,
+or 9,081 to 14,766 source rows/s. It won **all six paired concurrent rounds**, with
+individual reductions of 37.5%, 42.4%, 38.5%, 40.1%, 36.4% and 38.6%.
+Even the slowest deferred pair was faster than the fastest toggle pair.
+
+The costs are measurable too. Sequential deferral was **10.5% slower** by the ratio
+of medians, and slower in all six paired rounds, with increases from 7.5% to 15.8%
+and a median paired increase of 10.4%. Concurrent per-session COMMIT rose from
+4.4 to **515.4 ms**, with a deferred range of 498.2 to 537.0 ms. Faster transaction
+bodies alone would be a misleading benefit claim.
+
+Ordinary enabled checks completed the concurrent pair in **2.080 s** versus
+deferral's 2.167 s, so deferral was **4.2% higher**. Ordinary checks already permit
+this fixture's disjoint-key concurrency. They are the simpler candidate if the
+application does not require a repaired gap spanning multiple merge calls.
+
+### Full released-SQL controls without opt-in
+
+Unlike the initial executor-only controls, these used a fresh database with the
+**full immutable released v1.4 SQL**, and a separate database with final prototype
+SQL. Both used the same unchanged C/native libraries. Live planner/executor bodies
+were compared byte-for-byte against the corresponding complete install scripts
+before and after timing. Prototype API presence, release API absence and script
+hashes were checked too. This includes the default-path cost of the planner fix.
+
+Each block ran two sequential and two concurrent pairs per database, with ordinary
+enabled checks only. Database order was release/prototype, prototype/release,
+release/prototype across the three blocks. Setup is excluded in both databases.
+
+| Scheduling | Released v1.4 median pair wall, s | Final prototype median pair wall, s | Change |
+|---|---:|---:|---:|
+| Sequential | 3.687 | 3.642 | -1.2% |
+| Concurrent | 1.979 | 2.053 | +3.8% |
+
+Sequential block changes were -3.8%, -2.8% and -1.2%. Concurrent changes were
+**+5.6%, +4.3% and +1.4%**, slower in all three blocks. The concurrent ranges overlap
+(release 1.945 to 2.063 s, prototype 2.016 to 2.135 s), but the consistent direction
+must not be dismissed as proof of no regression. Treat the observed **3.8% possible
+default-path slowdown** as an adoption cost until a less-loaded repeat can distinguish
+code cost from host/scheduling effects. This experiment does not prove zero overhead.
+
+### Final correctness and CI gate
+
+- Final runtime source passed **142/142 local fast regressions**, **5/5 native tests**,
+  **28/28 generator tests plus Makefile wiring**, and **27/27 migration-safety scanner
+  assertions**. Packaging follow-up `1018d3e` passes **29/29 generator tests plus wiring**,
+  including the new all-four-updates planner regression, observed failing before the fix.
+  Focused 001/063/157 also passed. Tests used a clean disposable database
+  and privately staged SQL. An initial reused-database run had stale fixtures and
+  was not counted as acceptance.
+- The repeated 8,000-row harness again proved both deferred sessions finish merges
+  before either commits, zero strong locks on shared fixture tables, toggle-induced
+  lock waiting, unopted-session immediacy, real COMMIT 23503 diagnostic parity,
+  session reuse, immediate TRUNCATE 0A000, and six same-key READ COMMITTED/REPEATABLE
+  READ races with exactly one commit and no orphans.
+- Linux CI **42401605316** on `956ce96` passed all 142 regressions, the independent-session
+  harness and supported restores, but **failed** fresh-versus-upgraded equivalence in
+  all four upgrade paths. The planner's source file `2k` was absent from the generator
+  manifest, leaving upgraded databases with the old planner. This is a real packaging
+  omission, not harmless fingerprint noise. An in-memory proof repaired all four scripts,
+  then the new regression failed before the permanent manifest fix in `1018d3e`.
+  Exact-commit full CI **42403855569** on `1018d3e318f9dd5469bbcff6b4886fe8706df3cd`
+  completed **successfully on November 7, 2026**, in 27m55s. The actual run conclusion,
+  head SHA and every required step were verified, and the complete 3,228-line log checked.
+  It passed **142/142 regressions, 5/5 native tests, 29/29 generator tests plus wiring**,
+  the independent-session harness, supported restores, and **all four genuine old-binary
+  1.0/1.1/1.2/1.3 upgrades** with exact routine/body/ACL and semantic catalog equivalence.
+  Function-attribution concurrency passed **8/8** and every regular-FK concurrency check
+  passed. Locally, the repaired private package also passed real 1.1, 1.2 and 1.3 upgrades
+  and supported restores, without weakening any fingerprint.
+- Earlier full Linux CI 42395614558 on `94499d5` passed restore, all four genuine
+  released-version upgrades and both concurrency suites. Full-log review then
+  found BSD-only grep syntax producing GNU errors incorrectly treated as a safe
+  migration scan. The scanner now uses portable boundaries, strips literals even
+  inside executable DO blocks, retains executable SQL and fails closed on scanner
+  errors. The 27 counterexamples cover unsafe SQL, safe literals and errors. Linux run
+  42401605316 passed all 27 assertions and all four real no-CASCADE scans. Its upgrade
+  failures were the separate planner-manifest omission above.
+- The existing unsupported parallel-restore case is explicitly excluded by the
+  restore harness, not silently counted green. Final CI observed **9/20 failures** there
+  from catalog load order (the earlier successful CI observed 12/20). Serial and documented
+  split restore are the supported paths. All six split cases passed **20/20 each** in
+  the final CI. Local SQL-only upgrades covered 1.1/1.2/1.3, but 1.0 requires genuine
+  released 1.1 binaries for its query-function anchor. The complete old-binary matrix
+  passed in final Linux CI, not as a locally claimed pass.
+- Strict earlier regular-CASCADE action visibility remains **not met**, despite
+  correct final-key behavior. This is an adoption decision, not something a green
+  correctness suite can waive.
+
+### Final evidence and environment cleanup
+
+`doc/prototypes/deferred_temporal_checks_final_2026_11_07.csv` contains all 60 final
+pairs. Every row was checked against its original JSON, including both session body
+and COMMIT times and load. Its SHA-256 is
+`9ee0dc9c44164d8d491b38ea581f6d260592b21d0e6ddc5d29363f2ffce9c66e`.
+The original `deferred_temporal_checks_2026_11_07.csv` remains historical a62 evidence.
+The final `main` group has 36 pairs; `control_<block>_<database>` has the 24 full-SQL
+controls. `concurrent=0/1` means sequential/concurrent scheduling.
+
+Local evidence is retained in `tmp/defer_final_perf_8000_main/`,
+`tmp/defer_final_control_{1,2,3}_{baseline,proto}/`,
+`tmp/defer_final_measurement_summary.log`, `tmp/defer_order_fast_clean.log`,
+`tmp/defer_order_native.log`, `tmp/defer_order_generator.log`,
+`tmp/defer_order_safety.log`, `tmp/defer_manifest_generator_{red,green}.log`,
+`tmp/defer_manifest_upgrade_1_{1,2,3}.log`, `tmp/defer_planner_update_proof.log`
+and the `tmp/defer_ci_42401605316_*` and `tmp/defer_ci_42403855569_*` artifacts.
+The read-only final audit in `tmp/defer_handoff_audit.log` rechecked CI identity and
+required step outcomes, all four genuine old-binary/equivalence paths, all 60 CSV
+rows against raw JSON, unchanged runtime SQL and all five global release hashes.
+The final live-body identity logs are `tmp/defer_final_live_code_identity{,_after}.log`.
+Representative EXPLAIN (ANALYZE, BUFFERS) key/reference probes use indexes with
+5/4/4 shared hits and zero reads at the respective top nodes. These remain separate
+lookup probes, not captured internal SPI plans or end-to-end results.
+
+The final private install SQL SHA-256 is
+`08c487cfe443e2d87d996853b8cc78905da334f23fa11fcef578296649834191`.
+All five globally installed SQL artifacts still match immutable released v1.4 after
+these private tests. The full-release disposable database verified prototype API
+absence, released executor identity and integrity. All three new final-test databases
+and only the owned 17 MB private staging directory were removed after preserving
+evidence. The later packaging-test stage (18 MB) and its three upgrade fixture DB/role
+prefixes were also cleaned after their successful runs. The original regression database's
+extension-control-path setting was reset. Application databases and other scratch work
+were untouched. No extra PostgreSQL cluster was used.
 
 ## Adoption gate
 
