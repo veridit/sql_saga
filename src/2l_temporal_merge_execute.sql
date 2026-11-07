@@ -748,6 +748,8 @@ BEGIN
         DECLARE
             v_deferrable_constraints text[];
             v_restore_constraints text[];
+            v_commit_deferred_constraints oid[] := COALESCE(NULLIF(current_setting(
+                'sql_saga.temporal_merge.commit_deferred_constraints', true), '')::oid[], '{}'::oid[]);
             v_set_constraints_sql text;
             v_old_search_path TEXT;
         BEGIN
@@ -818,6 +820,8 @@ BEGIN
                     JOIN pg_catalog.pg_constraint AS other
                       ON (other.connamespace, other.conname) = (c.connamespace, c.conname)
                      AND other.oid <> ALL (v_intended)
+                     AND NOT (c.oid = ANY (v_commit_deferred_constraints)
+                              AND other.oid = ANY (v_commit_deferred_constraints))
                     JOIN pg_catalog.pg_class AS oc ON oc.oid = other.conrelid
                     JOIN pg_catalog.pg_namespace AS on_ ON on_.oid = oc.relnamespace
                     WHERE c.oid = ANY (v_intended)
@@ -840,8 +844,7 @@ BEGIN
                     -- Names are schema-qualified: SET CONSTRAINTS resolves a bare name through search_path.
                     SELECT array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname)),
                            array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname))
-                               FILTER (WHERE c.oid <> ALL (COALESCE(NULLIF(current_setting(
-                                   'sql_saga.temporal_merge.commit_deferred_constraints', true), '')::oid[], '{}'::oid[])))
+                               FILTER (WHERE c.oid <> ALL (v_commit_deferred_constraints))
                     INTO v_deferrable_constraints, v_restore_constraints
                     FROM pg_catalog.pg_constraint AS c
                     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace

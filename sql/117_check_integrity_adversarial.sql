@@ -199,6 +199,7 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- by PUBLIC: __internal_add_system_time_era, __internal_reconcile_system_versioning_family and
 -- __internal_sync_history_policies. Public event entry points are caller-recording trampolines over private
 -- workers; their display, restore and policy-guard helpers remain private as well.
+-- Experimental additive invoker API: SET CONSTRAINTS changes timing, never grants DML or management authority.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
@@ -240,6 +241,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('covers_without_gaps(anyrange, anyrange)'),
 ('covers_without_gaps_finalfn(internal, anyrange, anyrange)'),
 ('covers_without_gaps_transfn(internal, anyrange, anyrange)'),
+('defer_temporal_checks(VARIADIC table_oids regclass[])'),
 ('disable_temporal_triggers(VARIADIC p_table_oids regclass[])'),
 ('drop_current_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior)'),
 ('drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),

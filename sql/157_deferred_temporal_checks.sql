@@ -185,6 +185,34 @@ ROLLBACK;
 RESET ROLE;
 DROP OWNED BY saga_defer_reader;
 DROP ROLE saga_defer_reader;
+
+\echo 'Repeated managed names are allowed only when every matching check was explicitly selected'
+CREATE TABLE defer_test.parent_a (id integer, valid_range daterange NOT NULL, payload text);
+CREATE TABLE defer_test.parent_b (id integer, valid_range daterange NOT NULL, payload text);
+SELECT sql_saga.add_era('defer_test.parent_a', 'valid_range', 'valid');
+SELECT sql_saga.add_era('defer_test.parent_b', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'defer_test.parent_a', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'defer_test.parent_b', column_names => ARRAY['id'], era_name => 'valid');
+CREATE TABLE defer_test.child_a (parent_id integer);
+CREATE TABLE defer_test.child_b (parent_id integer);
+SELECT sql_saga.add_regular_foreign_key(fk_table_oid => 'defer_test.child_a', fk_column_names => ARRAY['parent_id'], unique_key_name => 'parent_a_id_valid', foreign_key_name => 'defer_a_fk', uk_update_trigger => 'defer_shared_update');
+SELECT sql_saga.add_regular_foreign_key(fk_table_oid => 'defer_test.child_b', fk_column_names => ARRAY['parent_id'], unique_key_name => 'parent_b_id_valid', foreign_key_name => 'defer_b_fk', uk_update_trigger => 'defer_shared_update');
+INSERT INTO defer_test.parent_a VALUES (1, '[2020-01-01,2030-01-01)', 'old');
+INSERT INTO defer_test.parent_b VALUES (1, '[2020-01-01,2030-01-01)', 'old');
+INSERT INTO defer_test.child_a VALUES (1);
+INSERT INTO defer_test.child_b VALUES (1);
+BEGIN;
+CALL sql_saga.defer_temporal_checks('defer_test.parent_a');
+\echo unselected_shared_name_sqlstate :SQLSTATE
+ROLLBACK;
+BEGIN;
+CALL sql_saga.defer_temporal_checks('defer_test.parent_a', 'defer_test.parent_b');
+CREATE TEMP TABLE shared_source (row_id integer, id integer, valid_range daterange, payload text) ON COMMIT DROP;
+INSERT INTO shared_source VALUES (1, 1, '[2020-01-01,2030-01-01)', 'new');
+CALL sql_saga.temporal_merge(target_table => 'defer_test.parent_a', source_table => 'shared_source', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE');
+CALL sql_saga.temporal_merge(target_table => 'defer_test.parent_b', source_table => 'shared_source', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE');
+COMMIT;
+SELECT payload FROM defer_test.parent_a UNION ALL SELECT payload FROM defer_test.parent_b;
 SELECT sql_saga.check_integrity();
 DROP SCHEMA defer_test CASCADE;
 RESET client_min_messages;

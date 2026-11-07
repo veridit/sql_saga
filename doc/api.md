@@ -474,6 +474,17 @@ SECURITY INVOKER
 
 ## Bulk Data Loading
 
+### defer_temporal_checks
+
+> EXPERIMENTAL: defer enabled sql_saga foreign-key checks touching the given tables to transaction end, including across temporal_merge calls. Call inside BEGIN/COMMIT. Native PostgreSQL still validates at COMMIT or explicit SET CONSTRAINTS IMMEDIATE. TRUNCATE protection and synchronized columns remain immediate. No shared-table DDL or elevation. No effect in other sessions. Not part of released 1.4.
+
+```sql
+PROCEDURE defer_temporal_checks(
+    VARIADIC table_oids regclass[]
+)
+SECURITY INVOKER
+```
+
 ### disable_temporal_triggers
 
 > Disables all sql_saga-managed temporal foreign key triggers for the specified tables. This is a targeted alternative to `ALTER TABLE ... DISABLE TRIGGER USER`, intended for complex ETL batches where transient, inconsistent states are expected. It does not affect non-FK triggers, such as those for synchronized columns. Only regular-to-temporal foreign keys (add_regular_foreign_key) have such triggers. A temporal-to-temporal foreign key (add_foreign_key) is a native temporal foreign key constraint (FOREIGN KEY ... PERIOD) with no sql_saga triggers, and this procedure leaves it unchanged; it is DEFERRABLE, so defer it in the transaction with SET CONSTRAINTS <schema>.<foreign key name> DEFERRED (or SET CONSTRAINTS ALL DEFERRED). A NOTICE names every native temporal foreign key referencing or referenced by the specified tables, with that statement.
