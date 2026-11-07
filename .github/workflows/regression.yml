@@ -60,6 +60,13 @@ jobs:
       - name: Run regression tests (excluding benchmarks)
         run: make test fast PG_CONFIG=${{ env.PG_CONFIG }}
 
+      - name: Prototype transaction-local temporal FK deferral
+        run: |
+          createdb sql_saga_defer_ci
+          psql -X -v ON_ERROR_STOP=1 -d sql_saga_defer_ci -c 'CREATE EXTENSION btree_gist; CREATE EXTENSION sql_saga;'
+          python3 devops/test_deferred_temporal_checks.py --database sql_saga_defer_ci
+          dropdb sql_saga_defer_ci
+
       - name: Run pg_dump/pg_restore round trips
         # Serial, single-transaction and --no-owner restores must succeed with identical ACLs,
         # policies and tenant isolation. Parallel restore is reported as a known PostgreSQL
