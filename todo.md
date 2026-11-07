@@ -294,6 +294,63 @@ fixed. New findings, each fixed test-first:
 - [x] Independent review: BLOCK with F1-F10; F1, F2, F3 reproduced on a private cluster
 
 ## Backlog (after 1.4)
+- [ ] **Delay temporal FK checks to commit instead of disabling them, so concurrent bulk loads do not block each
+      other (StatBus STATBUS-591, 2026-11-07).** Prototype on a branch; owner decides on release.
+      - **Why.** StatBus imports run one transaction per batch. A batch that updates existing units calls
+        `sql_saga.disable_temporal_triggers(...)` before its `temporal_merge` calls and
+        `enable_temporal_triggers(...)` after (StatBus `admin.import_job_process_batch`). That runs
+        `ALTER TABLE ... DISABLE/ENABLE TRIGGER` through `manage_temporal_fk_triggers`: a ShareRowExclusive lock on
+        each listed table held to commit. The DDL is transactional: the demonstrated obstacle is lock
+        serialization, not one session seeing another session's uncommitted trigger change. StatBus wants
+        several dependency-independent batches of one import job in parallel (insert-only batches already
+        skip the toggle).
+      - **What the checks are.** On the StatBus tables (legal_unit, establishment, activity, location, contact,
+        stat_for_unit, person_for_unit) the toggled triggers are the referenced-side `uk_update_check_c` and
+        `uk_delete_check_c`, already DEFERRABLE INITIALLY IMMEDIATE, and `uk_truncate_check_c`, not deferrable. The
+        native temporal FKs (`*_valid`, temporal_to_temporal) are DEFERRABLE and stay enabled today. The
+        `*_valid_sync_temporal_trg` sync triggers are not touched and must keep firing.
+      - **Goal.** A way to get "check at commit, not per row" without DDL: within the caller's transaction only, all
+        of a table set's sql_saga FK checks are deferred to commit, and fire there against the final state, exactly
+        as if each check ran last. Nothing changes for other sessions. Candidate shapes, to be judged by the prototype:
+        (a) `sql_saga.defer_temporal_checks(VARIADIC regclass[])` that runs `SET CONSTRAINTS <those triggers and the
+        native *_valid FKs> DEFERRED`. Truncate guards remain immediate because temporal_merge does not truncate.
+        Scope constraint identities carefully when trigger names repeat, and preserve CASCADE action timing.
+        A transaction-local check queue is a fallback only if existing deferrable checks are insufficient.
+      - **Must hold.** Accept valid final states, including transient inconsistencies deliberately repaired before
+        commit, and reject invalid final states. Preserve immediate-mode behavior, referential actions and existing
+        FK coverage (insert, update, delete, cascade, regular_to_temporal, truncate). A violation found at commit aborts
+        the transaction with the same SQLSTATE and diagnostic meaning as today. Two sessions running `temporal_merge` on disjoint keys of the same tables
+        with deferred checks do not wait on each other (test with two connections, e.g. dblink or an isolation spec).
+        No ACCESS EXCLUSIVE or ShareRowExclusive lock taken by the new path.
+      - **Cost to measure.** Commit-time work of a deferred batch vs today's disable/enable on a batch of ~8,000
+        rows (temporal_merge benchmarks in `sql/102_*`), so StatBus knows if deferring is affordable.
+      - **Keep.** `disable_temporal_triggers` stays as is for callers that want it; the new call is additive.
+      - **StatBus side (not here):** switch `admin.import_job_process_batch` to the new call, then run update
+        batches concurrently. Contact: the StatBus agent on STATBUS-591.
+      - **Prototype evidence, 2026-11-07:** branch `prototype/defer-temporal-checks`, tested source `a62f05a`.
+        See `doc/prototypes/deferred_temporal_checks.md` and its 60-pair raw CSV for measurements and boundaries.
+        - [x] Prove the released executor's per-call IMMEDIATE reset prevents plain SET CONSTRAINTS from spanning
+          merge calls. Prototype native deferral plus transaction-local constraint-OID selection, no new C queue
+          or management elevation. Existing toggle APIs unchanged.
+        - [x] Local fast regression 142/142, native 5/5, generator 28/28 plus wiring, new regression 157 and
+          independent-session correctness passed. Both disjoint-key sessions finish before either commits,
+          zero strong shared-table locks, toggle control waits, six same-key commit races leave no orphans.
+        - [x] Measure six balanced rounds of 8,000 entities per session, each merging parent and native child
+          sources. Concurrent toggle/defer pair medians 3.876/2.574 s, 33.6% less wall time and 50.6% more throughput.
+          This includes COMMIT: per-session concurrent median 5.2/578.6 ms. Sequential pair median is 6.1% slower.
+        - [x] Compare ordinary enabled checks and exact released-executor controls. Enabled checks already allow
+          this fixture's concurrency and are faster than deferral here. Unopted executor controls show +0.5%
+          sequential/+3.2% concurrent aggregate medians with inconsistent block deltas on a loaded machine,
+          not proof of zero overhead. Every timed session generated exactly 8,000 parent DELETEs.
+        - [x] Restore all five globally installed 1.4 SQL scripts from immutable v1.4 and verify a fresh disposable
+          database has no prototype API/executor and passes integrity. Existing application databases untouched.
+          Removed only the three owned verification/experiment databases after preserving reports.
+        - [ ] Confirm final Linux branch CI conclusion, including restore and all released-version upgrades.
+        - [ ] Owner decision before adoption: real batches may be valid after every merge and need only ordinary
+          enabled checks. If commit-scoped checks are needed, accept or reject delayed regular CASCADE visibility
+          explicitly. Prototype preserves final-key semantics, not earlier action visibility. Measure the actual
+          application table set, dependency scheduling, commit budget and queue memory before a new version.
+          No StatBus changes, master merge, new release or tag are part of this experiment.
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
       without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
       and CASCADE semantics). Separate project, not part of 1.4; use the 1.4 C-trigger behavior and parity tests as
