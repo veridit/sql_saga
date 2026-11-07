@@ -1375,6 +1375,7 @@ BEGIN
             -- For NULLABLE columns, we MUST use the null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
             -- because NULL = NULL evaluates to NULL (not TRUE), which would fail the join.
             -- For NOT NULL columns, we can use simple = for better query plan performance (Hash Joins).
+            -- Preserve key/column order across catalog join strategies, including cached diagnostic SQL.
             v_source_rows_exists_join_expr := (
                 SELECT string_agg(
                     format('((%s))', (
@@ -1387,13 +1388,13 @@ BEGIN
                                     -- NULLABLE column: must use null-safe comparison
                                     format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
                             END,
-                            ' AND '
+                            ' AND ' ORDER BY key_columns.column_ordinal
                         )
-                        FROM jsonb_array_elements_text(v_key) AS c
-                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c AND NOT a.attisdropped
+                        FROM jsonb_array_elements_text(v_key) WITH ORDINALITY AS key_columns(c, column_ordinal)
+                        LEFT JOIN pg_attribute AS a ON a.attrelid = target_table AND a.attname = c AND NOT a.attisdropped
                     )),
-                ' OR ')
-                FROM jsonb_array_elements(lookup_keys) AS v_key
+                ' OR ' ORDER BY keys.key_ordinal)
+                FROM jsonb_array_elements(lookup_keys) WITH ORDINALITY AS keys(v_key, key_ordinal)
             );
 
             IF v_source_rows_exists_join_expr IS NULL THEN
@@ -1406,10 +1407,10 @@ BEGIN
                             ELSE
                                 format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
                         END,
-                        ' AND '
+                        ' AND ' ORDER BY identity_key_columns.column_ordinal
                     )
-                    FROM unnest(v_identity_columns) as col
-                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
+                    FROM unnest(v_identity_columns) WITH ORDINALITY AS identity_key_columns(col, column_ordinal)
+                    LEFT JOIN pg_attribute AS a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
                 );
             END IF;
     
