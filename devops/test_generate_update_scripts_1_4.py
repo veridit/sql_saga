@@ -302,6 +302,18 @@ class RealBuild(unittest.TestCase):
                 if self.g.g13._ROUTINE_RE.match(self.g.g13._core(stmt)):
                     self.assertIn(self.g.g13.to_create_or_replace(stmt), self.delta, (code, stmt.line))
 
+    def test_current_planner_routines_refresh_in_every_update(self):
+        # Inspect the source independently of the manifest: iterating the manifest cannot detect omissions.
+        routines = [stmt for stmt in self.statements("2k")
+                    if self.g.g13._ROUTINE_RE.match(self.g.g13._core(stmt))]
+        self.assertEqual({self.g.g13._parse_routine(stmt)["name"] for stmt in routines},
+                         {"sql_saga.temporal_merge_plan", "sql_saga.temporal_merge_drop_temp_tables"})
+        for name, text in sorted(self.out.items()):
+            for stmt in routines:
+                with self.subTest(update=name, routine=self.g.g13._parse_routine(stmt)["name"]):
+                    self.assertTrue(self.g.g13.to_create_or_replace(stmt) in text,
+                                    "current planner-source routine missing from update")
+
     def test_existing_acl_is_not_replayed(self):
         existing = self.g._frozen_identities(self.frozen)
         for code in self.g.ACL_SOURCES:
