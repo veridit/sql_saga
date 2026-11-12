@@ -25,10 +25,11 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.4: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.5: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
+#   UPGRADE_CANDIDATE_LIB_DIR  optional private candidate library directory (otherwise installed $libdir)
 #   UPGRADE_RELEASE_ARTIFACT_DIR default repository versions/; private override for probe candidates
 #   UPGRADE_PREFLIGHT          default $UPGRADE_CANDIDATE_DIR/sql_saga_upgrade_preflight.sql
 #   UPGRADE_OLD_BINARIES       default 1: build fixtures with the selected release binaries
@@ -51,10 +52,11 @@ fi
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
+CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.4}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.5}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -72,6 +74,12 @@ frozen_artifacts() {
     done
     echo "sql_saga--1.0--1.1.sql"
     if version_lt 1.2 "$NEW_VERSION"; then echo "sql_saga--1.0--1.2.sql"; echo "sql_saga--1.1--1.2.sql"; fi
+    for target in 1.3 1.4; do
+        version_lt "$target" "$NEW_VERSION" || continue
+        for source in 1.0 1.1 1.2 1.3; do
+            version_lt "$source" "$target" && echo "sql_saga--$source--$target.sql"
+        done
+    done
 }
 # The candidate's update scripts: one direct hop from every released baseline.
 update_artifacts() {
@@ -143,6 +151,9 @@ if [ "${UPGRADE_PATH_RUNNER:-0}" != 1 ]; then
         createdb "$xs_db" >/dev/null 2>&1 || { echo "HARNESS ERROR: createdb $xs_db" >&2; return 2; }
         psql -X -q -d postgres -c "ALTER DATABASE $xs_db SET extension_control_path = '$xs_root:$candidate_root:\$system'" >/dev/null 2>&1 \
             || { dropdb --if-exists "$xs_db"; echo "HARNESS ERROR: extension_control_path on $xs_db" >&2; return 2; }
+        if [ -n "$CANDIDATE_LIB_DIR" ]; then
+            psql -X -q -v ON_ERROR_STOP=1 -d postgres -c "ALTER DATABASE $xs_db SET dynamic_library_path = '$CANDIDATE_LIB_DIR:\$libdir'" >/dev/null 2>&1 || { dropdb --if-exists "$xs_db"; return 2; }
+        fi
         got=$(xs_sql <<'SQL'
 SET client_min_messages = warning;
 CREATE EXTENSION btree_gist;
@@ -244,6 +255,18 @@ SQL
             echo "HARNESS ERROR: building $tag install script (see $ARTIFACT_WORK/$version.build.log)" >&2
             exit 2
         }
+        if [ "$version" = 1.4 ]; then
+            for source in 1.0 1.1 1.2 1.3; do
+                artifact="sql_saga--$source--1.4.sql"
+                make -C "$tag_dir" PG_CONFIG="$PG_CONFIG" "$artifact" >>"$ARTIFACT_WORK/$version.build.log" 2>&1 || exit 2
+                if cmp -s "$tag_dir/$artifact" "$RELEASE_ARTIFACT_DIR/$artifact"; then
+                    echo "    ok    versions/$artifact is byte-identical to $tag generator output"
+                else
+                    echo "    FAIL [prerequisite] versions/$artifact differs from $tag generator output"
+                    artifact_fails=$((artifact_fails + 1))
+                fi
+            done
+        fi
         frozen="$RELEASE_ARTIFACT_DIR/sql_saga--$version.sql"
         if [ -f "$frozen" ] && cmp -s "$tag_dir/sql_saga--$version.sql" "$frozen"; then
             echo "    ok    versions/sql_saga--$version.sql is byte-identical to $tag"
@@ -287,6 +310,8 @@ SQL
         echo "RED. Candidate $NEW_VERSION artifact gate has $artifact_fails failure(s); upgrade fixtures were not created."
         exit 1
     fi
+
+    if [ "${UPGRADE_ONLY:-}" = artifacts ]; then exit 0; fi
 
     overall=0
     extension_scripts_section
@@ -372,7 +397,7 @@ new_role() {  # new_role <name> [IN ROLE <name>]
 }
 
 new_db() {  # new_db <name> <extension_control_path root or empty for $system> [libdir for 1.0 binaries]
-    local db=$1 ext=$2 lib=${3:-}
+    local db=$1 ext=$2 lib=${3:-$CANDIDATE_LIB_DIR}
     createdb "$db" >>"$LOG" 2>&1 || die "createdb $db"
     CREATED_DBS+=("$db")
     if [ -n "$ext" ]; then
@@ -1577,7 +1602,13 @@ if [ "$OLD_BINARIES" = 1 ]; then
     OLD_LIB="$BASELINE_BUILD"
     ls "$OLD_LIB"/sql_saga.* >/dev/null 2>&1 || die "no $BASELINE_VERSION C library in $OLD_LIB"
     if ls "$BASELINE_BUILD"/native/target/release/*sql_saga_native* >/dev/null 2>&1; then
-        OLD_LIB="$OLD_LIB:$BASELINE_BUILD/native/target/release"
+        # Cargo prefixes cdylibs with lib, while PostgreSQL loads sql_saga_native.
+        # Stage the runtime name explicitly so old fixtures cannot silently use the global candidate.
+        BASELINE_NATIVE_DIR="$WORK/baseline-native"
+        mkdir -p "$BASELINE_NATIVE_DIR"
+        case "$(uname)" in Darwin) native_suffix=dylib ;; *) native_suffix=so ;; esac
+        cp "$BASELINE_BUILD/native/target/release/libsql_saga_native.$native_suffix" "$BASELINE_NATIVE_DIR/sql_saga_native.$native_suffix" || die "staging released native library"
+        OLD_LIB="$OLD_LIB:$BASELINE_NATIVE_DIR"
     fi
 else
     make -C "$BASELINE_BUILD" PG_CONFIG="$PG_CONFIG" "sql_saga--$BASELINE_VERSION.sql" >"$WORK/baseline.build.log" 2>&1 || die "building $BASELINE_TAG SQL"
@@ -1769,7 +1800,13 @@ v13_db() {  # v13_db <db> <setup sql>: a baseline database with btree_gist + sql
     printf '%s\n' "$out" | grep -q '^ERROR' && die "fixture $1: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
     return 0
 }
-v13_restart() { psql -X -q -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"; }
+v13_restart() {
+    if [ -n "$CANDIDATE_LIB_DIR" ]; then
+        psql -X -q -v ON_ERROR_STOP=1 -d postgres -c "ALTER DATABASE $1 SET dynamic_library_path = '$CANDIDATE_LIB_DIR:\$libdir'" >>"$LOG" 2>&1 || die "candidate dynamic_library_path on $1"
+    else
+        psql -X -q -v ON_ERROR_STOP=1 -d postgres -c "ALTER DATABASE $1 RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $1"
+    fi
+}
 v13_probe() { if q "$1" "BEGIN; SET CONSTRAINTS ALL IMMEDIATE; $2; SET CONSTRAINTS ALL IMMEDIATE; ROLLBACK" | grep -q '^ERROR'; then echo refused; else echo accepted; fi; }
 # ---------------------------------------------------------------------------------------------
 new_role "${PREFIX}_owner"
@@ -1835,7 +1872,7 @@ else
     check "1.1 baseline: shared cache is absent" "t" "$(q "$OLD" "SELECT to_regclass('sql_saga.temporal_merge_cache') IS NULL")"
 fi
 # The "restart": every later session loads the new binaries.
-psql -X -q -d postgres -c "ALTER DATABASE $OLD RESET dynamic_library_path" >>"$LOG" 2>&1
+v13_restart "$OLD"
 if [ -n "$OLD_LIB" ]; then
     check "after the restart the installed candidate C library serves the $BASELINE_VERSION SQL" "by-name writer" "$(writer_probe "")"
 fi
@@ -1848,6 +1885,7 @@ if [ "$BASELINE_VERSION" = 1.0 ] && [ "$NEW_VERSION" != 1.2 ]; then
     ACL10_PROBE=${PREFIX}_acl10_core_probe
     createdb -T "$OLD" "$ACL10_PROBE" >>"$LOG" 2>&1 || die "createdb $ACL10_PROBE from $OLD"
     CREATED_DBS+=("$ACL10_PROBE")
+    v13_restart "$ACL10_PROBE"
     psql -X -q -d postgres -c "ALTER DATABASE $ACL10_PROBE SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $ACL10_PROBE"
     acl10_refusal "$ACL10_PROBE" "hardened 1.0 core fixture" "sql_saga.for_portion_of_trigger()"
     # The documented recovery, in ONE owner transaction on the refused clone. First with an injected late error:
@@ -1875,7 +1913,7 @@ OLD_DIGEST=$(acl_digest "$OLD")
 acl_entries "$OLD" >"$WORK/acl_entries.before"
 # The 1.4 default-ACL repair grants these existing entry points only when their pre-update ACL is the applicable
 # default. Capture that exact set before the update so a site REVOKE is never mistaken for a new PUBLIC grant.
-if [ "$NEW_VERSION" = 1.4 ]; then
+if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then
     printf '%s\n' "SELECT format('fn %s|PUBLIC|EXECUTE', p.oid::regprocedure) FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid=p.pronamespace WHERE n.nspname='sql_saga' AND p.oid IN (to_regprocedure('sql_saga.drop_protection()'), to_regprocedure('sql_saga.health_checks()'), to_regprocedure('sql_saga.rename_following()'), to_regprocedure('sql_saga.sync_history_policies(regclass)')) AND (p.proacl IS NULL OR p.proacl=acldefault('f',p.proowner) OR EXISTS (SELECT 1 FROM pg_default_acl AS d WHERE d.defaclrole=p.proowner AND d.defaclnamespace IN (0,n.oid) AND d.defaclobjtype='f' AND d.defaclacl=p.proacl)) ORDER BY 1;" \
         | sql "$OLD" >"$WORK/default_event_entries.before"
 else
@@ -1900,11 +1938,12 @@ else
     psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR SET dynamic_library_path = '$V11_LIB:\$libdir'" >>"$LOG" 2>&1 || die "v1.1 dynamic_library_path on $QUERY_ANCHOR"
     out=$(q "$QUERY_ANCHOR" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
     printf '%s\n' "$out" | grep -q '^ERROR' && die "creating released 1.1 query-function anchor: $out"
-    psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $QUERY_ANCHOR"
+    v13_restart "$QUERY_ANCHOR"
 
     HOP_REFUSAL=${PREFIX}_explicit_11_with_12
     createdb -T "$OLD" "$HOP_REFUSAL" >>"$LOG" 2>&1 || die "createdb $HOP_REFUSAL from $OLD"
     CREATED_DBS+=("$HOP_REFUSAL")
+    v13_restart "$HOP_REFUSAL"
     psql -X -q -d postgres -c "ALTER DATABASE $HOP_REFUSAL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $HOP_REFUSAL"
     out=$(q "$HOP_REFUSAL" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
     check "explicit 1.0 to 1.1 hop with the $NEW_VERSION libraries is refused by the frozen native guard" \
@@ -1924,6 +1963,7 @@ check "released 1.1 query snapshot covers four functions and plans for every fam
 TAMPER=${PREFIX}_tampered_helper
 createdb -T "$OLD" "$TAMPER" >>"$LOG" 2>&1 || die "createdb $TAMPER from $OLD"
 CREATED_DBS+=("$TAMPER")
+v13_restart "$TAMPER"
 psql -X -q -d postgres -c "ALTER DATABASE $TAMPER SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $TAMPER"
 q "$TAMPER" "CREATE OR REPLACE FUNCTION public.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT AS 'SELECT EXISTS (SELECT 1 FROM public.par AS uk WHERE uk.id = \$1) OR true;'" >/dev/null
 
@@ -1935,6 +1975,7 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
     DOWNLEVEL=${PREFIX}_downlevel_helper
     createdb -T "$OLD" "$DOWNLEVEL" >>"$LOG" 2>&1 || die "createdb $DOWNLEVEL from $OLD"
     CREATED_DBS+=("$DOWNLEVEL")
+    v13_restart "$DOWNLEVEL"
     psql -X -q -d postgres -c "ALTER DATABASE $DOWNLEVEL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $DOWNLEVEL"
     out=$(sql "$DOWNLEVEL" <<'SQL'
 CREATE OR REPLACE FUNCTION public.par_id_exists(integer) RETURNS boolean
@@ -2123,6 +2164,7 @@ damage_case() {  # damage_case <label> <damage sql> <exact checker message> <rep
     local label=$1 damage=$2 want=$3 repair=$4 db=${PREFIX}_damage_$1 out before
     createdb -T "$OLD" "$db" >>"$LOG" 2>&1 || die "createdb $db from $OLD"
     CREATED_DBS+=("$db")
+    v13_restart "$db"
     psql -X -q -d postgres -c "ALTER DATABASE $db SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $db"
     out=$(printf '%s\n' "$damage" | sql "$db")
     printf '%s\n' "$out" | grep -q '^ERROR' && die "damage fixture $label: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
@@ -2375,7 +2417,7 @@ if version_lt "$BASELINE_VERSION" 1.3; then SHARED_BEFORE="2|4"; else SHARED_BEF
 check "shared helper fixture: $SHARED_BEFORE helpers serve four regular FKs" "$SHARED_BEFORE" \
     "$(q "$SHARED" "SELECT count(DISTINCT fk_helper_function) || '|' || count(*) FROM sql_saga.foreign_keys WHERE type = 'regular_to_temporal'")"
 # The "restart": the update and every later session load the candidate binaries.
-psql -X -q -d postgres -c "ALTER DATABASE $SHARED RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $SHARED"
+v13_restart "$SHARED"
 check "shared helper: healthy $BASELINE_VERSION database updates without refusal" "" \
     "$(q "$SHARED" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "shared helper: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$SHARED" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
@@ -2515,7 +2557,7 @@ FAILURE_CLASS=prerequisite
 check "StatBus shapes: the $BASELINE_VERSION baseline sorted every XOR key catalog after unrelated DDL" "$XOR_SORTED" "$(q "$STATBUS" "$XOR_ORDER_SQL")"
 check "StatBus shapes: the $BASELINE_VERSION baseline enforces both regular FK children with a CHECK reading the parent" "2" "$(q "$STATBUS" "$CHILD_CHECKS_SQL")"
 FAILURE_CLASS="expected RED"
-psql -X -q -d postgres -c "ALTER DATABASE $STATBUS RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $STATBUS"
+v13_restart "$STATBUS"
 STATBUS_UPDATE=$(q "$STATBUS" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
 check "StatBus shapes: healthy $BASELINE_VERSION database updates without refusal" "" "$(printf '%s\n' "$STATBUS_UPDATE" | grep '^ERROR')"
 check "StatBus shapes: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$STATBUS" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
@@ -2632,7 +2674,7 @@ check "mispaired FKs: the native temporal FK references the sorted list" \
     "FOREIGN KEY (a_person, b_role, c_lu, d_est, PERIOD valid_range) REFERENCES person_for_unit(establishment_id, legal_unit_id, person_id, person_role_id, PERIOD valid_range) DEFERRABLE" \
     "$(q "$XORFK" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'person_tref'::regclass AND conname = 'person_tref_fkey'")"
 FAILURE_CLASS="expected RED"
-psql -X -q -d postgres -c "ALTER DATABASE $XORFK RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $XORFK"
+v13_restart "$XORFK"
 # 1. Both FKs mispaired: the update names the regular one first (check_integrity's table order). This
 # database has no system versioning, so there are no query functions to fingerprint.
 xorfk_state() {
@@ -2782,7 +2824,7 @@ check "regular FK conversion: the $BASELINE_VERSION baseline enforces all three 
 check "regular FK conversion: the $BASELINE_VERSION catalog names the CHECKs" "$RFK_CATALOG" "$(q "$RFK_CONVERT" "$RFK_CATALOG_SQL")"
 check "regular FK conversion: the $BASELINE_VERSION database has no orphan" "" "$(q "$RFK_CONVERT" "$RFK_SCAN")"
 FAILURE_CLASS="expected RED"
-psql -X -q -d postgres -c "ALTER DATABASE $RFK_CONVERT RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_CONVERT"
+v13_restart "$RFK_CONVERT"
 check "regular FK conversion: healthy $BASELINE_VERSION database updates without refusal" "" "$(q "$RFK_CONVERT" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "regular FK conversion: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$RFK_CONVERT" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "regular FK conversion: no child CHECK calls a helper after the update" "0" "$(q "$RFK_CONVERT" "$RFK_HELPER_CHECKS_SQL")"
@@ -2813,7 +2855,7 @@ FAILURE_CLASS=prerequisite
 check "regular FK orphan: the $BASELINE_VERSION baseline holds the two orphans" "10|5 11|5" "$(q "$RFK_ORPHAN" "SELECT string_agg(id || '|' || legal_unit_id, ' ' ORDER BY id) FROM ($RFK_SCAN) AS o")"
 check "regular FK orphan: the $BASELINE_VERSION CHECK still refuses a new orphan (the shape is the CHECK form)" "refused" "$(rfk_probe "$RFK_ORPHAN" "INSERT INTO activity_note VALUES (90, 99)")"
 FAILURE_CLASS="expected RED"
-psql -X -q -d postgres -c "ALTER DATABASE $RFK_ORPHAN RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_ORPHAN"
+v13_restart "$RFK_ORPHAN"
 # This database has no system versioning: fingerprint extension objects, user schema and catalog rows.
 rfk_state() {
     local parts="" p rc=0
@@ -2882,7 +2924,7 @@ check "quoted regular FK orphan: the $BASELINE_VERSION baseline holds exactly th
 check "quoted regular FK orphan: the $BASELINE_VERSION baseline enforces the child with a CHECK calling a helper" "1" \
     "$(q "$RFK_QUOTED" "SELECT count(*) FROM pg_constraint AS c JOIN pg_depend AS d ON (d.classid, d.objid, d.refclassid) = ('pg_constraint'::regclass, c.oid, 'pg_proc'::regclass) JOIN pg_proc AS p ON p.oid = d.refobjid WHERE c.conrelid = '$(printf '%s' "$RFK_QUOTED_CHILD" | sed "s/'/''/g")'::regclass AND c.contype = 'c' AND p.pronamespace <> 'pg_catalog'::regnamespace")"
 FAILURE_CLASS="expected RED"
-psql -X -q -d postgres -c "ALTER DATABASE $RFK_QUOTED RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $RFK_QUOTED"
+v13_restart "$RFK_QUOTED"
 rfk_quoted_before=$(rfk_state "$RFK_QUOTED") || die "quoted regular FK orphan fixture: prior-state capture failed: $rfk_quoted_before"
 out=$(printf "ALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$RFK_QUOTED" 2>&1)
 check "quoted regular FK orphan: update refused with quoted names, the orphan count and the scan" "ERROR:  $RFK_QUOTED_MESSAGE" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
@@ -2964,7 +3006,7 @@ check "view drift: the $BASELINE_VERSION views lag the columns added after them"
     "location__current_valid:region_id,note location__for_portion_of_valid:region_id,note stat_for_unit__for_portion_of_valid:stat" \
     "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
 FAILURE_CLASS=$VIEW_CLASS
-psql -X -q -d postgres -c "ALTER DATABASE $DRIFT RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $DRIFT"
+v13_restart "$DRIFT"
 check "view drift: healthy $BASELINE_VERSION database updates without refusal" "" \
     "$(q "$DRIFT" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
 check "view drift: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$DRIFT" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
@@ -3411,13 +3453,13 @@ else
         # Exact per-baseline addition map of routines that release lacks (never inferred from a missing ACL row:
         # an existing routine with a site REVOKE must keep it).
         NEW_ROUTINES="sql_saga.regular_fk_check_c() sql_saga.__internal_current_view_clock(oid) sql_saga.__internal_current_view_now(oid,regtype)"
-        [ "$BASELINE_VERSION" = 1.3 ] && NEW_ROUTINES=""
+        if ! version_lt "$BASELINE_VERSION" 1.3; then NEW_ROUTINES=""; fi
         [ "$BASELINE_VERSION" = 1.1 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.sync_all_history_policies()"
         # 1.4 adds the TRUNCATE check and two caller-recording public event entry points.
-        [ "$NEW_VERSION" = 1.4 ] && NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c() sql_saga.record_alter_function_resolved() sql_saga.refuse_managed_relation_identity_change()"
+        if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c() sql_saga.record_alter_function_resolved() sql_saga.refuse_managed_relation_identity_change()"; fi
         # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
         # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
-        if [ "$NEW_VERSION" = 1.4 ]; then
+        if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then
             for routine in "sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])" \
                            "sql_saga.__internal_ddl_command_affects_managed_object()" \
                            "sql_saga.__internal_reconcile_system_versioning_family(regclass,name[])" \
@@ -3439,7 +3481,7 @@ else
         # The 1.4 repair grants every existing generated synchronization function to PUBLIC, exactly as a fresh
         # install does. Enumerate those functions from the catalog; this is an explicit addition, not an inference
         # from an absent ACL row. Existing PUBLIC entries are kept only once.
-        if [ "$NEW_VERSION" = 1.4 ]; then
+        if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then
             printf '%s\n' "SELECT DISTINCT format('sql_saga.%I()', e.sync_temporal_trg_function_name) FROM sql_saga.era AS e WHERE e.sync_temporal_trg_function_name IS NOT NULL AND to_regprocedure(format('sql_saga.%I()', e.sync_temporal_trg_function_name)) IS NOT NULL ORDER BY 1;" \
                 | sql "$OLD" >"$WORK/sync_functions.after"
             while IFS= read -r routine; do
