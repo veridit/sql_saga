@@ -108,7 +108,7 @@ SAVEPOINT insert_should_fail;
 INSERT INTO products__for_portion_of_valid (id, name, price, valid_from, valid_until)
 VALUES (3, 'Keyboard', 75, '2023-01-01', 'infinity');
 ERROR:  sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.
-CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 11 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 18 at RAISE
 ROLLBACK TO insert_should_fail;
 -- The table should be unchanged.
 TABLE products ORDER BY id, valid_from;
@@ -347,8 +347,9 @@ TABLE products_view_select_for_portion_of;
 -- Delete the Mouse record
 SAVEPOINT delete_should_fail;
 DELETE FROM products__for_portion_of_valid WHERE id = 2;
-ERROR:  sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.
-CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 11 at RAISE
+ERROR:  sql_saga: DELETE is not supported on a "for_portion_of" view.
+HINT:  Use UPDATE with an identifier column set to NULL and the requested temporal bounds. Omit bounds to remove the complete matched history.
+CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 14 at RAISE
 ROLLBACK TO delete_should_fail;
 -- The record for the mouse should still be present
 TABLE products ORDER BY id, valid_from;
