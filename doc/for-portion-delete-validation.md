@@ -47,14 +47,35 @@ for every split. See the README protocol and permission examples.
   and scanner errors cannot report PASS. Comments and quoted fragments retained
   in executable DO bodies are tested explicitly.
 
-The first full Linux CI, **43313888202** at `dae4206`, concluded **success**:
-native units, 142 fast regressions, restore, all five genuine released-binary
-upgrades, attribution isolation and regular-FK concurrency passed. Review also
-found its inherited GNU-incompatible grep scanner logging errors while reporting
-PASS. That harness defect was corrected in `37e9aff` and `3c464fb`. No runtime
-code changed after the first green run. Final CI **43320411030** on
-`3c464fbe51e58c2e3123625d1937f68d92a772da` is pending and must be observed before
-this branch is considered ready for handoff.
+Final exact-code Linux CI **43320411030** on
+`3c464fbe51e58c2e3123625d1937f68d92a772da` concluded **success** at
+2026-11-12 23:05 UTC. The actual run JSON and full transcript were checked, not
+only the watcher exit status:
+
+| Gate | Observed result |
+|---|---|
+| Generator, migration-safety mutations and parallel Makefile wiring | 42 unit tests plus wiring passed |
+| Native Rust units and internal-library packaging | 5/5, native library not installable as an extension |
+| Fast regressions, including the new portion-delete specification | 142/142 |
+| Supported documented split restores | Six cases, 20/20 each |
+| Genuine released 1.0, 1.1, 1.2, 1.3 and 1.4 binary upgrades to 1.5 | All five GREEN, with fresh/upgraded equivalence and round trips |
+| Portable direct-migration no-cascading-DDL gate | All five passed, no scanner errors |
+| Existing 1.4 view adoption and rollback rehearsal | Exact deletion, routine/view OIDs, site ACL and data preservation passed |
+| Function-attribution isolation | 8/8 concurrency assertions |
+| Regular foreign-key concurrency, including CASCADE | All checks passed |
+
+The first full Linux CI **43313888202** at `dae4206` had also concluded success,
+but review found inherited GNU-incompatible grep scanner errors being reported
+as PASS. That harness defect was corrected in `37e9aff` and `3c464fb`. The final
+run above exercises the corrected gate. No runtime code changed after the first
+green run. Later handoff commits change only this report and `todo.md`.
+
+Task-owned local databases and roles are gone. Private package stages and this
+worktree's native build output were removed after validation, reclaiming about
+530 MB. Source and evidence logs remain. All five globally installed released
+1.4 SQL assets are byte-identical to the frozen release, and a fresh backend
+reported extension/native versions `1.4 / 1.4` before the proof DB was removed.
+The original checkout, shelved branch, remote master and `v1.4` remain unchanged.
 
 ## Ordinary UPDATE performance
 
@@ -91,12 +112,13 @@ not claimed as an acceptance result for this branch.
 
 ## Remaining release and operational boundaries
 
-- Final exact-code CI must pass before review handoff. Review, master merge and a
-  `v1.5` release are separate future actions, not performed here.
+- The review branch is ready for application testing and review. Master merge
+  and a `v1.5` release are separate future actions, not performed here.
 - Follow `doc/upgrade.md`: stop writers, deploy matching SQL/control/C/native
   package, restart, rehearse on a verified restored backup, upgrade and check
   integrity before reopening writers. There is no downgrade script.
-- Supported documented split-restore sequencing is tested. The intentionally
-  unsupported parallel restore variant is not counted as green acceptance.
+- Supported documented split-restore sequencing passed all six cases. The
+  intentionally unsupported parallel restore variant failed **7/20** in final CI
+  and is explicitly excluded, not counted as green acceptance.
 - This work does not add set-based bulk view deletion, change FK timing, resume
   the deferred-check prototype, or modify StatBus.

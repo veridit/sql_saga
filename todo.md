@@ -371,12 +371,18 @@ fixed. New findings, each fixed test-first:
       and quoted fragments: 7 mutation tests, 7 current-generator tests, 28
       historical-generator tests and parallel Makefile wiring passed. All five
       actual generated direct migrations pass, and cascading-DDL mutations fail.
-- [ ] Final exact-code Linux CI **43320411030** on `3c464fb`, including native,
-      restore, five genuine released-binary upgrades and independent-session
-      concurrency. Initial CI **43313888202** passed every step on `dae4206`, but
-      review exposed inherited GNU scanner errors being reported as PASS. The
-      scanner is repaired without runtime changes, and the new run must finish.
+- [x] Final exact-code Linux CI **43320411030** on `3c464fb` concluded success.
+      Actual run JSON and full logs verified: 142 fast regressions, 5 native units,
+      42 generator/safety units plus wiring, all five genuine released-binary
+      upgrades, six supported split-restore cases at 20/20 each, attribution 8/8
+      and all regular-FK concurrency checks. The repaired portable scanner passed
+      every real migration without errors. Known unsupported parallel restore
+      failed 7/20 and is explicitly excluded, not counted as green acceptance.
       Detailed behavior and balanced timings: `doc/for-portion-delete-validation.md`.
+- [x] Review handoff evidence committed. Task-owned local databases, roles,
+      private package stages and native build output removed. Released global
+      installation, original dirty checkout, shelved prototype, master and v1.4
+      remain unchanged. Later evidence commits change documentation only.
 - [ ] Review, merge and v1.5 release. No master merge or tag has been made, no
       global candidate installation was performed, and StatBus remains untouched.
 
