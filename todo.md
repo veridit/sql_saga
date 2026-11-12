@@ -367,12 +367,16 @@ fixed. New findings, each fixed test-first:
       median **218.9605 ms released / 221.5005 ms candidate**, **+1.16%** elapsed.
       Machine load was about 21. Earlier much higher-load timings were inconclusive.
       This is a small observed cost, not a speedup or proof of zero overhead.
-- [ ] Final exact-code Linux CI, including native, restore, five genuine
-      released-binary upgrades and independent-session concurrency. The initial
-      run passed generator, native and fast tests and restore. Review then found
-      an inherited fail-open portability weakness in the upgrade safety scanner.
-      Its repair must pass mutation tests and all five real migration scripts
-      before a fresh final CI run can count as acceptance.
+- [x] Portable fail-closed migration safety scan, including retained DO comments
+      and quoted fragments: 7 mutation tests, 7 current-generator tests, 28
+      historical-generator tests and parallel Makefile wiring passed. All five
+      actual generated direct migrations pass, and cascading-DDL mutations fail.
+- [ ] Final exact-code Linux CI **43320411030** on `3c464fb`, including native,
+      restore, five genuine released-binary upgrades and independent-session
+      concurrency. Initial CI **43313888202** passed every step on `dae4206`, but
+      review exposed inherited GNU scanner errors being reported as PASS. The
+      scanner is repaired without runtime changes, and the new run must finish.
+      Detailed behavior and balanced timings: `doc/for-portion-delete-validation.md`.
 - [ ] Review, merge and v1.5 release. No master merge or tag has been made, no
       global candidate installation was performed, and StatBus remains untouched.
 
