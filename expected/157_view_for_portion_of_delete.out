@@ -1,0 +1,15 @@
+\set ECHO none
+PASS middle split preserves OLD composite identity, payload and generated payload
+PASS any composite component and direct range
+PASS inclusive valid_to
+PASS empty intersection reports UPDATE 0 and leaves data unchanged
+PASS ambiguous payload and changed nonnull identity reject atomically
+PASS ordinary NULL payload is an update, not a delete
+PASS spanning multiple historical rows
+PASS exactly aligned deletion leaves neighbours unchanged
+PASS no dates removes whole identity but not other entities
+PASS middle split requires base DELETE privilege
+PASS invoker RLS visible split and invisible row protection
+PASS physical INSERT policy denial rolls back middle split atomically
+PASS temporal FK failure preserves original rows atomically
+PASS STATBUS-611 delete protocol
