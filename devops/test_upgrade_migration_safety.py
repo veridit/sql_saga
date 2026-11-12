@@ -57,6 +57,40 @@ assert_no_cascading_ddl "$body"
                 self.assertEqual(result.returncode, 0, result)
                 self.assertIn('PASS:', result.stdout)
 
+    def test_retained_do_comments_do_not_desynchronize_literals(self):
+        for comment in ("-- caller's view\n", "/* caller's view */",
+                        "/* caller's /* nested ' quote */ view */"):
+            sql = ("DO $$ BEGIN " + comment +
+                   "EXECUTE 'ALTER EXTENSION sql_saga DROP VIEW %s'; "
+                   "PERFORM 'CASCADE'; END $$;")
+            with self.subTest(comment=comment):
+                result = self.scan(sql)
+                self.assertEqual(result.returncode, 0, result)
+                dangerous = self.scan(sql.replace("PERFORM 'CASCADE';",
+                                                 "DROP TABLE x\nCASCADE;"))
+                self.assertEqual(dangerous.returncode, 1, dangerous)
+
+    def test_nested_dollar_values_in_do_are_opaque(self):
+        sql = ("DO $migration$ BEGIN PERFORM $old$/* caller's unfinished comment$old$; "
+               "PERFORM $new$DROP TABLE x CASCADE;$new$; END $migration$;")
+        self.assertEqual(self.scan(sql).returncode, 0)
+        self.assertEqual(self.scan(sql.replace('END $migration$',
+                         'TRUNCATE x CASCADE; END $migration$')).returncode, 1)
+
+    def test_all_actual_generated_scripts(self):
+        subprocess.run(['make', 'sql_saga--1.5.sql'] + [
+            'sql_saga--%s--1.5.sql' % v for v in ('1.0', '1.1', '1.2', '1.3', '1.4')],
+            cwd=ROOT, check=True, capture_output=True, text=True)
+        for version in ('1.0', '1.1', '1.2', '1.3', '1.4'):
+            with self.subTest(version=version):
+                sql = (ROOT / ('sql_saga--%s--1.5.sql' % version)).read_text()
+                result = self.scan(sql)
+                self.assertEqual(result.returncode, 0, result)
+                self.assertIn('PASS:', result.stdout)
+                dangerous = self.scan(sql + '\nDROP TABLE user_table\nCASCADE;\n')
+                self.assertEqual(dangerous.returncode, 1, dangerous)
+                self.assertNotIn('PASS:', dangerous.stdout)
+
     def test_scanner_failure_never_passes(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'tmp') as d:
             scanner = Path(d) / 'broken-python'

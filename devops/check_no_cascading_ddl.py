@@ -1,21 +1,56 @@
 #!/usr/bin/env python3
 """Reject cascading DROP/TRUNCATE in already-extracted executable migration SQL.
 
-Not a SQL lexer: upgrade_test.sh retains responsibility for removing comments,
-strings and stored routine bodies. Quoted identifiers and string placeholders
-are opaque tokens here (DO bodies can still contain quoted catalog values).
-Exit 0 means safe, 1 prohibited DDL, and 2 a scanner failure.
+upgrade_test.sh removes stored routine bodies and top-level comments/strings.
+Retained DO bodies still contain comments and quoted values, which are opaque
+here. Exit 0 means safe, 1 prohibited DDL, and 2 a scanner failure.
 """
 import re
 import sys
 
-TOKEN = re.compile(r'''"(?:[^"]|"")*"|'(?:[^']|'')*'|[^\W\d][\w$]*|;''')
+TOKEN = re.compile(r'''--[^\n]*|/\*|\$[A-Za-z_0-9]*\$|"(?:[^"]|"")*"|'(?:[^']|'')*'|[^\W\d][\w$]*|;|["']''')
+COMMENT_BOUNDARY = re.compile(r'/\*|\*/')
 
 
 def cascading_ddl(text):
     ddl = False
-    for match in TOKEN.finditer(text):
+    position = 0
+    do_tag = None
+    expect_do_body = False
+    while (match := TOKEN.search(text, position)) is not None:
         token = match.group()
+        position = match.end()
+        if token.startswith('--'):
+            continue
+        if token == '/*':
+            # PostgreSQL block comments nest. Quotes and semicolons inside them
+            # must not change the surrounding statement's lexical state.
+            depth = 1
+            while depth:
+                boundary = COMMENT_BOUNDARY.search(text, position)
+                if boundary is None:
+                    raise ValueError('unterminated block comment in migration SQL')
+                depth += 1 if boundary.group() == '/*' else -1
+                position = boundary.end()
+            continue
+        if token.startswith('$'):
+            if expect_do_body:
+                do_tag = token
+                expect_do_body = False
+            elif token == do_tag:
+                do_tag = None
+            else:
+                # DO code is executable, but its nested dollar-quoted values
+                # (including function-definition replacement fragments) are not.
+                end = text.find(token, position)
+                if end < 0:
+                    raise ValueError('unterminated dollar quote in migration SQL')
+                position = end + len(token)
+            continue
+        if token.upper() == 'DO':
+            expect_do_body = True
+        if token in ('"', "'"):
+            raise ValueError('unterminated quote in migration SQL')
         if token == ';':
             ddl = False
         elif token.upper() in ('DROP', 'TRUNCATE'):
