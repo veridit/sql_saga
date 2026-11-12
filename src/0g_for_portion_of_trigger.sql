@@ -62,7 +62,6 @@ BEGIN
         IF EXISTS (
             SELECT FROM jsonb_each(jnew) AS nc(column_name, value)
             WHERE nc.value IS DISTINCT FROM jold -> nc.column_name
-              AND nc.column_name <> ALL(info.generated_columns)
               AND NOT (nc.column_name = ANY(identifier_columns) AND nc.value = 'null'::jsonb)
               AND nc.column_name IS DISTINCT FROM info.range_column_name
               AND nc.column_name IS DISTINCT FROM info.valid_from_column_name
