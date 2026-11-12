@@ -365,7 +365,7 @@ To simplify common interactions with temporal data, `sql_saga` provides two type
 This view is a specialized tool that provides a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. It exists for one purpose: to apply a data change to a specific slice of an entity's timeline. The trigger will automatically split, update, and insert historical records to correctly reflect the change.
 
 - **Surgical `UPDATE` is the primary supported operation.** To apply a change to a specific time slice, you must provide `valid_from` and `valid_until` in the `SET` clause. Simple `UPDATE`s that do not change the validity period are also permitted for historical corrections on existing records.
-- **`INSERT` and `DELETE` are intentionally not supported on the view.** These operations should be performed directly on the base table. `DELETE` is unsupported because standard SQL provides no way to pass the required `[from, until)` parameters to a `DELETE` trigger, unlike `UPDATE` which can use the `SET` clause for this purpose. This focused design ensures the view's purpose is clear and prevents accidental misuse.
+- **`INSERT` and direct SQL `DELETE` are intentionally not supported on the view.** Insert directly into the base table. A `DELETE` trigger receives only `OLD`, so its `WHERE` clause cannot carry a requested period. For portion removal, use the identity-to-`NULL` `UPDATE` protocol below, which the direct `DELETE` error points to.
 
 **Example: Marking a legal unit as inactive for a specific period**
 ```sql
@@ -379,6 +379,69 @@ SET
 WHERE
     id = 1; -- The entity identifier
 ```
+
+###### Removing a Portion of History (sql_saga 1.5)
+
+Install sql_saga 1.5 or later, or upgrade an existing installation to 1.5, before using this protocol.
+Setting an entity identifier to `NULL` through the `for_portion_of` view signals removal, not an
+attempt to store a NULL identifier. For a table `x` with identifier `id` and era `valid`, the generic
+form is `UPDATE x__for_portion_of_valid SET id = NULL, valid_from = START, valid_until = STOP WHERE id = 10;`.
+Replace `START` and `STOP` with values of the era's boundary type:
+
+```sql
+-- Remove only [2026-03-01, 2026-06-01) from entity 10's history.
+UPDATE x__for_portion_of_valid
+SET id = NULL,
+    valid_from = '2026-03-01',
+    valid_until = '2026-06-01'
+WHERE id = 10;
+```
+
+The requested period is intersected with each matched `OLD` row's existing period. Empty
+intersections are skipped. Overlapping rows are shortened, split, or removed as needed, leaving
+history outside the requested portion and its payload values unchanged. For example, removing
+this middle portion from `[2024-01-01, infinity)` leaves `[2024-01-01, 2026-03-01)` and
+`[2026-06-01, infinity)`.
+
+You can instead set the era's range column directly, for example
+`SET id = NULL, valid_range = '[2026-03-01,2026-06-01)'::daterange`, or use synchronized
+`valid_from` and `valid_to` columns where configured. `valid_to` is inclusive, so
+`valid_from = '2026-03-01', valid_to = '2026-05-31'` requests the same date portion.
+With no temporal values in `SET`, each matched row's own period is removed:
+
+```sql
+-- Remove all matched history for entity 10, not just its current row.
+UPDATE x__for_portion_of_valid SET id = NULL WHERE id = 10;
+```
+
+For a composite identity, setting **any** identifier component to `NULL` signals removal.
+All original identity components from `OLD` are retained to identify the target, including the
+component set to `NULL` in the request. Combining the NULL-identity signal with another changed
+non-temporal column is ambiguous and raises an error. By contrast, setting an ordinary payload
+column to `NULL` without the identity signal remains an ordinary update, subject to the table's
+constraints.
+
+**PostgREST:** send a PATCH to the portion view, filtering by the original identifier and putting
+the requested period in the JSON body, not in the URL filter:
+
+```http
+PATCH /x__for_portion_of_valid?id=eq.10
+Content-Type: application/json
+
+{"id": null, "valid_from": "2026-03-01", "valid_until": "2026-06-01"}
+```
+
+**Constraints and access:** temporal foreign keys still apply. Removing coverage required by a
+child row fails rather than leaving an invalid reference. This protocol does not bypass constraints
+or introduce a separate constraint-deferral workflow.
+
+The operation runs with the invoker's privileges, without elevated authority. The caller needs
+`UPDATE` on the view and `DELETE` on the base table, which is explicitly checked even when the
+physical plan does not delete a row. Those grants alone are not necessarily sufficient: the merge
+reads base rows, and removing a middle portion can physically use `UPDATE` and `INSERT` to retain
+the two surviving pieces. Base-table `SELECT`, `UPDATE`, and `INSERT` privileges and applicable
+RLS `SELECT`, `UPDATE`, and `INSERT` policies may therefore also be required. RLS applies to the
+actual operations performed. SQL `DELETE` policies alone do not govern this UPDATE-based protocol.
 
 ##### The `current` View: A Simple View of the Present
 This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It simplifies interaction by showing only the records that are currently active. Because it is based on the concept of "now", the `current` view can only be created on eras that use a `date` or `timestamp`-based data type. It provides a safe, explicit protocol for data modification.
