@@ -341,6 +341,41 @@ fixed. New findings, each fixed test-first:
       - **Release.** Next version after 1.4 (update script from 1.4). StatBus pins it and builds the Remove
         button on it (STATBUS-611). Until then StatBus does not ship Remove.
 
+### STATBUS-611 implementation evidence (2026-11-12)
+
+- [x] Isolated `feature/for-portion-delete` from released master/v1.4 `8759b7b`.
+      The unused STATBUS-591 prototype is not an input and remains shelved.
+- [x] Reproduced the released 1.4 silent no-op before changing the trigger. The
+      candidate removes the exact requested portion using OLD's full identity,
+      retaining payload and history outside the intersection.
+- [x] Regression 157 covers all eight requested cases, plus composite identity,
+      empty-intersection `UPDATE 0`, explicit generated-payload ambiguity, ordinary
+      NULL payload, missing DELETE authority, RLS visibility and INSERT-policy
+      refusal, atomic temporal-FK refusal and regular-FK CASCADE compatibility.
+      Clean private full fast suite: **142/142**. Existing view tests: **5/5**.
+- [x] Generic README SQL/PostgREST protocol and `doc/upgrade.md` instructions.
+      Candidate package is 1.5, with direct upgrades from released 1.0 through 1.4.
+      Frozen 1.4 artifacts retain their released bytes. Catalog format remains 1.4.
+- [x] Actual released 1.4 libraries and an existing managed view upgraded to
+      privately staged 1.5: trigger/view OIDs, a named site EXECUTE grant and data
+      preserved. Exact portion removal and integrity passed after upgrade.
+      A rollback rehearsal restored the old version, definition and data.
+      The same behavior is now a permanent 1.4 upgrade-harness assertion.
+- [x] Ordinary UPDATE matched trigger-body comparison, 30 rows per transaction,
+      one warmup pair and eight balanced measured pairs, fresh backend and full
+      rollback per trial, exact result assertions and EXPLAIN (ANALYZE, BUFFERS):
+      median **218.9605 ms released / 221.5005 ms candidate**, **+1.16%** elapsed.
+      Machine load was about 21. Earlier much higher-load timings were inconclusive.
+      This is a small observed cost, not a speedup or proof of zero overhead.
+- [ ] Final exact-code Linux CI, including native, restore, five genuine
+      released-binary upgrades and independent-session concurrency. The initial
+      run passed generator, native and fast tests and restore. Review then found
+      an inherited fail-open portability weakness in the upgrade safety scanner.
+      Its repair must pass mutation tests and all five real migration scripts
+      before a fresh final CI run can count as acceptance.
+- [ ] Review, merge and v1.5 release. No master merge or tag has been made, no
+      global candidate installation was performed, and StatBus remains untouched.
+
 ## Backlog (after 1.4)
 - [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** The owner reports no application
       speedup and no adoption. Preserve `prototype/defer-temporal-checks` for reference only. Do not merge,
