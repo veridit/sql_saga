@@ -3,7 +3,7 @@
 \set ON_ERROR_STOP on
 SET client_min_messages = warning;
 SET datestyle = 'ISO, YMD';
-CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+\i sql/include/test_setup.sql
 BEGIN;
 CREATE SCHEMA portion_delete_157;
 SET LOCAL search_path = portion_delete_157, public;
@@ -70,8 +70,14 @@ BEGIN
     EXCEPTION WHEN invalid_parameter_value THEN NULL;
     END;
     IF (SELECT jsonb_agg(to_jsonb(i)) FROM item AS i) IS DISTINCT FROM before_rows THEN RAISE EXCEPTION 'Ambiguous identity was not atomic'; END IF;
+    BEGIN
+        UPDATE item__for_portion_of_valid SET id = NULL, derived = 'FORGED' WHERE id = 1;
+        RAISE EXCEPTION 'Expected changed generated view payload rejection' USING ERRCODE = 'P0002';
+    EXCEPTION WHEN invalid_parameter_value THEN NULL;
+    END;
+    IF (SELECT jsonb_agg(to_jsonb(i)) FROM item AS i) IS DISTINCT FROM before_rows THEN RAISE EXCEPTION 'Ambiguous generated payload was not atomic'; END IF;
 END $assert$;
-\echo PASS ambiguous payload and changed nonnull identity reject atomically
+\echo PASS ambiguous payload, generated payload and changed nonnull identity reject atomically
 ROLLBACK TO ambiguous;
 SAVEPOINT null_payload;
 UPDATE item__for_portion_of_valid SET payload = NULL WHERE id = 1;
@@ -172,5 +178,35 @@ BEGIN
     PERFORM check_item(ARRAY['1/7:a:A:[2024-01-01,2025-01-01)','1/7:b:B:[2025-01-01,2026-01-01)','1/7:c:C:[2026-01-01,infinity)','2/9:other:OTHER:[2024-01-01,infinity)']);
 END $assert$;
 \echo PASS temporal FK failure preserves original rows atomically
+DROP TABLE child;
+-- A regular child refers to existence anywhere in history, not coverage of every instant.
+CREATE TABLE regular_child (child_id int PRIMARY KEY, parent_id int, parent_part int);
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'regular_child'::regclass,
+    fk_column_names => ARRAY['parent_id','parent_part']::name[],
+    pk_table_oid => 'item'::regclass,
+    pk_column_names => ARRAY['id','part']::name[],
+    delete_action => 'CASCADE'
+) AS ignored \gset
+INSERT INTO regular_child VALUES (10,1,7),(20,2,9);
+UPDATE item__for_portion_of_valid SET id = NULL, valid_from = '2024-03-01', valid_until = '2024-06-01' WHERE id = 1;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $assert$ BEGIN
+    IF (SELECT array_agg(child_id ORDER BY child_id) FROM regular_child) IS DISTINCT FROM ARRAY[10,20] THEN
+        RAISE EXCEPTION 'Partial history removal cascaded regular child';
+    END IF;
+    PERFORM check_item(ARRAY['1/7:a:A:[2024-01-01,2024-03-01)','1/7:a:A:[2024-06-01,2025-01-01)','1/7:b:B:[2025-01-01,2026-01-01)','1/7:c:C:[2026-01-01,infinity)','2/9:other:OTHER:[2024-01-01,infinity)']);
+END $assert$;
+\echo PASS partial history deletion retains regular CASCADE child
+UPDATE item__for_portion_of_valid SET part = NULL WHERE id = 1;
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $assert$ BEGIN
+    IF (SELECT array_agg(child_id ORDER BY child_id) FROM regular_child) IS DISTINCT FROM ARRAY[20] THEN
+        RAISE EXCEPTION 'Full history removal did not cascade exactly its regular child';
+    END IF;
+    PERFORM check_item(ARRAY['2/9:other:OTHER:[2024-01-01,infinity)']);
+END $assert$;
+\echo PASS full history deletion cascades only matching regular child
 ROLLBACK;
+\i sql/include/test_teardown.sql
 \echo PASS STATBUS-611 delete protocol
