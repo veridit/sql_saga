@@ -357,7 +357,7 @@ fixed. New findings, each fixed test-first:
       Candidate package is 1.5, with direct upgrades from released 1.0 through 1.4.
       Frozen 1.4 artifacts retain their released bytes. Catalog format remains 1.4.
 - [x] Actual released 1.4 libraries and an existing managed view upgraded to
-      privately staged 1.5: trigger/view OIDs, a named site EXECUTE grant and data
+      privately staged 1.5: trigger routine OID, a named site EXECUTE grant and data
       preserved. Exact portion removal and integrity passed after upgrade.
       A rollback rehearsal restored the old version, definition and data.
       The same behavior is now a permanent 1.4 upgrade-harness assertion.
