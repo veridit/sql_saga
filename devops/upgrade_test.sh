@@ -50,6 +50,7 @@ fi
 [ -n "$(printf x | md5)" ] || { echo "HARNESS ERROR: no working md5/md5sum" >&2; exit 2; }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+. "$REPO/devops/upgrade_migration_safety.sh" || exit 2
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
@@ -1705,7 +1706,7 @@ if [ -f "$DIRECT_UPD" ] && [ -f "$EXT/sql_saga--1.0--1.1.sql" ] && [ -f "$UPD" ]
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
     # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
     # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
-    if printf '%s\n' "$body" | grep -qiE '(DROP|TRUNCATE)[^;]*[[:<:]]CASCADE[[:>:]]'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    assert_no_cascading_ddl "$body"
     if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
         fail "direct update script disables event triggers or changes session_replication_role"
     else ok "direct update script keeps event triggers on"; fi
@@ -1749,7 +1750,7 @@ if [ -f "$DIRECT_UPD" ]; then
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
     # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
     # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
-    if printf '%s\n' "$body" | grep -qiE '(DROP|TRUNCATE)[^;]*[[:<:]]CASCADE[[:>:]]'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    assert_no_cascading_ddl "$body"
     if printf '%s\n' "$body" | grep -qi 'session_replication_role'; then fail "direct update script changes session_replication_role"
     else ok "direct update script leaves session_replication_role alone"; fi
     other_disable=$(printf '%s\n' "$body" | grep -iE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE' | grep -vc 'sql_saga_rename_following' || true)

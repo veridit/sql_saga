@@ -216,6 +216,7 @@ endif
 # Unit tests of the update-script generator (no database needed).
 .PHONY: test-generator
 test-generator:
+	$(SQL_SAGA_PYTHON) devops/test_upgrade_migration_safety.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_5.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_4.py
 	devops/test_update_scripts_make.sh
