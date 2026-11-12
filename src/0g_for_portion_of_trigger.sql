@@ -1,16 +1,23 @@
 CREATE FUNCTION sql_saga.for_portion_of_trigger()
  RETURNS trigger
  LANGUAGE plpgsql
-AS $function$
+AS $for_portion_of_trigger$
 #variable_conflict use_variable
 DECLARE
     info record;
     jnew jsonb;
+    jold jsonb;
     identifier_columns text[];
     temp_source_table_name text;
+    delete_portion boolean := false;
+    merge_mode sql_saga.temporal_merge_mode := 'UPDATE_FOR_PORTION_OF';
 BEGIN
     -- This view only supports UPDATE operations
-    IF TG_OP <> 'UPDATE' THEN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'sql_saga: DELETE is not supported on a "for_portion_of" view.'
+            USING ERRCODE = 'feature_not_supported',
+                  HINT = 'Use UPDATE with an identifier column set to NULL and the requested temporal bounds. Omit bounds to remove the complete matched history.';
+    ELSIF TG_OP <> 'UPDATE' THEN
         RAISE EXCEPTION 'sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.';
     END IF;
 
@@ -32,6 +39,56 @@ BEGIN
     END IF;
 
     jnew := to_jsonb(NEW);
+    jold := to_jsonb(OLD);
+
+    -- The conceptual entity identifier excludes temporal columns even when
+    -- add_for_portion_of_view introspected a PRIMARY KEY containing them.
+    identifier_columns := TG_ARGV::text[];
+    IF info.range_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.range_column_name); END IF;
+    IF info.valid_from_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_from_column_name); END IF;
+    IF info.valid_until_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_until_column_name); END IF;
+    IF info.valid_to_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_to_column_name); END IF;
+
+    -- A NULL assignment to an identifier requests removal, never a NULL-key
+    -- update. Ignore identifiers already NULL in OLD, so a nullable key does
+    -- not turn an unrelated payload correction into a deletion.
+    SELECT EXISTS (
+        SELECT FROM unnest(identifier_columns) AS ic(column_name)
+        WHERE jnew -> ic.column_name = 'null'::jsonb
+          AND jnew -> ic.column_name IS DISTINCT FROM jold -> ic.column_name
+    ) INTO delete_portion;
+
+    IF delete_portion THEN
+        IF EXISTS (
+            SELECT FROM jsonb_each(jnew) AS nc(column_name, value)
+            WHERE nc.value IS DISTINCT FROM jold -> nc.column_name
+              AND nc.column_name <> ALL(info.generated_columns)
+              AND NOT (nc.column_name = ANY(identifier_columns) AND nc.value = 'null'::jsonb)
+              AND nc.column_name IS DISTINCT FROM info.range_column_name
+              AND nc.column_name IS DISTINCT FROM info.valid_from_column_name
+              AND nc.column_name IS DISTINCT FROM info.valid_until_column_name
+              AND nc.column_name IS DISTINCT FROM info.valid_to_column_name
+        ) THEN
+            RAISE EXCEPTION 'sql_saga: a portion deletion cannot also change non-temporal column values.'
+                USING ERRCODE = 'invalid_parameter_value',
+                      HINT = 'Set an identifier column to NULL and change only the requested temporal bounds.';
+        END IF;
+
+        -- A middle split can physically UPDATE and INSERT without DELETE.
+        -- Require DELETE authority for the logical removal regardless of plan.
+        -- All physical DML still runs as the invoker, with its normal RLS.
+        IF NOT pg_catalog.has_table_privilege(info.table_oid, 'DELETE') THEN
+            RAISE EXCEPTION 'permission denied for table %', info.table_name
+                USING ERRCODE = 'insufficient_privilege';
+        END IF;
+
+        -- NULL is only the command signal. Every component of the identity
+        -- supplied to temporal_merge must come from OLD, including composites.
+        SELECT jnew || jsonb_object_agg(ic.column_name, jold -> ic.column_name)
+        INTO jnew
+        FROM unnest(identifier_columns) AS ic(column_name);
+        merge_mode := 'DELETE_FOR_PORTION_OF';
+    END IF;
 
     -- Strip GENERATED columns from jnew using direct array subtraction
     jnew := jnew - info.generated_columns;
@@ -50,7 +107,6 @@ BEGIN
     -- so using OLD values for unchanged columns preserves the correct values per segment.
     IF TG_OP = 'UPDATE' THEN
         DECLARE
-            jold jsonb := to_jsonb(OLD);
             filtered_jnew jsonb := '{}'::jsonb;
             key text;
             identity_cols text[] := TG_ARGV::text[];
@@ -78,15 +134,6 @@ BEGIN
             jnew := filtered_jnew;
         END;
     END IF;
-
-    -- The conceptual entity identifier should not include the temporal columns.
-    -- We filter them out here to correct for cases where a PRIMARY KEY that
-    -- includes a temporal column was introspected by add_for_portion_of_view.
-    identifier_columns := TG_ARGV::text[];
-    IF info.range_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.range_column_name); END IF;
-    IF info.valid_from_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_from_column_name); END IF;
-    IF info.valid_until_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_until_column_name); END IF;
-    IF info.valid_to_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_to_column_name); END IF;
 
     -- Create a temporary table to hold the single source row. The table name
     -- is based on the view's OID to be unique per view. It is created only if it
@@ -245,14 +292,7 @@ BEGIN
         target_table => info.table_oid,
         source_table => temp_source_table_name::regclass,
         primary_identity_columns => identifier_columns,
-        -- Use UPDATE mode with filtered source (only changed columns).
-        -- Since we filter jnew to exclude unchanged columns, the source will only contain:
-        --   - Identity columns (always included)
-        --   - Temporal columns (always included)
-        --   - Changed columns (including those explicitly set to NULL)
-        -- Absent columns will be NULL in the source row, but that's OK because
-        -- temporal_merge will inherit them from the target via COALESCE(t || s).
-        mode => 'UPDATE_FOR_PORTION_OF',
+        mode => merge_mode,
         era_name => info.era_name,
         update_source_with_feedback => true,
         feedback_status_column => 'merge_status',
@@ -275,4 +315,4 @@ BEGIN
 
     RETURN NEW;
 END;
-$function$;
+$for_portion_of_trigger$;
