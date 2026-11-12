@@ -293,7 +293,58 @@ fixed. New findings, each fixed test-first:
 - [x] TRUNCATE of a referenced parent refused like native FKs (73e61d2, test 138, fast 123/123)
 - [x] Independent review: BLOCK with F1-F10; F1, F2, F3 reproduced on a private cluster
 
+## Next - for_portion_of view: remove a portion with `SET id = NULL` (StatBus STATBUS-611, 2026-11-12)
+
+- [ ] **Delete protocol for the for_portion_of view: setting the identity to NULL removes the record over the
+      period given.** Owner design 2026-11-12.
+      - **Why.** StatBus edit forms write through `<table>__for_portion_of_valid` (PostgREST PATCH). They now need
+        "Remove" for a record (contact, location, activity, stat_for_unit) over a chosen period, for example a
+        location that is wrong for 2025 only. The view rejects DELETE, and has to: a DELETE trigger gets only OLD,
+        so the WHERE clause cannot carry a period. The period travels in SET (`valid_from`/`valid_until`/`valid_to`
+        or the range column), as it already does for UPDATE. Only the current view has a delete protocol
+        (`SET valid_from = 'infinity'`, `src/3c_current_view_trigger.sql`). The for_portion_of view needs its own.
+      - **Rejected signals.** A marker column that exists only in the view: the protocol must use real columns.
+        All value columns set to NULL: that is a legitimate update (for example emptying a location's region) and
+        can also violate a table CHECK (StatBus contact "One information must be provided").
+      - **Protocol.** `UPDATE x__for_portion_of_valid SET id = NULL, valid_from = START, valid_until = STOP
+        WHERE id = 10;` removes record 10 over [START, STOP). An identity column (the trigger's identifier columns,
+        TG_ARGV minus the temporal columns) set to NULL is the signal: no stored row can have a NULL identity, so no
+        real update looks like it. Same idea as the current view's `valid_from = 'infinity'`.
+      - **Behaviour.**
+        - The trigger fires once per matched stored row (unchanged). Requested period = SET dates as today
+          (range column, or valid_from + valid_until, or valid_from + valid_to), intersected with OLD's range; empty
+          intersection -> skip the row (unchanged).
+        - Then call `temporal_merge` with `mode => 'DELETE_FOR_PORTION_OF'` instead of `UPDATE_FOR_PORTION_OF`.
+          A row that overlaps START or STOP is split; only the part inside is removed. Rows outside stay.
+        - No dates in SET (`SET id = NULL WHERE id = 10`): the period is each row's own range, so the record goes
+          completely.
+        - Identity NULL together with any changed non-temporal column: raise an error (ambiguous: change or remove).
+        - A composite identity: any identifier column set to NULL is the signal; the rows are found by OLD's values.
+        - Temporal FKs still decide: removing a period a child depends on fails as for any delete.
+      - **Defect to fix in the same change (RED today).** On 1.4 `SET id = NULL` through the view reports
+        `UPDATE 1` and changes nothing (StatBus `tmp/611-null-id-probe2.log`): the NULL identity is silently
+        dropped. With the protocol it gets its meaning.
+      - **Tests (RED first, in `sql/050_view_for_portion_of_basis.sql` or a new test).**
+        1. Middle of one row: row [2024, inf), remove [2026-03-01, 2026-06-01) -> [2024, 2026-03-01) and
+           [2026-06-01, inf), values unchanged.
+        2. Period spanning several rows: rows 2024, 2025, 2026-inf; remove [2024-07-01, 2026-01-01) -> 2024 cut at
+           2024-07-01, 2025 gone, 2026-inf unchanged.
+        3. Exactly aligned with one row: that row gone, neighbours unchanged.
+        4. No dates: the whole record gone, other records unchanged.
+        5. `valid_to` instead of `valid_until`, and the range column directly.
+        6. Identity NULL plus another column changed -> error, nothing changed.
+        7. Temporal FK: removing a period a child row covers -> FK error, nothing changed.
+        8. Through a role with UPDATE on the view and DELETE on the table (RLS on), as StatBus uses it.
+      - **Docs.** README for_portion_of section: the protocol, with the PostgREST form
+        `PATCH /x__for_portion_of_valid?id=eq.10` body `{"id": null, "valid_from": S, "valid_until": E}`.
+        Change the DELETE rejection message to point at it.
+      - **Release.** Next version after 1.4 (update script from 1.4). StatBus pins it and builds the Remove
+        button on it (STATBUS-611). Until then StatBus does not ship Remove.
+
 ## Backlog (after 1.4)
+- [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** The owner reports no application
+      speedup and no adoption. Preserve `prototype/defer-temporal-checks` for reference only. Do not merge,
+      release or resume that experiment as part of STATBUS-611.
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
       without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
       and CASCADE semantics). Separate project, not part of 1.4; use the 1.4 C-trigger behavior and parity tests as
