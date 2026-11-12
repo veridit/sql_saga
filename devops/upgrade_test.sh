@@ -3396,6 +3396,37 @@ sql_saga.__internal_is_managed_history_policy(name)"
 fi
 
 # ---------------------------------------------------------------------------------------------
+# A released 1.4 view must adopt the new protocol without recreation or ACL replay.
+if [ "$BASELINE_VERSION" = 1.4 ] && ! version_lt "$NEW_VERSION" 1.5; then
+    section "existing 1.4 view adopts portion deletion" "expected RED"
+    PORTION_DB=${PREFIX}_portion_delete
+    v13_db "$PORTION_DB" "CREATE TABLE portion_upgrade (id integer, payload text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('portion_upgrade', 'valid_range');
+SELECT sql_saga.add_unique_key('portion_upgrade', ARRAY['id']);
+SELECT sql_saga.add_for_portion_of_view('portion_upgrade'::regclass);
+INSERT INTO portion_upgrade VALUES (611, 'preserved', '[2024-01-01,infinity)', '2024-01-01', 'infinity');
+REVOKE EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO ${PREFIX}_fpo;"
+    portion_identity_sql="SELECT p.oid::text || '|' || p.proacl::text || '|' || 'portion_upgrade__for_portion_of_valid'::regclass::oid FROM pg_proc AS p WHERE p.oid = 'sql_saga.for_portion_of_trigger()'::regprocedure"
+    portion_before=$(q "$PORTION_DB" "$portion_identity_sql")
+    portion_definition=$(q "$PORTION_DB" "SELECT md5(pg_get_functiondef('sql_saga.for_portion_of_trigger()'::regprocedure))")
+    portion_rows_sql="SELECT string_agg(id || ':' || payload || ':' || valid_range::text, ',' ORDER BY valid_range) FROM portion_upgrade"
+    portion_rows_before=$(q "$PORTION_DB" "$portion_rows_sql")
+    v13_restart "$PORTION_DB"
+    portion_delete_sql="UPDATE portion_upgrade__for_portion_of_valid SET id = NULL, valid_from = '2026-03-01', valid_until = '2026-06-01' WHERE id = 611;"
+    portion_expected='611:preserved:[2024-01-01,2026-03-01),611:preserved:[2026-06-01,infinity)'
+    check "existing view: rollback rehearsal upgrades, deletes exact slice and passes integrity" "$portion_expected" \
+        "$(q "$PORTION_DB" "BEGIN; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; $portion_delete_sql SELECT sql_saga.check_integrity(); $portion_rows_sql; ROLLBACK;")"
+    check "existing view: rehearsal restores released version" "1.4" "$(v13_version "$PORTION_DB")"
+    check "existing view: rehearsal restores rows" "$portion_rows_before" "$(q "$PORTION_DB" "$portion_rows_sql")"
+    check "existing view: rehearsal restores routine definition" "$portion_definition" "$(q "$PORTION_DB" "SELECT md5(pg_get_functiondef('sql_saga.for_portion_of_trigger()'::regprocedure))")"
+    check "existing view: committed upgrade succeeds" "" "$(q "$PORTION_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "existing view: upgrade preserves trigger routine OID, site ACL and view OID" "$portion_before" "$(q "$PORTION_DB" "$portion_identity_sql")"
+    check "existing view: upgrade does not rewrite data" "$portion_rows_before" "$(q "$PORTION_DB" "$portion_rows_sql")"
+    check "existing view: NULL identity deletes slice with OLD identity and payload" "$portion_expected" "$(q "$PORTION_DB" "$portion_delete_sql $portion_rows_sql")"
+    assert_integrity "$PORTION_DB"
+fi
+
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
