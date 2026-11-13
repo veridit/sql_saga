@@ -459,8 +459,9 @@ SET region_id = 3, valid_from = '2026-01-01', valid_until = '2027-01-01'
 WHERE legal_unit_id = 7;
 ```
 
-Measured on one machine, 300 rows took 93 ms in 1.6 against 2.9 s in 1.5, and 3,000 rows took about one
-second. A single row costs the same as before. One statement may both remove and change rows, for example
+Measured on one busy machine, 300 rows took about 0.1 s in 1.6 against 2.9 s in 1.5, and 3,000 rows took
+about 1.2 s (roughly 0.4 ms per row, against 0.2-0.25 ms for one direct `temporal_merge`). A single row
+costs about the same as before. One statement may both remove and change rows, for example
 with `SET id = CASE ... END`. Row counts and `RETURNING` report the matched rows as before, and an error in
 any row aborts the whole statement.
 
