@@ -43,7 +43,7 @@ jobs:
         with:
           workspaces: native -> target
 
-      - name: Test deterministic 1.5 update-script generation
+      - name: Test deterministic 1.6 update-script generation
         run: make test-generator PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Build and install sql_saga (C library, internal native library, SQL)
@@ -66,9 +66,9 @@ jobs:
         # limitation and does not fail the job (see doc/decision-log.md).
         run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
 
-      - name: Run released 1.0 through 1.4 to 1.5 upgrade matrix
-        # Builds all five release tags privately, upgrades each directly to candidate 1.5 and compares
-        # with a fresh 1.5 install, including ACLs and generated objects (devops/upgrade_test.sh).
+      - name: Run released 1.0 through 1.5 to 1.6 upgrade matrix
+        # Builds all six release tags privately, upgrades each directly to candidate 1.6 and compares
+        # with a fresh 1.6 install, including ACLs and generated objects (devops/upgrade_test.sh).
         run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Run concurrent function-attribution isolation test

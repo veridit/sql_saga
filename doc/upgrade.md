@@ -1,8 +1,8 @@
 # Upgrading sql_saga
 
 This guide describes the normal PostgreSQL extension upgrade workflow. The current
-package is **1.5**, supporting a fresh install and direct upgrades from released
-**1.0, 1.1, 1.2, 1.3 and 1.4** on PostgreSQL 18.
+package is **1.6**, supporting a fresh install and direct upgrades from released
+**1.0, 1.1, 1.2, 1.3, 1.4 and 1.5** on PostgreSQL 18.
 
 ## Before the maintenance window
 
@@ -15,9 +15,12 @@ package is **1.5**, supporting a fresh install and direct upgrades from released
   server's PostgreSQL 18 `pg_config`. Do not deploy to another local cluster.
 - For sources before 1.4, read the historical migration requirements in
   [the 1.4 migration guide](upgrade-1.4.md). Its historical commands name 1.4,
-  but when using the current package update **directly to 1.5** instead.
+  but when using the current package update **directly to 1.6** instead.
   Orphan rows, changed routine ACLs, mispaired XOR keys and noncanonical generated
   objects can intentionally refuse an upgrade. Never bypass an integrity gate.
+- A `for_portion_of` view that already has a user trigger named like its 1.6 apply
+  trigger (`<row trigger>_apply`, for example `for_portion_of_valid_apply`) refuses
+  the upgrade. `sql_saga_upgrade_preflight.sql` lists them; rename them first.
 
 ## Deploy the whole package
 
@@ -34,15 +37,15 @@ The native library is not a separate extension and must not be installed using
 The package contains:
 
 - `sql_saga.control`, with the current `default_version`.
-- `sql_saga--1.5.sql`, the fresh installation.
-- `sql_saga--<source>--1.5.sql`, one direct script for each supported source.
+- `sql_saga--1.6.sql`, the fresh installation.
+- `sql_saga--<source>--1.6.sql`, one direct script for each supported source.
 - Every frozen released installation and upgrade artifact in `versions/`.
 - `sql_saga_upgrade_preflight.sql`.
 - `$libdir/sql_saga` and `$libdir/sql_saga_native` for the same release.
 
 Restart PostgreSQL after replacing either library. The native library version is
 embedded from `sql_saga.control` at build time. The direct upgrades require
-`sql_saga.native_library_version()` to return `1.5`. Do not run an older upgrade
+`sql_saga.native_library_version()` to return `1.6`. Do not run an older upgrade
 script with the current native library loaded, because its guard requires its
 own release's library.
 
@@ -66,7 +69,7 @@ substitute for the real rollback-only upgrade.
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
 SELECT source, target, path
 FROM pg_catalog.pg_extension_update_paths('sql_saga')
-WHERE target = '1.5' AND source IN ('1.0', '1.1', '1.2', '1.3', '1.4')
+WHERE target = '1.6' AND source IN ('1.0', '1.1', '1.2', '1.3', '1.4', '1.5')
 ORDER BY source;
 ALTER EXTENSION sql_saga UPDATE;
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
@@ -74,10 +77,24 @@ SELECT sql_saga.native_library_version();
 SELECT sql_saga.check_integrity();
 ```
 
-Expected paths are `<source>--1.5`, never an intermediate hop. Both version
-queries must report `1.5` and integrity must complete without error. Exercise
+Expected paths are `<source>--1.6`, never an intermediate hop. Both version
+queries must report `1.6` and integrity must complete without error. Exercise
 application reads and writes before reopening writers. Repeat for every database
 that contains the extension.
+
+## What changes in 1.6
+
+A statement through a `for_portion_of` view is applied as one batch: the row
+trigger only queues each matched row, and a new statement-level trigger on the view
+applies the queue with one `temporal_merge`. The update replaces the changed
+routines with `CREATE OR REPLACE`, retaining their OIDs, owners and site-specific
+privileges, and creates the new `sql_saga.for_portion_of_apply_trigger()`, executable
+by `PUBLIC` like the row trigger function. It then adds the apply trigger,
+`AFTER UPDATE FOR EACH STATEMENT`, to every existing `for_portion_of` view, named after
+the view's row trigger with the suffix `_apply`. Views keep their OID, grants,
+comments and other triggers. No user table is rebuilt and no data is rewritten.
+
+Sources before 1.5 also receive the 1.5 deletion protocol (below).
 
 ## What changes in 1.5
 
@@ -85,11 +102,11 @@ The `for_portion_of` trigger supports the new deletion protocol. The update repl
 only `sql_saga.for_portion_of_trigger()` using `CREATE OR REPLACE`, retaining its
 OID, dependent view triggers, owner and site-specific privileges. It does not
 rebuild user tables or rewrite their data. Existing managed views use the updated
-trigger immediately.
+trigger immediately. See [the 1.5 guide](upgrade-1.5.md).
 
 The catalog format remains **1.4**. A catalog-format marker names the compatible
 layout, not the current extension or native-library version. Do not change it to
-1.5 or add a default to bypass old-dump safeguards.
+1.6 or add a default to bypass old-dump safeguards.
 
 Sources before 1.4 also undergo the historical migrations documented in
 [the 1.4 guide](upgrade-1.4.md), including caller-rights management, regular-FK
@@ -135,16 +152,18 @@ verified pre-upgrade backup with its matching package, then rehearsing again.
 
 ## Release engineering and validation
 
-Released files are immutable. The 1.4 assets were reproduced from immutable tag
-`v1.4`, commit `8759b7b`, using only that tag's ordered SQL sources and its own
+Released files are immutable. The 1.5 assets were reproduced from immutable tag
+`v1.5`, commit `545839a`, using only that tag's ordered SQL sources and its own
 update generator, not development source or shelved prototypes.
 
-`devops/generate_update_scripts_1_5.py` authenticates those assets by SHA-256,
+`devops/generate_update_scripts_1_6.py` authenticates those assets by SHA-256,
 retargets native guards, actionable hints and locks in embedded older migrations,
-and appends the same 1.5 routine delta to every path. Catalog markers and the
-historical migration source setting remain unchanged. Each script has exactly
-one final integrity gate. Unmanifested SQL changes fail generation rather than
-silently disappearing from upgrades.
+and appends the same 1.6 routine delta and `devops/upgrade_1_6_repairs.sql` to
+every path. Catalog markers and the historical migration source setting remain
+unchanged. Each script has exactly one final integrity gate. Unmanifested SQL
+changes fail generation rather than silently disappearing from upgrades. The
+specification tests of the released 1.4 and 1.5 generators run against their
+own tagged source trees.
 
 `make test-generator` runs generator unit and parallel make wiring checks without
 a database. `make test-upgrade` builds immutable released tags privately and uses

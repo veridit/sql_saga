@@ -443,6 +443,32 @@ the two surviving pieces. Base-table `SELECT`, `UPDATE`, and `INSERT` privileges
 RLS `SELECT`, `UPDATE`, and `INSERT` policies may therefore also be required. RLS applies to the
 actual operations performed. SQL `DELETE` policies alone do not govern this UPDATE-based protocol.
 
+###### Many Rows in One Statement (sql_saga 1.6)
+
+Since 1.6 a statement through the `for_portion_of` view is applied as one batch: the row trigger only
+works out each matched row's portion and queues it, and the view's statement-level trigger
+(`<row trigger>_apply`, for example `for_portion_of_valid_apply`) then applies all queued rows with one
+`temporal_merge`, removals first, then changes. The result is the same as applying the rows one by one,
+because each row's portion is its own period intersected with the requested period. A statement that
+matches many rows is therefore about as fast per row as calling `temporal_merge` directly:
+
+```sql
+-- One statement: every establishment of legal unit 7 moves to region 3 for 2026, in one merge.
+UPDATE establishment__for_portion_of_valid
+SET region_id = 3, valid_from = '2026-01-01', valid_until = '2027-01-01'
+WHERE legal_unit_id = 7;
+```
+
+Measured on one machine, 300 rows took 93 ms in 1.6 against 2.9 s in 1.5, and 3,000 rows took about one
+second. A single row costs the same as before. One statement may both remove and change rows, for example
+with `SET id = CASE ... END`. Row counts and `RETURNING` report the matched rows as before, and an error in
+any row aborts the whole statement.
+
+A trigger on the base table cannot write through the same view while that view's change is being applied:
+the nested statement is refused (`object_in_use`); write to the base table directly instead. The apply
+trigger is part of the managed view, so drop protection, `check_integrity()` and rename following treat it
+like the row trigger. Upgrading to 1.6 adds it to every existing `for_portion_of` view in place.
+
 ##### The `current` View: A Simple View of the Present
 This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It simplifies interaction by showing only the records that are currently active. Because it is based on the concept of "now", the `current` view can only be created on eras that use a `date` or `timestamp`-based data type. It provides a safe, explicit protocol for data modification.
 
