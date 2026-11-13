@@ -383,10 +383,18 @@ fixed. New findings, each fixed test-first:
       private package stages and native build output removed. Released global
       installation, original dirty checkout, shelved prototype, master and v1.4
       remain unchanged. Later evidence commits change documentation only.
-- [ ] Review, merge and v1.5 release. No master merge or tag has been made, no
-      global candidate installation was performed, and StatBus remains untouched.
+- [x] Owner reviewed and approved 2026-11-13. Fast-forward to master and tag v1.5.
+      StatBus pins 1.5 and builds Remove on it (STATBUS-611).
+- [x] Context measured 2026-11-13 (one throwaway DB, fastest of two runs after a warmup): through the view,
+      DELETE costs the same as UPDATE (30 rows: 198 vs 203 ms). Batched temporal_merge is 20-60x faster
+      (30 rows: 10-11 ms; 300 rows: 47-61 ms vs 2.9-3.3 s through the view). The view runs one
+      temporal_merge per row, unchanged since 1.4. Owner: single-row speed is good enough for 1.5.
 
 ## Backlog (after 1.4)
+- [ ] **Batch speed through the for_portion_of view (after 1.5, owner 2026-11-13).** The INSTEAD OF trigger
+      runs a full temporal_merge per row: about 7 ms/row at 30 rows, rising to about 10 ms/row at 300 rows,
+      against 0.16-0.37 ms/row for one batched temporal_merge. First decide whether a design can batch
+      view writes at all (for example collect rows per statement and merge once), then benchmark only if so.
 - [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** The owner reports no application
       speedup and no adoption. Preserve `prototype/defer-temporal-checks` for reference only. Do not merge,
       release or resume that experiment as part of STATBUS-611.
