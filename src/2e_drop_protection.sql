@@ -92,8 +92,8 @@ BEGIN
                         ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger))
            OR EXISTS (
                   SELECT FROM sql_saga.updatable_view AS v
-                  WHERE (v.view_schema, v.view_name, v.trigger_name) =
-                        (d.address_names[1], d.address_names[2], d.address_names[3]))
+                  WHERE (v.view_schema, v.view_name) = (d.address_names[1], d.address_names[2])
+                    AND d.address_names[3] IN (v.trigger_name, sql_saga.__internal_view_apply_trigger_name(v.view_type, v.trigger_name)))
            OR EXISTS (
                   SELECT FROM sql_saga.foreign_keys AS fk
                   JOIN sql_saga.unique_keys AS uk USING (unique_key_name)
@@ -144,8 +144,8 @@ BEGIN
           ON (d.object_type = 'view'
               AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name))
           OR (d.object_type = 'trigger'
-              AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
-                  (v.view_schema, v.view_name, v.trigger_name))
+              AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name)
+              AND d.address_names[3] IN (v.trigger_name, sql_saga.__internal_view_apply_trigger_name(v.view_type, v.trigger_name)))
           OR (d.object_type IN ('table column', 'table constraint', 'index')
               AND (d.address_names[1], d.address_names[2]) = (v.table_schema, v.table_name))
         UNION ALL
@@ -246,8 +246,8 @@ BEGIN
               ON ((d.object_type = 'view'
                    AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name))
                   OR (d.object_type = 'trigger'
-                      AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
-                          (v.view_schema, v.view_name, v.trigger_name)))
+                      AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name)
+                      AND d.address_names[3] IN (v.trigger_name, sql_saga.__internal_view_apply_trigger_name(v.view_type, v.trigger_name))))
             WHERE NOT jsonb_build_array(v.table_schema, v.table_name) = ANY (v_sanctioned_bases)
             UNION ALL
             SELECT 1
@@ -347,12 +347,13 @@ BEGIN
             UNION ALL
             SELECT 90, d.dropped_ordinality,
                    format('cannot drop trigger "%s" on view "%s" because it is part of an updatable view for era "%s" on table "%s"',
-                          v.trigger_name,
+                          d.address_names[3],
                           sql_saga.__internal_display_name(d.address_names[1]::name, d.address_names[2]::name),
                           v.era_name,
                           sql_saga.__internal_display_name(v.table_schema, v.table_name))
             FROM dropped AS d JOIN sql_saga.updatable_view AS v
-             ON (d.address_names[1], d.address_names[2], d.address_names[3]) = (v.view_schema, v.view_name, v.trigger_name)
+             ON (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name)
+             AND d.address_names[3] IN (v.trigger_name, sql_saga.__internal_view_apply_trigger_name(v.view_type, v.trigger_name))
             UNION ALL
             SELECT CASE WHEN d.address_names[3] = fk.uk_update_trigger THEN 120 ELSE 130 END,
                    d.dropped_ordinality,
@@ -438,13 +439,14 @@ BEGIN
             UNION ALL
             SELECT 90, d.dropped_ordinality,
                    format('cannot drop trigger "%s" on view "%s" because it is part of an updatable view for era "%s" on table "%s"',
-                          v.trigger_name,
+                          d.address_names[3],
                           sql_saga.__internal_display_name(d.address_names[1]::name, d.address_names[2]::name),
                           v.era_name,
                           sql_saga.__internal_display_name(v.table_schema, v.table_name))
             FROM dropped AS d JOIN sql_saga.updatable_view AS v
              ON d.object_type = 'trigger'
-             AND (d.address_names[1], d.address_names[2], d.address_names[3]) = (v.view_schema, v.view_name, v.trigger_name)
+             AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name)
+             AND d.address_names[3] IN (v.trigger_name, sql_saga.__internal_view_apply_trigger_name(v.view_type, v.trigger_name))
             UNION ALL
             SELECT 100, d.dropped_ordinality,
                    format('table "%s" must have a primary key or a single-column temporal unique key to support its %s view "%s" for era "%s"; drop that view first with sql_saga.drop_%s_view()',

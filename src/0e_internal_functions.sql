@@ -41,6 +41,18 @@ AS $__internal_display_name$
         END);
 $__internal_display_name$;
 
+/*
+ * The statement-level apply trigger of a for_portion_of view (1.6) is named after its row trigger
+ * (updatable_view.trigger_name), as add_for_portion_of_view creates it. A current view has none.
+ */
+CREATE FUNCTION sql_saga.__internal_view_apply_trigger_name(view_type sql_saga.updatable_view_type, trigger_name name)
+RETURNS name
+LANGUAGE sql
+IMMUTABLE
+AS $__internal_view_apply_trigger_name$
+    SELECT CASE WHEN view_type = 'for_portion_of' THEN (trigger_name || '_apply')::name END;
+$__internal_view_apply_trigger_name$;
+
 CREATE FUNCTION sql_saga.__internal_display_function_name(function_identity text)
 RETURNS text
 LANGUAGE sql

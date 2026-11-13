@@ -1677,6 +1677,17 @@ BEGIN
                             v_view_row.view_name /* %L */
                         );
                         EXECUTE sql;
+                        -- The apply trigger (1.6) is named after the row trigger: keep the pair.
+                        IF EXISTS (SELECT FROM pg_trigger
+                                   WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name || '_apply'
+                                     AND tgfoid = 'sql_saga.for_portion_of_apply_trigger()'::regprocedure)
+                           AND NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_new_trigger_name || '_apply') THEN
+                            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TRIGGER %I ON %s RENAME TO %I',
+                                v_view_row.trigger_name || '_apply', v_view_oid, v_new_trigger_name || '_apply'));
+                            RAISE NOTICE 'sql_saga: Renamed trigger "%" on view "%" to "%" to follow the rename of trigger "%"',
+                                v_view_row.trigger_name || '_apply', sql_saga.__internal_display_name(v_view_oid),
+                                v_new_trigger_name || '_apply', v_view_row.trigger_name;
+                        END IF;
                     END IF;
                 END IF;
             END IF;

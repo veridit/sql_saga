@@ -1,0 +1,21 @@
+\set ECHO none
+           tgname           | tgtype |                function                 
+----------------------------+--------+-----------------------------------------
+ for_portion_of_valid       |     93 | sql_saga.for_portion_of_trigger()
+ for_portion_of_valid_apply |     16 | sql_saga.for_portion_of_apply_trigger()
+(2 rows)
+
+PASS one statement splits several entities and reports each matched row
+PASS one entity spanning several stored rows
+PASS removal and change in one statement
+PASS RETURNING reports the requested rows
+PASS a failing statement changes nothing and leaves nothing queued
+PASS writable CTEs over the same and different views
+PASS a base-table trigger cannot write through the view being applied
+PASS replica role fires neither view trigger and queues nothing
+PASS the apply trigger is protected like the row trigger
+PASS a change is refused when the view has no apply trigger
+PASS check_integrity requires exactly one apply trigger
+PASS invoker row-level security limits a batched change to visible rows
+PASS a physical policy refusal rolls back the whole batched statement
+PASS 1.6 batched for_portion_of view writes

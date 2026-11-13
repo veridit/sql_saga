@@ -106,11 +106,9 @@ BEGIN
                     view_name, /* %I */
                     identifier_columns_quoted /* %s */
                 ));
-                -- PROTOTYPE (view batching): the row trigger queues, these merge once per statement.
-                PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I BEFORE UPDATE ON %I.%I FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.for_portion_of_statement_trigger()',
-                    trigger_name || '_before_statement', r.schema_name, view_name));
-                PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I AFTER UPDATE ON %I.%I FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.for_portion_of_statement_trigger()',
-                    trigger_name || '_after_statement', r.schema_name, view_name));
+                -- The row trigger queues each changed row; the apply trigger merges the statement's queue once.
+                PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I AFTER UPDATE ON %I.%I FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.for_portion_of_apply_trigger()',
+                    trigger_name || '_apply', r.schema_name, view_name));
                 INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, generated_columns, ephemeral_columns)
                     VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name, generated_columns, __api_add_for_portion_of_view.ephemeral_columns);
             END;

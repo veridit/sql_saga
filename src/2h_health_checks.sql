@@ -1317,7 +1317,13 @@ BEGIN
                   AND NOT t.tgisinternal AND t.tgtype = 93
                   AND t.tgfoid = CASE r.view_type
                       WHEN 'for_portion_of' THEN 'sql_saga.for_portion_of_trigger()'::regprocedure
-                      ELSE 'sql_saga.current_view_trigger()'::regprocedure END) THEN
+                      ELSE 'sql_saga.current_view_trigger()'::regprocedure END)
+           -- 1.6: a for_portion_of view applies its queued changes with exactly one statement trigger.
+           OR (r.view_type = 'for_portion_of' AND (
+                SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgrelid = view_oid AND NOT t.tgisinternal AND t.tgtype = 16 AND t.tgqual IS NULL
+                  AND t.tgnargs = 0
+                  AND t.tgfoid = 'sql_saga.for_portion_of_apply_trigger()'::regprocedure) <> 1) THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for updatable view "%.%" of table "%.%": identifier column or trigger definition is noncanonical; repair with drop_%_view and add_%_view',
                 r.view_schema, r.view_name, r.table_schema, r.table_name,
                 CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END,

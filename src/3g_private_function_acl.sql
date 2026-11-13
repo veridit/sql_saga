@@ -9,6 +9,7 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_attribution(name) FROM PUB
 REVOKE ALL ON FUNCTION sql_saga.__internal_temporal_foreign_key_is_attributable(name) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_object_is_attributable(name, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_display_name(name, name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_view_apply_trigger_name(sql_saga.updatable_view_type, name) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;
 
 /*

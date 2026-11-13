@@ -852,8 +852,8 @@ BEGIN
         WHERE (uv.view_schema, uv.view_name) = (v_view.view_schema, v_view.view_name);
 
         /*
-         * for_portion_of_trigger keeps its single-row source in pg_temp.__temp_for_portion_of_<view oid>
-         * until the end of the transaction. Created before this reshape, it has the old columns.
+         * for_portion_of_trigger queues sources in pg_temp.__temp_for_portion_of_<view oid> (and ..._delete)
+         * until the end of the transaction. Created before this reshape, they have the old columns.
          */
         IF pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid)) IS NOT NULL THEN
             EXECUTE pg_catalog.format('DROP TABLE pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid);
