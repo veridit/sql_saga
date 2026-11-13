@@ -25,7 +25,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.6: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.7: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -55,9 +55,9 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.6}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.7}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -83,6 +83,9 @@ frozen_artifacts() {
     done
     if version_lt 1.5 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4; do echo "sql_saga--$source--1.5.sql"; done
+    fi
+    if version_lt 1.6 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5; do echo "sql_saga--$source--1.6.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -259,8 +262,8 @@ SQL
             echo "HARNESS ERROR: building $tag install script (see $ARTIFACT_WORK/$version.build.log)" >&2
             exit 2
         }
-        if [ "$version" = 1.4 ] || [ "$version" = 1.5 ]; then
-            case "$version" in 1.4) sources="1.0 1.1 1.2 1.3" ;; *) sources="1.0 1.1 1.2 1.3 1.4" ;; esac
+        if [ "$version" = 1.4 ] || [ "$version" = 1.5 ] || [ "$version" = 1.6 ]; then
+            case "$version" in 1.4) sources="1.0 1.1 1.2 1.3" ;; 1.5) sources="1.0 1.1 1.2 1.3 1.4" ;; *) sources="1.0 1.1 1.2 1.3 1.4 1.5" ;; esac
             for source in $sources; do
                 artifact="sql_saga--$source--$version.sql"
                 make -C "$tag_dir" PG_CONFIG="$PG_CONFIG" "$artifact" >>"$ARTIFACT_WORK/$version.build.log" 2>&1 || exit 2
@@ -3462,6 +3465,36 @@ CREATE TRIGGER user_audit AFTER UPDATE ON batch_upgrade__for_portion_of_valid FO
     assert_integrity "$BATCH_DB"
 fi
 
+# ---------------------------------------------------------------------------------------------
+# 1.7: every existing current view gets its statement-level apply trigger in place (same view OID, grants,
+# data and user triggers), and a multi-row INSERT through it is then applied as one batch.
+if ! version_lt "$NEW_VERSION" 1.7 && ! version_lt "$BASELINE_VERSION" 1.3; then
+    section "existing $BASELINE_VERSION current view gets its 1.7 apply trigger" "expected RED"
+    CV_BATCH_DB=${PREFIX}_cv_batch
+    v13_db "$CV_BATCH_DB" "CREATE TABLE cv_batch_upgrade (id integer, payload text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('cv_batch_upgrade', 'valid_range');
+SELECT sql_saga.add_unique_key('cv_batch_upgrade', ARRAY['id']);
+SELECT sql_saga.add_current_view('cv_batch_upgrade'::regclass);
+INSERT INTO cv_batch_upgrade (id, payload, valid_from, valid_until) SELECT g, 'p' || g, '2024-01-01', 'infinity' FROM generate_series(1, 2) AS g;
+GRANT SELECT, INSERT ON cv_batch_upgrade__current_valid TO ${PREFIX}_fpo;
+CREATE FUNCTION cv_batch_upgrade_audit() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RETURN NULL; END \$f\$;
+CREATE TRIGGER user_audit AFTER INSERT ON cv_batch_upgrade__current_valid FOR EACH STATEMENT EXECUTE FUNCTION cv_batch_upgrade_audit();"
+    cv_batch_identity_sql="SELECT c.oid::text || '|' || coalesce(c.relacl::text, '') || '|' || (SELECT string_agg(t.tgname || ':' || t.oid, ',' ORDER BY t.tgname) FROM pg_trigger AS t WHERE t.tgrelid = c.oid AND t.tgname <> 'current_valid_apply') FROM pg_class AS c WHERE c.oid = 'cv_batch_upgrade__current_valid'::regclass"
+    cv_batch_before=$(q "$CV_BATCH_DB" "$cv_batch_identity_sql")
+    cv_batch_rows_sql="SELECT string_agg(id || ':' || payload || ':' || valid_range::text, ',' ORDER BY id, valid_range) FROM cv_batch_upgrade"
+    cv_batch_rows_before=$(q "$CV_BATCH_DB" "$cv_batch_rows_sql")
+    v13_restart "$CV_BATCH_DB"
+    check "existing current view: committed upgrade succeeds" "" "$(q "$CV_BATCH_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "existing current view: apply trigger created as a fresh install creates it" "current_valid_apply|4|sql_saga.current_view_apply_trigger()" \
+        "$(q "$CV_BATCH_DB" "SELECT t.tgname || '|' || t.tgtype || '|' || t.tgfoid::regprocedure FROM pg_trigger AS t WHERE t.tgrelid = 'cv_batch_upgrade__current_valid'::regclass AND t.tgfoid = 'sql_saga.current_view_apply_trigger()'::regprocedure")"
+    check "existing current view: view OID, grants and other triggers preserved" "$cv_batch_before" "$(q "$CV_BATCH_DB" "$cv_batch_identity_sql")"
+    check "existing current view: upgrade does not rewrite data" "$cv_batch_rows_before" "$(q "$CV_BATCH_DB" "$cv_batch_rows_sql")"
+    check "existing current view: one INSERT applies every row from today" \
+        "1:p1:[2024-01-01,today),1:new:[today,infinity),2:p2:[2024-01-01,infinity),5:second:[today,infinity),6:n6:[today,infinity)" \
+        "$(q "$CV_BATCH_DB" "INSERT INTO cv_batch_upgrade__current_valid (id, payload) VALUES (1, 'new'), (5, 'first'), (5, 'second'), (6, 'n6'); SELECT replace(string_agg(id || ':' || payload || ':' || valid_range::text, ',' ORDER BY id, valid_range), current_date::text, 'today') FROM cv_batch_upgrade")"
+    assert_integrity "$CV_BATCH_DB"
+fi
+
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
@@ -3525,6 +3558,8 @@ else
         if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.uk_truncate_check_c() sql_saga.record_alter_function_resolved() sql_saga.refuse_managed_relation_identity_change()"; fi
         # 1.6 adds the statement-level apply trigger of for_portion_of views, PUBLIC like the row trigger.
         if ! version_lt "$NEW_VERSION" 1.6 && version_lt "$BASELINE_VERSION" 1.6; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.for_portion_of_apply_trigger()"; fi
+        # 1.7 adds the statement-level apply trigger of current views, PUBLIC like the row trigger.
+        if ! version_lt "$NEW_VERSION" 1.7 && version_lt "$BASELINE_VERSION" 1.7; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.current_view_apply_trigger()"; fi
         # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
         # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
         if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then

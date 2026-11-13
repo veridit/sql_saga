@@ -8,16 +8,20 @@ from pathlib import Path
 import generate_update_scripts_1_6 as gen
 
 ROOT = Path(__file__).resolve().parent.parent
+# The 1.6 generator is specified against the released v1.6 source tree (later releases change src/).
+import released_tree  # noqa: E402
+SRC = Path(released_tree.released_src('v1.6'))
+DEVOPS = Path(released_tree.released_devops('v1.6'))
 
 
 class Packaging(unittest.TestCase):
     def build(self, src=None, versions=None, devops=None):
-        return gen.build(str(src or ROOT / 'src'), str(versions or ROOT / 'versions'),
-                         str(devops or ROOT / 'devops'), '1.6')
+        return gen.build(str(src or SRC), str(versions or ROOT / 'versions'),
+                         str(devops or DEVOPS), '1.6')
 
     def copy(self, d, name):
         dst = Path(d) / name
-        shutil.copytree(ROOT / name, dst)
+        shutil.copytree({'src': SRC, 'devops': DEVOPS}.get(name, ROOT / name), dst)
         return dst
 
     def test_deterministic_framing_and_native_guards(self):
