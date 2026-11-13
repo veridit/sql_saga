@@ -476,6 +476,30 @@ This view is designed to be the primary interface for most applications (e.g., O
 - **`INSERT`**: Creates a new entity. The `valid_from` is automatically set to the current time, and `valid_until` is set to 'infinity'.
 - **`UPDATE` (SCD Type 2)**: A standard `UPDATE ... SET column = 'new value'` automatically performs a **Type 2 Slowly Changing Dimension** operation. The current record is closed out (its `valid_until` is set to `now()`), and a new record is inserted with the updated data, becoming the new current version.
 
+###### Many Rows in One INSERT (sql_saga 1.7)
+
+Since 1.7 an `INSERT` through the `current` view is applied as one batch, like a statement through the
+`for_portion_of` view (1.6): the row trigger only queues each new row, starting now, and the view's
+statement-level trigger (`<row trigger>_apply`, for example `current_valid_apply`) then applies all of them
+with one `temporal_merge`. The result is the same as inserting the rows one by one: a new entity starts now,
+an existing entity's current record is closed now and the new values become its current version, and when
+one statement names the same entity twice, the later row wins.
+
+```sql
+-- One statement, one merge: three new employees, starting today.
+INSERT INTO employees__current_valid (id, name, department)
+VALUES (10, 'Ann', 'Sales'), (11, 'Ben', 'Sales'), (12, 'Cy', 'Support');
+```
+
+Measured on one busy machine, 300 rows took 60-75 ms in 1.7 against 6-7 s in 1.6. A single row costs
+about the same as before. Row counts and `RETURNING` report the inserted rows as before, and an error in
+any row aborts the whole statement. `UPDATE` and `DELETE` through the `current` view are unchanged.
+
+A trigger on the base table cannot insert through the same view while that view's insert is being applied:
+the nested statement is refused (`object_in_use`); write to the base table directly instead. Drop
+protection, `check_integrity()` and rename following treat the apply trigger like the row trigger.
+Upgrading to 1.7 adds it to every existing `current` view in place.
+
 ###### Advanced Usage: Exposing All Temporal Columns in Views
 The updatable views (`for_portion_of` and `current`) are designed for transparency. They will always expose *all* columns from the underlying base table. This allows for advanced use cases where multiple temporal representations are managed on the same table.
 
