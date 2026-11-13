@@ -4,6 +4,73 @@ This document records significant architectural decisions made during the develo
 
 ---
 
+## Decision: Run Actions on User Objects as the Caller; PostgreSQL Authorizes (D0/D1, 1.4, 2026-10-26)
+
+Owner decisions from the 1.4 security review, moved verbatim from `todo.md` when 1.4 and 1.5 were condensed there.
+D0 decides every exception and parity question. Any new elevated action needs the owner's explicit approval first,
+with the reason; it is never engineered around without asking.
+
+- [x] D1 DECIDED 2026-10-26 (owner): everywhere, always. PRINCIPLE: sql_saga never runs an action on user objects
+      with elevated rights; it runs it as the calling user, so PostgreSQL itself requires that user to have the
+      rights. Any exception (an action that technically cannot run as the caller) needs the owner's explicit approval
+      first, with the reason; never engineered around without asking. Owner's reasoning: minimal SECURITY DEFINER and
+      minimal rights, because elevated code must otherwise re-create PostgreSQL's whole security system, which opens
+      many holes (Q1-Q4 are examples). Target: API workers SECURITY INVOKER (native checks decide); only tiny,
+      auditable definer functions remain, for writes to sql_saga's own catalog, each checking the caller's rights
+- [x] D1 step 1 DONE 2026-10-26: all 44 definers plus every C identity switch inventoried. Consolidated report
+      `tmp/d1_inventory.md`; per-function evidence in `tmp/d1_api_inventory_agent.md` and
+      `tmp/d1_helper_inventory_agent.md`. API: 14 need only catalog helpers, 10 have an additional case. Five
+      definers are redundant. Event triggers verified to run as the DDL issuer when SECURITY INVOKER. Decisions D1a-D1d
+      below; no implementation yet
+- [x] D1a APPROVED 2026-10-26: allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog writes and
+      the two private-read tables; never a generic execute-as-owner helper
+- [x] D0 CONFIRMED 2026-10-26, including the namespace principle in item 7: the principles below decide every exception and parity question. Core:
+      never invent a second security system. PostgreSQL is the authority on both permissions and the identity used
+      for an action. "Minimal SECURITY DEFINER" means least power and least reachable code, not merely fewest functions
+  1. Explicit user operations run as the immediate caller, under the caller's search_path. Native PostgreSQL decides
+     ownership, privileges and RLS. Do not be stricter or looser than native unless the owner approves and documents
+     a deliberate difference.
+  2. Match the actor to the action. Internal actions for which native uses another identity (referential checks and
+     cascades) use that same, lowest sufficient identity, normally the owner of the object read or changed, never
+     automatically the extension owner or a superuser. Explicit user operations never gain those internal rights.
+  3. Minimize the privileged surface: operations x objects x rights x duration x reachable user code. Prefer a design
+     with no elevation. Where impossible, prefer several tiny fixed-purpose helpers to one broad definer. Restore
+     identity on every exit and fail closed.
+  4. No arbitrary elevated SQL and no elevated user code. Privileged helpers take structured parameters, verify the
+     caller, object, canonical operation and arguments, use fixed SQL and a safe search_path, and never run user
+     triggers, CHECK/index/domain expressions or policy code with extension-owner rights.
+  5. Extension metadata is not a backdoor to user objects. Private sql_saga catalog writes and reads use narrow helpers
+     only after the corresponding native-equivalent authorization, scoped to the authorized family and operation.
+     Catalog triggers that affect user objects need the same caller identity analysis, not an incidental privilege.
+  6. Prove both directions with failing tests first: native parity for every caller kind and adversarial cases for
+     every privileged helper. Measure performance, review independently until APPROVE, and document every deliberate
+     difference rather than silently "improving" native semantics
+  7. Maintain our own namespace without being paranoid about it. Extension code, metadata and generated functions
+     belong in schema sql_saga, which is a deliberate trusted boundary. Do not scatter internal objects into user
+     schemas merely to avoid a narrow helper. Do not modify objects outside sql_saga except for the caller-explicit
+     temporal objects and the narrowly justified native-equivalent dependents; never incidental cross-family or
+     cross-tenant changes. The privilege boundary matters most where an operation leaves our schema
+  8. Be fast and do not slow down library users. Performance is a hard acceptance requirement alongside correctness
+     and least privilege, not an afterthought. Keep hot paths in C, keep the specialized synchronization functions
+     (8-9x faster than the generic form), retain per-transaction verified-trigger and plan caches with correct
+     invalidation, and avoid new per-row or per-statement catalog work. Benchmark every security/identity conversion
+     before and after against the pre-change code, 1.3 and native where applicable; address regressions rather than
+     accepting or hiding them, and never buy speed by weakening the security principles above
+- [x] D1b APPROVED 2026-10-26: a narrow helper may create/drop only the canonical parent-side regular-FK triggers
+      after the native REFERENCES check, for exact native REFERENCES-only parity; everything else runs as the caller
+- [x] D1c APPROVED 2026-10-26: a narrow helper may perform native-CASCADE cleanup of canonical registered dependents
+      on third-party child tables after the caller's CASCADE operation is authorized; fixed drops only, no arbitrary SQL.
+      Alternatives mentioned but NOT validated as better: normalize into a stable entity table plus timeline table
+      (native FKs but a user schema/semantic migration); maintain a stable-key projection table for native child FKs
+      (still needs parent-trigger maintenance and adds hot-path state/overhead); or upstream native regular-to-temporal
+      FK support (core work, later). No separate sketches or prototypes exist: these were conceptual alternatives
+      formulated during this discussion, not ready designs to substitute for the narrow 1.4 helpers
+- [x] D1d APPROVED 2026-10-26: keep generated sync functions in schema sql_saga. A narrow helper accepts only
+      table_oid, era_name and CREATE/REPLACE/DROP, generates the canonical function itself and accepts no SQL text;
+      the generated runtime function remains SECURITY INVOKER with its specialized performance
+
+---
+
 ## Decision: ON DELETE CASCADE for Regular-to-Temporal Foreign Keys, in the Existing C Trigger (1.4, 2026-10-21)
 
 ### Problem

@@ -2,419 +2,44 @@
 
 A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
 
-## Now - Version 1.4: fix the security and correctness defects found in review, ship CASCADE and TRUNCATE (2026-10-22)
+## Now - Prototype: batch writes through the for_portion_of view (branch `prototype/view-batch-merge`, 2026-11-13)
 
-1.3 is tagged and stays. 1.4 is the follow-up release that fixes what review found. StatBus runs 1.0 and moves to
-1.4 directly. Order: security first, then correctness, then re-review, then packaging and acceptance, then ship.
-Review: `tmp/review_v14_cascade.md` (findings F1-F10). Reproductions: `tmp/journal.md`.
+The INSTEAD OF row trigger runs a complete `temporal_merge` per row. Measured on 1.5 (one throwaway database,
+fastest of two runs after a warmup): 30 rows 203 ms through the view against 11 ms for one batched merge; 300 rows
+2.9-3.3 s against 47-61 ms. Delete and update cost the same. Single-row edits (about 8-9 ms) are fine (owner).
+Question: can the view batch at all? Decide with a prototype first; run the benchmark tests only if it is.
+- [ ] Hypothesis and baseline in `tmp/journal.md`
+- [ ] Row trigger queues the prepared source row; a statement-level trigger on the view runs one `temporal_merge` per
+      mode (update, delete) and raises on errors
+- [ ] Existing view tests (050-054, 157) pass unchanged, or every difference is explained
+- [ ] Edge cases: mixed delete and update in one statement, nested statements, errors and cleanup, RETURNING, row
+      counts, savepoints, permissions and RLS, several views in one transaction
+- [ ] Measure 1/30/300 rows before and after, report feasibility and trade-offs to the owner
 
-**Security (release-blocking).**
-- [x] F1: every sql_saga FK trigger function (uk_delete, uk_update, uk_truncate, regular_fk_check, fk_insert/update)
-      verifies it is a managed trigger before acting: catalog row exists, trigger name/table/child table match, args
-      equal the canonical args. Otherwise 42501. Also validate column counts against MAX_FK_COLS. Negative test with a
-      forged trigger (delete path and the read oracle). Reproduced: attacker deleted another role's row; 1.3 NO ACTION
-      args give a key-existence oracle on unreadable tables. DONE: regular_fk_verify_trigger in all four regular-FK
-      trigger functions; temporal fk_insert/update_check_c run with caller rights (no escalation). Test 139
-- [x] F2: run the cascade DELETE (and prepare its plan) as the child table's owner, as native RI does; child triggers
-      then fire as the child owner. Test: child trigger records current_user = child owner. Reproduced: fired as postgres.
-      DONE: every lookup/cascade planned and run as the queried table's owner, fire_triggers false (native). Test 139
-- [x] F3: every SECURITY DEFINER DDL API checks the caller owns the table it changes (pg_has_role(caller, relowner,
-      'USAGE'), as add_system_versioning does), plus REFERENCES on the referenced table for FKs. Affects add/drop era,
-      unique key, foreign key, for_portion_of/current views, synchronize trigger. Present since 1.0. Test with a
-      non-owner role. Document the behavior change in doc/upgrade.md
-      DONE: C require_owner/require_references (outer user, role membership, ACL_REFERENCES) in every management
-      function; drop_unique_key/drop_era CASCADE still remove dependent FKs of other owners (native DROP CASCADE).
-      Test 140; README "Who may manage a table"; doc/upgrade.md "What changes in 1.4"
-- [x] F8: prepare FK plans so a parent writer needs no USAGE on the child schema (follows from F2). DONE, test 139 part 5
-
-**Correctness.**
-- [x] F4: partitioned child tables: no `ONLY` for a partitioned child (native rule) in cascade, reference lookup and
-      TRUNCATE check; decide inheritance children (refuse or ONLY consistently). Tests
-      DONE: add_foreign_key refuses a partitioned referencing table (cloned triggers, unvalidated ATTACH; sql_saga
-      supports no partitioned tables); a partition may reference. ONLY on both sides everywhere (lookups, cascade,
-      TRUNCATE, add-time validation), as native: inheritance children not covered. Test 141.
-      UPGRADE: the 1.4 update must refuse (name them) existing regular FKs whose referencing table is partitioned
-- [x] F5: predicated unique keys: include the predicate in key lookups, or refuse add_regular_foreign_key against
-      predicated keys. Test
-      DONE: add_regular_foreign_key refuses a predicated key (0A000), as the temporal path already does. Test 142.
-      UPGRADE: the 1.4 update must refuse (name them) existing regular FKs that reference a predicated key
-- [x] F6: temporal_merge with delay_constraints => false cascades on a timeline move; force deferral when a CASCADE
-      regular FK references the target, or document exactly. Test
-      DONE: the referenced-side regular FK triggers on the target are always deferred during the merge;
-      delay_constraints => false keeps only native constraints immediate. Test 137 part 4 (non-overlapping move)
-- [x] F9: README says defer by the FK name; the constraint is `<fk>_uk_delete`. Fix wording
-      DONE: README names `<fk>_uk_delete` (foreign_keys.uk_delete_trigger)
-- [x] F10 nits: error text "lookup" for the DELETE; wrong "as native" comments; lazy cascade-plan preparation
-      DONE: error text and comments fixed with F2. Found while checking the plan-leak nit: every transaction that
-      fired a foreign key trigger leaked its kept plans (2.1 GB after 2000 transactions in one session with one
-      FK; pre-existing since 1.0). Plans now freed at transaction end, caches in TopMemoryContext, callback
-      registered once, half-built entries rebuilt. Test 143 (flat after 200 transactions; subtransaction aborts).
-      Not done: lazy cascade-plan preparation (one prepare per transaction, now freed; F2 removed the permission
-      failure it could cause)
-
-**Review round 2 (`tmp/review_v14_round2.md`, verdict BLOCK at 2c884a4).** F1, F2, F4, F5, F6, F8, F10 confirmed
-fixed. New findings, each fixed test-first:
-- [x] R1 HIGH: `__internal_add_system_time_era` is PUBLIC-executable SECURITY DEFINER with no owner check (any role
-      adds system-time columns/triggers to any table as superuser; pre-1.4). Add require_owner at entry, REVOKE from
-      PUBLIC. Same for `__internal_reconcile_system_versioning_family`. Then audit EVERY SECURITY DEFINER function
-      in the extension for PUBLIC execute + missing owner check (a test that lists them, so a new one cannot slip in)
-      DONE: four workers revoked from PUBLIC and owner-checked at entry; test 144 part 5 lists every SECURITY
-      DEFINER function with its PUBLIC EXECUTE (only six trigger/event-trigger functions remain PUBLIC: see R1b)
-- [x] R2 MEDIUM: owner check uses GetOuterUserId (session role), not the immediate caller. Looser than native (a
-      SECURITY DEFINER wrapper owned by a non-owner borrows its caller's ownership) and stricter (a wrapper owned by
-      the table owner is refused). Check the immediate caller, as ALTER TABLE does. Tests for both nested cases
-      DONE: public management functions (24, incl. sync_history_policies/sync_all_history_policies) are C SECURITY
-      INVOKER trampolines (api_trampoline) recording GetUserId() over private __api_<name> workers; nested internal
-      calls inherit the authorized caller. Test 144 parts 2-4 match native ALTER TABLE row by row (owner wrapper,
-      non-owner wrapper, NOINHERIT without/with SET ROLE). Fast 129/129, concurrency, restore 11/11 + splits 3/3
-- [x] R1b: the system-versioning trigger functions (write_history, generated_always_as_row_start_end,
-      truncate_system_versioning) are SECURITY DEFINER and executable by PUBLIC (needed so a table owner can create
-      the trigger) but, unlike the regular-FK triggers since F1, do not verify that sql_saga created the trigger.
-      Probe: a forged write_history/truncate trigger on an attacker's table whose name collides with a registered
-      family, or on a registered table by a non-owner. Verify like regular_fk_verify_trigger
-      DONE (found worse than listed): the history INSERT and the history TRUNCATE ran as the extension owner, so a
-      table owner's trigger/CHECK/index/domain code on its own history table ran as SUPERUSER (any role that may
-      create a table could escalate). Both now run as the history table's owner (C, like native RI; writer still
-      needs no history rights; FORCE RLS bypassed as native RI does). Forged triggers on other tables cannot reach a
-      registered history (lookup is by the firing table). Test 145. Fast 130/130, restore RLS/SV cases pass
-- [x] R8 HIGH (found 2026-10-25 while probing the parity gate): SECURITY DEFINER workers with
-      `SET search_path = ..., public` resolve unqualified operators/functions in a schema any role may write. A role
-      with CREATE on public defined `public.@>(name[], name[])`; add_unique_key with mutually_exclusive_columns ran it
-      as superuser. Fix: no SECURITY DEFINER function may have a writable schema (public) on its search_path; every
-      worker gets `SET search_path = pg_catalog, sql_saga` (or pg_catalog, pg_temp) and qualifies user objects.
-      Test: the hijack (operators and functions in public shadowing pg_catalog ones for every argument type the
-      workers use) never runs attacker code; extend test 009 to refuse `public` on any SECURITY DEFINER search_path
-      Decision: worker search_path = sql_saga, pg_catalog, pg_temp (only superuser-owned schemas; a public schema
-      owned by the database owner would let the database owner escalate). Consequence: messages print relations
-      schema-qualified (public.t instead of t), the user-visible add_current_view resolution contract is preserved
-      explicitly; note the message change in doc/upgrade.md
-      DONE: every SECURITY DEFINER function's search_path is sql_saga, pg_catalog, pg_temp (54 functions); the
-      trampoline records the caller's search_path (__internal_caller_search_path) for user SQL text; the
-      add_current_view clock keeps its released resolution and is embedded schema-qualified. Test 146 (RED at HEAD:
-      attacker operator ran as superuser; GREEN: none), test 009 guard. 49 outputs changed only by schema
-      qualification in messages (verified mechanically). Fast 131/131, concurrency, restore 11/11 + splits
-- [x] R5 LOW: F1 verification plan is prepared as the calling role, so an install that revokes USAGE on schema
-      sql_saga breaks every writer. Prepare it as the function owner. Fresh-session test
-      DONE: verification plan prepared as the function owner. Test 147 (USAGE on sql_saga revoked from PUBLIC,
-      fresh sessions: child insert, violation, cascade all work; RED at HEAD: permission denied for schema)
-- [x] R6 LOW: drop_foreign_key_by_name skips the owner check when the child table no longer resolves. Fail closed
-      DONE: dangling row needs the referenced table's owner, else superuser. Test 140 part 4 (RED: any role)
-- [x] R7 (was LOW, measured HIGH) perf: F1 verification costs three catalog lookups per trigger firing. Cache the verified trigger per
-      transaction in the plan-cache entry. Re-run benchmarks (CASCADE 10k, regular FK bulk load) against the 1.3
-      baseline; update README/decision-log numbers
-      DONE: measured a 20-24x regression from F1 (unreferenced delete 1210 ms vs 51 ms in 1.3; child insert 1411
-      vs 117 ms). Cache verified triggers per transaction, reset on relcache invalidation and at xact end. Now
-      within noise of 1.3 (57.9 vs 51.4; 138.7 vs 118.2). Test 139 part 4b (catalog row removed after verification
-      plus DDL: refused). decision-log table and README updated with 1.4 and 1.3 columns
-- [x] R4 docs: README and decision-log still say TRUNCATE is not checked; decision-log says the cascade runs as the
-      extension owner; test 137 comment says the same; document `uk_truncate_trigger` and the TRUNCATE refusal
-      (data-based: an empty child does not block, unlike native) in README and doc/api.md
-      DONE: README TRUNCATE paragraph (refusal, uk_truncate_trigger, data-based difference), decision-log identity
-      and TRUNCATE, test 137 comment. doc/api.md is generated (functions only), so no table column docs there
-- [x] R3 upgrade (done in packaging below): partitioned-child regular FKs from 1.3 (cloned triggers now refused,
-      every write would fail), backfill `uk_truncate_trigger` and create the triggers, report/refuse regular FKs to
-      predicated keys
-- [x] Missing tests: NO ACTION with temporal_merge delay_constraints => false (move keeps the child, no error); a
-      regular FK to an XOR (mutually_exclusive_columns) natural key: check, last-row rule, cascade
-      DONE: test 137 (NO ACTION move with delay_constraints false: accepted, tag kept); test 148 (XOR key: check
-      per match type; MATCH SIMPLE ignores partly NULL keys exactly as native FKs to UNIQUE NULLS NOT DISTINCT do,
-      verified natively; documented that an XOR target protects nothing under SIMPLE)
-- [x] Check which role StatBus runs its migrations as (owner/superuser: unaffected by F3/R2)
-      DONE: migrations connect as POSTGRES_ADMIN_USER (default postgres, superuser; cli/internal/migrate). Runtime
-      calls are admin.disable/enable_temporal_triggers, SECURITY DEFINER owned by the migration role, calling
-      sql_saga.disable/enable_temporal_triggers (SECURITY INVOKER, unchanged). No StatBus code calls a management
-      function as a non-owner. One StatBus test expects a sql_saga NOTICE text (test/expected/007): it will show
-      the schema-qualified name (R8); update that expected file during the StatBus upgrade
-- [x] Packaging consequence of R1/R2: the public management functions became C SECURITY INVOKER trampolines
-      (src/3h) over private SECURITY DEFINER workers sql_saga.__api_<name>. The 1.x->1.4 update must create the
-      workers, then CREATE OR REPLACE each public function as the trampoline (keeps its OID, grants and dependants),
-      and revoke the workers. The 1.3-target generator in the dev tree does not know 3h; rework it for 1.4
-
-**Release gate: behaves exactly like PostgreSQL for every kind of user (owner requirement, 2026-10-23).**
-- [x] One parity test: each scenario runs through sql_saga and through the native equivalent, and the outcome
-      (allowed / refused with SQLSTATE) must be equal. Roles: superuser, table owner, member of the owner role,
-      NOINHERIT member, role with GRANT ALL but not owner, role with only SELECT, role with no rights, pg_maintain,
-      SECURITY DEFINER wrappers owned by the owner and by a non-owner. Operations: management API vs ALTER TABLE /
-      ADD FOREIGN KEY (REFERENCES); child INSERT/UPDATE and parent DELETE/UPDATE/TRUNCATE vs native FK (writer
-      needs no rights on the other table; checks and cascade run as the table owner); RLS on parent and child
-      (FORCE ROW LEVEL SECURITY included: native RI bypasses RLS, so must we); column privileges; views
-      (for_portion_of/current, security_invoker). Every deliberate difference is listed in README
-      Also: no user-defined code (row triggers, CHECK/index/default/generated expressions, domain checks) may run
-      with the extension owner's rights while a management function changes a user table: native DDL by the owner
-      runs it as the owner. Probe every DML/DDL the workers run on user tables; run them as the table owner
-      DONE: test 149, 31 side-by-side comparisons with native, all equal: 11 caller kinds x add_era and
-      add_unique_key vs ALTER TABLE; REFERENCES for FKs; column-privilege writer; parent writer without child rights
-      (cascade); TRUNCATE; RLS and FORCE RLS on both sides (invisible rows not deleted; visible parent cascades into an
-      invisible FORCE-RLS child, as natively). One deliberate difference listed: TRUNCATE with no referencing child
-      row is allowed (native refuses from the graph). User code never runs as superuser: tests 145 (history),
-      146 (search_path hijack); probes of add_era/add_unique_key/add_foreign_key/add_system_versioning/views with
-      user CHECK/index/generated/domain expressions all evaluated as the table owner
-- [x] Third independent review of everything after R1-R7: BLOCK (`tmp/review_v14_round3.md`, at 6bb2fc8), findings
-      Q1-Q6 below
-- [x] Q1 CRITICAL: add_system_versioning(history_table_name => X) adopts X after a column-name shape check and
-      ALTERs its owner to the base owner: any role that may create tables in a schema takes over (and reads) another
-      role's table there. Same re-ownership in __internal_reconcile_system_versioning_family; drop_system_versioning
-      (cleanup) drops a history of any owner. Fix: adopting, re-owning, moving or dropping a history table needs the
-      caller to own it (as native ALTER/DROP TABLE). Test with two non-superuser roles; extend 149 section A
-- [x] Q2 HIGH: write_history, generated_always_as_row_start_end and truncate_system_versioning never verify the
-      firing trigger. A TRIGGER+UPDATE holder crashes the postmaster (write_history on a non-range column), forges
-      history rows (second tstzrange column) and writes a column it has no privilege on (generated_always...).
-      Fix: verify like regular_fk_verify_trigger (registered system_versioning row for tgrelid, canonical trigger
-      name, exact tgargs), plus a TSTZRANGEOID check as defense in depth. Tests: 145 (forged trigger on the
-      registered table: crash, forgery), 149 (column privilege)
-- [x] Q3 MEDIUM parity: require_references checks table-level REFERENCES only; native accepts REFERENCES on the
-      referenced key columns. Check per column (pg_attribute_aclcheck); 149 cases; README wording
-- [x] Q1 DONE 1517389 (test 150, 149 +22). Q2 + Q3 DONE ef9a5f0 (test 145 part 4, 149 +5; SV UPDATE 417-420 ms)
-- [x] Q4 ESCALATED HIGH (2026-10-26): predicate text is spliced into an ALTER TABLE that the worker runs as the
-      extension owner; a non-superuser table owner injected ", OWNER TO postgres" and it ran. Root cause: the
-      workers check the caller's rights but execute as superuser. Proposed fix (owner's design): execute DDL on user
-      tables as the recorded caller under the caller's search_path (native rules decide), catalog writes stay with
-      the extension owner; predicate must parse as one condition. Scope is decision D1 below
-- [x] Q4 DONE: the predicate was both an injection surface and a resolution/canonicalization problem. New C helpers
-      execute user-object SQL as the recorded caller (with caller search_path and RLS), and parse one predicate as a
-      normal SELECT expression before storing its canonical deparse. Helpers are private and entry-guarded against
-      unrelated nested functions, including an explicitly granted attacker. ResourceOwner lifetimes and error exits
-      are covered. add_unique_key uses canonical text for constraints and integrity checks; rename_following and the
-      1.4 upgrade normalize old predicates. Test 151 covers injection, qualified/unqualified functions, integrity,
-      direct helper refusal and nested confused-deputy refusal. Fast 136/136
-- [x] Q7 DONE: regular-FK add-time validation now runs as the caller with caller RLS. Test 149 adds hidden-vs-visible
-      FORCE-RLS parity cases; hidden invalid row accepted like native, visible invalid row refused like native.
-      The 063 planner expectation was independently checked against a pre-D1 build: the type-first fallback order is
-      pre-existing, not a D1 regression, and the stale expected text was corrected explicitly
-- [x] Q5 LOW tests: test 009 passes a definer function with NULL proconfig and does not check pg_temp last; test
-      144 part 5 lists PUBLIC definer functions without asserting the set
-      DONE: test 009 asserts empty search-path violation sets and pg_temp last; test 144 asserts the exact PUBLIC
-      definer set in addition to listing every definer.
-- [x] Q6 LOW docs: README manage-a-table section (history ownership, per-column REFERENCES), "never runs user code
-      with the extension owner's rights" claim (Q2), doc/upgrade.md (predicate resolution, adoption needs ownership)
-      DONE: also documents optional-index fallback, caller-recording event workers and the superuser-only clean-restore
-      exemption.
-- [ ] Fourth independent review after Q1-Q6 until APPROVE
-
-**Open decisions for the owner (asked one at a time).**
-- [x] D1 DECIDED 2026-10-26 (owner): everywhere, always. PRINCIPLE: sql_saga never runs an action on user objects
-      with elevated rights; it runs it as the calling user, so PostgreSQL itself requires that user to have the
-      rights. Any exception (an action that technically cannot run as the caller) needs the owner's explicit approval
-      first, with the reason; never engineered around without asking. Owner's reasoning: minimal SECURITY DEFINER and
-      minimal rights, because elevated code must otherwise re-create PostgreSQL's whole security system, which opens
-      many holes (Q1-Q4 are examples). Target: API workers SECURITY INVOKER (native checks decide); only tiny,
-      auditable definer functions remain, for writes to sql_saga's own catalog, each checking the caller's rights
-- [ ] Q7 (found by D1 inventory, 2026-10-26): add-time regular-FK validation currently runs as the extension owner and
-      sees rows hidden from the caller by FORCE RLS. Native ADD FOREIGN KEY validates as the caller: with an invalid
-      child row hidden by a FORCE-RLS policy, native accepts the FK but sql_saga refuses it (reproduced side by side
-      on the private cluster). D1's run-as-caller conversion should fix this; add a parity test first. Do NOT treat
-      this as an exception requiring elevated rights
-- [x] D1 step 1 DONE 2026-10-26: all 44 definers plus every C identity switch inventoried. Consolidated report
-      `tmp/d1_inventory.md`; per-function evidence in `tmp/d1_api_inventory_agent.md` and
-      `tmp/d1_helper_inventory_agent.md`. API: 14 need only catalog helpers, 10 have an additional case. Five
-      definers are redundant. Event triggers verified to run as the DDL issuer when SECURITY INVOKER. Decisions D1a-D1d
-      below; no implementation yet
-- [x] D1a APPROVED 2026-10-26: allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog writes and
-      the two private-read tables; never a generic execute-as-owner helper
-- [x] D0 CONFIRMED 2026-10-26, including the namespace principle in item 7: the principles below decide every exception and parity question. Core:
-      never invent a second security system. PostgreSQL is the authority on both permissions and the identity used
-      for an action. "Minimal SECURITY DEFINER" means least power and least reachable code, not merely fewest functions
-  1. Explicit user operations run as the immediate caller, under the caller's search_path. Native PostgreSQL decides
-     ownership, privileges and RLS. Do not be stricter or looser than native unless the owner approves and documents
-     a deliberate difference.
-  2. Match the actor to the action. Internal actions for which native uses another identity (referential checks and
-     cascades) use that same, lowest sufficient identity, normally the owner of the object read or changed, never
-     automatically the extension owner or a superuser. Explicit user operations never gain those internal rights.
-  3. Minimize the privileged surface: operations x objects x rights x duration x reachable user code. Prefer a design
-     with no elevation. Where impossible, prefer several tiny fixed-purpose helpers to one broad definer. Restore
-     identity on every exit and fail closed.
-  4. No arbitrary elevated SQL and no elevated user code. Privileged helpers take structured parameters, verify the
-     caller, object, canonical operation and arguments, use fixed SQL and a safe search_path, and never run user
-     triggers, CHECK/index/domain expressions or policy code with extension-owner rights.
-  5. Extension metadata is not a backdoor to user objects. Private sql_saga catalog writes and reads use narrow helpers
-     only after the corresponding native-equivalent authorization, scoped to the authorized family and operation.
-     Catalog triggers that affect user objects need the same caller identity analysis, not an incidental privilege.
-  6. Prove both directions with failing tests first: native parity for every caller kind and adversarial cases for
-     every privileged helper. Measure performance, review independently until APPROVE, and document every deliberate
-     difference rather than silently "improving" native semantics
-  7. Maintain our own namespace without being paranoid about it. Extension code, metadata and generated functions
-     belong in schema sql_saga, which is a deliberate trusted boundary. Do not scatter internal objects into user
-     schemas merely to avoid a narrow helper. Do not modify objects outside sql_saga except for the caller-explicit
-     temporal objects and the narrowly justified native-equivalent dependents; never incidental cross-family or
-     cross-tenant changes. The privilege boundary matters most where an operation leaves our schema
-  8. Be fast and do not slow down library users. Performance is a hard acceptance requirement alongside correctness
-     and least privilege, not an afterthought. Keep hot paths in C, keep the specialized synchronization functions
-     (8-9x faster than the generic form), retain per-transaction verified-trigger and plan caches with correct
-     invalidation, and avoid new per-row or per-statement catalog work. Benchmark every security/identity conversion
-     before and after against the pre-change code, 1.3 and native where applicable; address regressions rather than
-     accepting or hiding them, and never buy speed by weakening the security principles above
-- [x] D1b APPROVED 2026-10-26: a narrow helper may create/drop only the canonical parent-side regular-FK triggers
-      after the native REFERENCES check, for exact native REFERENCES-only parity; everything else runs as the caller
-- [x] D1c APPROVED 2026-10-26: a narrow helper may perform native-CASCADE cleanup of canonical registered dependents
-      on third-party child tables after the caller's CASCADE operation is authorized; fixed drops only, no arbitrary SQL.
-      Alternatives mentioned but NOT validated as better: normalize into a stable entity table plus timeline table
-      (native FKs but a user schema/semantic migration); maintain a stable-key projection table for native child FKs
-      (still needs parent-trigger maintenance and adds hot-path state/overhead); or upstream native regular-to-temporal
-      FK support (core work, later). No separate sketches or prototypes exist: these were conceptual alternatives
-      formulated during this discussion, not ready designs to substitute for the narrow 1.4 helpers
-- [x] D1d APPROVED 2026-10-26: keep generated sync functions in schema sql_saga. A narrow helper accepts only
-      table_oid, era_name and CREATE/REPLACE/DROP, generates the canonical function itself and accepts no SQL text;
-      the generated runtime function remains SECURITY INVOKER with its specialized performance
-- [ ] Release evidence: account for every 1.4 change by origin (requested CASCADE/TRUNCATE feature, independent review,
-      self-found defect, packaging, D1 root-cause conversion), including which defects already existed in 1.0; use it
-      for the final release notes and scope review
-- [x] D1 conversion must also narrow health_checks' all-families repair to affected families before making it
-      SECURITY INVOKER; verify/close the caller-forgeable clean-teardown bypass; review view-trigger replay as caller
-      DONE: public event entry points are caller-recording C trampolines over private workers; health repair is scoped
-      to affected families, clean teardown requires a superuser caller, and saved trigger replay uses caller privileges.
-      Tests 029, 152 and 153; old helper ACLs stay private so site REVOKEs are not replayed.
-- [ ] D1 performance gate: benchmark every converted hot path before/after (regular-FK check/cascade/load,
-      system-versioned UPDATE/TRUNCATE, era sync triggers, temporal_merge), with pre-D1 and 1.3/native baselines;
-      retain C and valid caches, investigate every regression, and record results in doc/decision-log.md
-- [ ] D2: message texts name tables schema-qualified (public.t); StatBus test/expected/007 changes
-- [ ] D3: catalog_format 1.4: a 1.3 dump restores at 1.3, then ALTER EXTENSION UPDATE
-- [ ] D4: history writes run as the history table's owner
-- [ ] D5: TRUNCATE refused only while a child row references the parent (native: by FK definition). Keep or match
-- [ ] D6: regular FK to an XOR key under MATCH SIMPLE protects nothing, as native; documented
-- [ ] D7: public management functions are C trampolines recording the caller, calling private workers
-
-**Review and release.**
-- [x] Second independent review of all 1.4 changes: BLOCK, findings R1-R7 above
-- [x] 1.4 packaging: control and native version 1.4, freeze 1.3 artifacts in versions/, catalog_format decision,
-      direct update scripts from 1.0, 1.1, 1.2 and 1.3 (generator), catalog CHECK and uk_truncate_trigger migration
-      DONE: devops/test_generate_update_scripts_1_4.py (27 tests) plus 1.4 Makefile wiring; the manifest includes all
-      changed routines and preserves existing ACLs, and CI names the four-source 1.4 matrix.
-      with triggers created for existing regular FKs
-- [x] doc/upgrade.md for 1.4 (ownership behavior change, new triggers, CASCADE)
-      DONE: also native initial validation, predicate canonicalization, optional-index fallback, clean-restore rule and
-      four-source direct update/rehearsal instructions.
-- [ ] Acceptance: full suite incl. benchmarks, generator and native units, upgrade matrix from released tags
-      1.0/1.1/1.2/1.3, restore matrix with split 20/20, two-session concurrency
-- [ ] Push, green Linux CI, tag v1.4
-- [ ] StatBus: upgrade from 1.0 to 1.4, switch six addendum FKs to CASCADE, test 142 asserts it
-
-**Done toward 1.4 (local, not pushed).**
-- [x] ON DELETE CASCADE core, concurrency, restore, benchmark, docs (d076080..f46579f)
-- [x] TRUNCATE of a referenced parent refused like native FKs (73e61d2, test 138, fast 123/123)
-- [x] Independent review: BLOCK with F1-F10; F1, F2, F3 reproduced on a private cluster
-
-## Next - for_portion_of view: remove a portion with `SET id = NULL` (StatBus STATBUS-611, 2026-11-12)
-
-- [ ] **Delete protocol for the for_portion_of view: setting the identity to NULL removes the record over the
-      period given.** Owner design 2026-11-12.
-      - **Why.** StatBus edit forms write through `<table>__for_portion_of_valid` (PostgREST PATCH). They now need
-        "Remove" for a record (contact, location, activity, stat_for_unit) over a chosen period, for example a
-        location that is wrong for 2025 only. The view rejects DELETE, and has to: a DELETE trigger gets only OLD,
-        so the WHERE clause cannot carry a period. The period travels in SET (`valid_from`/`valid_until`/`valid_to`
-        or the range column), as it already does for UPDATE. Only the current view has a delete protocol
-        (`SET valid_from = 'infinity'`, `src/3c_current_view_trigger.sql`). The for_portion_of view needs its own.
-      - **Rejected signals.** A marker column that exists only in the view: the protocol must use real columns.
-        All value columns set to NULL: that is a legitimate update (for example emptying a location's region) and
-        can also violate a table CHECK (StatBus contact "One information must be provided").
-      - **Protocol.** `UPDATE x__for_portion_of_valid SET id = NULL, valid_from = START, valid_until = STOP
-        WHERE id = 10;` removes record 10 over [START, STOP). An identity column (the trigger's identifier columns,
-        TG_ARGV minus the temporal columns) set to NULL is the signal: no stored row can have a NULL identity, so no
-        real update looks like it. Same idea as the current view's `valid_from = 'infinity'`.
-      - **Behaviour.**
-        - The trigger fires once per matched stored row (unchanged). Requested period = SET dates as today
-          (range column, or valid_from + valid_until, or valid_from + valid_to), intersected with OLD's range; empty
-          intersection -> skip the row (unchanged).
-        - Then call `temporal_merge` with `mode => 'DELETE_FOR_PORTION_OF'` instead of `UPDATE_FOR_PORTION_OF`.
-          A row that overlaps START or STOP is split; only the part inside is removed. Rows outside stay.
-        - No dates in SET (`SET id = NULL WHERE id = 10`): the period is each row's own range, so the record goes
-          completely.
-        - Identity NULL together with any changed non-temporal column: raise an error (ambiguous: change or remove).
-        - A composite identity: any identifier column set to NULL is the signal; the rows are found by OLD's values.
-        - Temporal FKs still decide: removing a period a child depends on fails as for any delete.
-      - **Defect to fix in the same change (RED today).** On 1.4 `SET id = NULL` through the view reports
-        `UPDATE 1` and changes nothing (StatBus `tmp/611-null-id-probe2.log`): the NULL identity is silently
-        dropped. With the protocol it gets its meaning.
-      - **Tests (RED first, in `sql/050_view_for_portion_of_basis.sql` or a new test).**
-        1. Middle of one row: row [2024, inf), remove [2026-03-01, 2026-06-01) -> [2024, 2026-03-01) and
-           [2026-06-01, inf), values unchanged.
-        2. Period spanning several rows: rows 2024, 2025, 2026-inf; remove [2024-07-01, 2026-01-01) -> 2024 cut at
-           2024-07-01, 2025 gone, 2026-inf unchanged.
-        3. Exactly aligned with one row: that row gone, neighbours unchanged.
-        4. No dates: the whole record gone, other records unchanged.
-        5. `valid_to` instead of `valid_until`, and the range column directly.
-        6. Identity NULL plus another column changed -> error, nothing changed.
-        7. Temporal FK: removing a period a child row covers -> FK error, nothing changed.
-        8. Through a role with UPDATE on the view and DELETE on the table (RLS on), as StatBus uses it.
-      - **Docs.** README for_portion_of section: the protocol, with the PostgREST form
-        `PATCH /x__for_portion_of_valid?id=eq.10` body `{"id": null, "valid_from": S, "valid_until": E}`.
-        Change the DELETE rejection message to point at it.
-      - **Release.** Next version after 1.4 (update script from 1.4). StatBus pins it and builds the Remove
-        button on it (STATBUS-611). Until then StatBus does not ship Remove.
-
-### STATBUS-611 implementation evidence (2026-11-12)
-
-- [x] Isolated `feature/for-portion-delete` from released master/v1.4 `8759b7b`.
-      The unused STATBUS-591 prototype is not an input and remains shelved.
-- [x] Reproduced the released 1.4 silent no-op before changing the trigger. The
-      candidate removes the exact requested portion using OLD's full identity,
-      retaining payload and history outside the intersection.
-- [x] Regression 157 covers all eight requested cases, plus composite identity,
-      empty-intersection `UPDATE 0`, explicit generated-payload ambiguity, ordinary
-      NULL payload, missing DELETE authority, RLS visibility and INSERT-policy
-      refusal, atomic temporal-FK refusal and regular-FK CASCADE compatibility.
-      Clean private full fast suite: **142/142**. Existing view tests: **5/5**.
-- [x] Generic README SQL/PostgREST protocol and `doc/upgrade.md` instructions.
-      Candidate package is 1.5, with direct upgrades from released 1.0 through 1.4.
-      Frozen 1.4 artifacts retain their released bytes. Catalog format remains 1.4.
-- [x] Actual released 1.4 libraries and an existing managed view upgraded to
-      privately staged 1.5: trigger routine OID, a named site EXECUTE grant and data
-      preserved. Exact portion removal and integrity passed after upgrade.
-      A rollback rehearsal restored the old version, definition and data.
-      The same behavior is now a permanent 1.4 upgrade-harness assertion.
-- [x] Ordinary UPDATE matched trigger-body comparison, 30 rows per transaction,
-      one warmup pair and eight balanced measured pairs, fresh backend and full
-      rollback per trial, exact result assertions and EXPLAIN (ANALYZE, BUFFERS):
-      median **218.9605 ms released / 221.5005 ms candidate**, **+1.16%** elapsed.
-      Machine load was about 21. Earlier much higher-load timings were inconclusive.
-      This is a small observed cost, not a speedup or proof of zero overhead.
-- [x] Portable fail-closed migration safety scan, including retained DO comments
-      and quoted fragments: 7 mutation tests, 7 current-generator tests, 28
-      historical-generator tests and parallel Makefile wiring passed. All five
-      actual generated direct migrations pass, and cascading-DDL mutations fail.
-- [x] Final exact-code Linux CI **43320411030** on `3c464fb` concluded success.
-      Actual run JSON and full logs verified: 142 fast regressions, 5 native units,
-      42 generator/safety units plus wiring, all five genuine released-binary
-      upgrades, six supported split-restore cases at 20/20 each, attribution 8/8
-      and all regular-FK concurrency checks. The repaired portable scanner passed
-      every real migration without errors. Known unsupported parallel restore
-      failed 7/20 and is explicitly excluded, not counted as green acceptance.
-      Detailed behavior and balanced timings: `doc/for-portion-delete-validation.md`.
-- [x] Review handoff evidence committed. Task-owned local databases, roles,
-      private package stages and native build output removed. Released global
-      installation, original dirty checkout, shelved prototype, master and v1.4
-      remain unchanged. Later evidence commits change documentation only.
-- [x] Owner reviewed and approved 2026-11-13. Fast-forward to master and tag v1.5.
-      StatBus pins 1.5 and builds Remove on it (STATBUS-611).
-- [x] Context measured 2026-11-13 (one throwaway DB, fastest of two runs after a warmup): through the view,
-      DELETE costs the same as UPDATE (30 rows: 198 vs 203 ms). Batched temporal_merge is 20-60x faster
-      (30 rows: 10-11 ms; 300 rows: 47-61 ms vs 2.9-3.3 s through the view). The view runs one
-      temporal_merge per row, unchanged since 1.4. Owner: single-row speed is good enough for 1.5.
-
-## Backlog (after 1.4)
-- [ ] **Batch speed through the for_portion_of view (after 1.5, owner 2026-11-13).** The INSTEAD OF trigger
-      runs a full temporal_merge per row: about 7 ms/row at 30 rows, rising to about 10 ms/row at 300 rows,
-      against 0.16-0.37 ms/row for one batched temporal_merge. First decide whether a design can batch
-      view writes at all (for example collect rows per statement and merge once), then benchmark only if so.
-- [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** The owner reports no application
-      speedup and no adoption. Preserve `prototype/defer-temporal-checks` for reference only. Do not merge,
-      release or resume that experiment as part of STATBUS-611.
+## Backlog
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
       without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
-      and CASCADE semantics). Separate project, not part of 1.4; use the 1.4 C-trigger behavior and parity tests as
-      the semantic baseline. Owner agreed 2026-10-26: practical narrow helpers for 1.4, upstream changes for another time
+      and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
+      baseline. Owner agreed 2026-10-26: practical narrow helpers in sql_saga, upstream changes for another time
 - [ ] Upstream parallel-restore report and patch (section below)
 - [ ] Automate README.md example testing (literate programming approach)
 - [ ] Improve test documentation for complex/expected-failure cases
 - [ ] Package with pgxman for easier distribution
 - [ ] Optional: fail closed on direct history-table reads between a parallel restore and its final
       `sync_all_history_policies()`; owner judged it likely unnecessary
+- [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** No application speedup, not adopted.
+      `prototype/defer-temporal-checks` is kept for reference only. Do not merge, release or resume it.
 
-## Backlog detail - Upstream PostgreSQL work on the parallel-restore bug (after 1.4, by delegated agents)
+StatBus side (their repository, for reference): pin 1.5 and build Remove on the view delete protocol (STATBUS-611);
+switch the six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x
+`legal_unit_id`, `establishment_id`) to `ON DELETE CASCADE`, with test 142 asserting it.
+
+## Backlog detail - Upstream PostgreSQL work on the parallel-restore bug (by delegated agents)
 
 Parallel `pg_restore -j` of a database using sql_saga fails intermittently because `pg_dump` does not record the
 load order of extension configuration tables that reference each other (`doc/decision-log.md`, 2026-10-13 decision).
 The split restore in README.md is the supported workaround. The restore harness keeps the parallel case as a known
-failure so an upstream fix is noticed.
+failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
 - [ ] Delegate to an agent: finalize the `pgsql-bugs` report from the research in `tmp/upstream_pg_dump_fk_order.md`
       and the minimal two-table reproducer in `doc/decision-log.md`; re-run the reproducer on current PostgreSQL
       `master` and 18 before sending
@@ -423,18 +48,36 @@ failure so an upstream fix is noticed.
       DATA and add the referenced tables' TABLE DATA entries), with a pg_dump TAP test, for `pgsql-hackers`
 - [ ] When a fixed PostgreSQL is released, turn the harness known failure into a supported case and update README.md
 - [ ] Optional, separate report: CHECK constraints that call functions reading other tables
-      (`tmp/upstream_pg_dump_check_order.md`, draft not sent). No longer affects sql_saga 1.3, which uses constraint
-      triggers; owner decides whether to send it
-
-## Reference - the StatBus ON DELETE CASCADE request (2026-10-21; work tracked under Version 1.4 above)
-
-**Need.** A non-temporal child row that is an addendum to a temporal parent (it has no meaning without the parent) should go with the parent. StatBus has three such tables, `external_ident`, `tag_for_unit` and `unit_notes`, which reference `legal_unit.id` and `establishment.id` (temporal, unique only with the validity range). From sql_saga 1.3 they use `add_foreign_key` (regular-to-temporal), because 1.3's child-side constraint trigger is what makes `pg_dump`/`pg_restore --single-transaction` work (STATBUS-524). Their references to plain tables already use native `FOREIGN KEY ... ON DELETE CASCADE`. For the temporal parents, the only options today are `NO ACTION`/`RESTRICT`, so StatBus ships `NO ACTION` until this exists.
-
-**Today.** `sql_saga.fk_actions` lists `CASCADE`, `SET NULL` and `SET DEFAULT`, but the `sql_saga.foreign_keys` catalog refuses them for both `update_action` and `delete_action` (`CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))`, `sql_saga--1.3.sql`). The parent side is the `uk_delete` trigger (`sql_saga.uk_delete_check_c()`, `src/sql_saga.c`). It refuses a `DELETE` only when a child still references the key and no other parent row has it, so `temporal_merge` and plain DML may reshape a parent's timeline.
-
-**StatBus follow-up once released.** StatBus switches its six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x `legal_unit_id`, `establishment_id`) from `NO ACTION` to `CASCADE` in a migration, and test 142 asserts the cascade.
+      (`tmp/upstream_pg_dump_check_order.md`, draft not sent). No longer affects sql_saga since 1.3, which uses
+      constraint triggers; owner decides whether to send it
 
 # Done
+
+## 2026-11-13: Version 1.5 (tag v1.5 at 545839a, CI run 43397369063 green)
+- for_portion_of view delete protocol (STATBUS-611): `UPDATE view SET id = NULL, valid_from = S, valid_until = E
+  WHERE id = 10` removes the record over [S, E) with `DELETE_FOR_PORTION_OF`; no dates removes the whole matched
+  history. Composite identities use OLD's values. Changing another column at the same time is refused as ambiguous.
+  The caller needs DELETE on the table plus the UPDATE/INSERT a split performs; RLS applies. Fixes the 1.4 silent
+  no-op (`UPDATE 1`, nothing changed). Test 157
+- Direct update scripts from 1.0, 1.1, 1.2, 1.3 and 1.4; frozen 1.4 artifacts; catalog format stays 1.4; portable
+  fail-closed scan refusing cascading DDL in migrations
+- Acceptance: CI 43320411030 and 43397369063: 142 regressions, 5 native, 42 generator/safety plus wiring, all five
+  released-binary upgrades, existing 1.4 views upgraded in place (OIDs, grants, data kept), six split restores 20/20,
+  concurrency suites. Ordinary view UPDATE +1.16% (219.0 vs 221.5 ms for 30 rows). Evidence:
+  `doc/for-portion-delete-validation.md`
+
+## 2026-10-27: Version 1.4 (tag v1.4 at 8759b7b)
+- Regular-to-temporal foreign keys: `ON DELETE CASCADE`; TRUNCATE of a referenced parent refused, as native
+- Security from three review rounds: sql_saga runs actions on user objects as the calling user (D0/D1), so
+  PostgreSQL decides permissions; public entry points are caller-recording C trampolines over private workers; FK
+  triggers refuse foreign use; history written as the history table's owner; no SECURITY DEFINER with a writable
+  search_path; predicates canonicalized; FORCE RLS parity at FK creation (Q7). Release gate test 149: allows and
+  refuses exactly what PostgreSQL does, for every kind of user
+- Correctness: partitioned/predicated referencing refused, per-transaction FK verification, kept plans freed, XOR
+  MATCH SIMPLE documented, messages name tables schema-qualified
+- Direct update scripts from 1.0-1.3. Acceptance: 141 regressions, native 5, generator 28, all four upgrade paths,
+  six split restores 20/20, concurrency suites; drop gate 13.5 ms (<15 ms). Evidence:
+  `tmp/release_1_4_accounting.md`, `tmp/bench_d1_final.md`
 
 ## 2026-10-21: Version 1.3 (tag v1.3 at 102e0df, CI run 39587241942 green)
 - XOR unique-key constraint order preserved and FK columns paired in that order; historical mispairing diagnosed with
@@ -536,20 +179,6 @@ failure so an upstream fix is noticed.
 - CASE→OR optimization (36-56% speedup)
 - Range-only view tests and same-day DELETE fix
 - Makefile `renumber-tests-from` target
-
-## 2026-10-27: 1.4 release candidate accepted locally
-- [x] D1 authorization boundary: private API/elevated workers require a management or event entry point;
-      caller SQL uses a backend-global suspension stack with volatile cleanup flags, so nested user code cannot borrow
-      management authority. Direct/nested attack tests 154 and 155 and independent D1 APPROVE (05ddbbf).
-- [x] Teardown performance and correctness: catalog-family-safe system_time cleanup, conservative managed-object
-      detection including inheritance, correlated attribution checks, and native error/NOTICE preservation.
-      Regular era literally named system_time covered by test 156. Independent performance APPROVE (53f4bd5).
-- [x] Verification: fast regression 141/141, native 5/5, generator 28/28 plus Makefile wiring, fresh install and
-      integrity, all four 1.0-1.3 to 1.4 upgrade paths GREEN, all six split cases 20/20, and both concurrency suites.
-- [x] Performance: targeted d521 and released-1.3 comparisons in tmp/bench_d1_final.md; hard drop gate GREEN with
-      drop_system_versioning 13.516 ms (<15 ms), drop_foreign_key 5.115 ms, drop_unique_key 3.267 ms.
-- [x] Release accounting updated in tmp/release_1_4_accounting.md. Local acceptance only: no tag, push, StatBus
-      change, or external action has been performed.
 
 ## Earlier
 - PostgreSQL 18 native temporal features (WITHOUT OVERLAPS, temporal FKs)
