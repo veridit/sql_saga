@@ -8,11 +8,14 @@ from pathlib import Path
 import generate_update_scripts_1_5 as gen
 
 ROOT = Path(__file__).resolve().parent.parent
+# The 1.5 generator is specified against the released v1.5 source tree (later releases change src/).
+import released_tree  # noqa: E402
+SRC = Path(released_tree.released_src('v1.5'))
 
 
 class Packaging(unittest.TestCase):
     def build(self, src=None, versions=None):
-        return gen.build(str(src or ROOT / 'src'), str(versions or ROOT / 'versions'), str(ROOT / 'devops'), '1.5')
+        return gen.build(str(src or SRC), str(versions or ROOT / 'versions'), str(ROOT / 'devops'), '1.5')
 
     def test_deterministic_and_native_guards(self):
         outputs = self.build()
@@ -41,7 +44,7 @@ class Packaging(unittest.TestCase):
     def test_manifest_omission_refused(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'tmp') as d:
             src = Path(d) / 'src'
-            shutil.copytree(ROOT / 'src', src)
+            shutil.copytree(SRC, src)
             (src / '9z_omitted.sql').write_text('SELECT 611;\n')
             with self.assertRaisesRegex(gen.GeneratorError, 'outside.*manifest'):
                 self.build(src=src)
@@ -49,7 +52,7 @@ class Packaging(unittest.TestCase):
     def test_manifest_missing_refused(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'tmp') as d:
             src = Path(d) / 'src'
-            shutil.copytree(ROOT / 'src', src)
+            shutil.copytree(SRC, src)
             (src / '0g_for_portion_of_trigger.sql').unlink()
             with self.assertRaisesRegex(gen.GeneratorError, 'exactly once'):
                 self.build(src=src)
@@ -57,7 +60,7 @@ class Packaging(unittest.TestCase):
     def test_manifest_signature_change_refused(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'tmp') as d:
             src = Path(d) / 'src'
-            shutil.copytree(ROOT / 'src', src)
+            shutil.copytree(SRC, src)
             p = src / '0g_for_portion_of_trigger.sql'
             p.write_text(p.read_text().replace(' RETURNS trigger', ' RETURNS text', 1))
             with self.assertRaisesRegex(gen.GeneratorError, 'signature changed'):

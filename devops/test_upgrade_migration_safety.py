@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Mutation tests of the portable migration-only cascading-DDL gate."""
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -78,12 +79,18 @@ assert_no_cascading_ddl "$body"
                          'TRUNCATE x CASCADE; END $migration$')).returncode, 1)
 
     def test_all_actual_generated_scripts(self):
-        subprocess.run(['make', 'sql_saga--1.5.sql'] + [
-            'sql_saga--%s--1.5.sql' % v for v in ('1.0', '1.1', '1.2', '1.3', '1.4')],
+        # Every direct update the current release ships, from sql_saga.control's default_version.
+        target = re.search(r"default_version\s*=\s*'([^']+)'", (ROOT / 'sql_saga.control').read_text()).group(1)
+        sources = [p.name.split('--')[1] for p in sorted((ROOT / 'versions').glob('sql_saga--[0-9]*.[0-9]*.sql'))
+                   if p.name.count('--') == 1]
+        sources = [s[:-len('.sql')] for s in sources]
+        self.assertIn('1.0', sources)
+        subprocess.run(['make', 'sql_saga--%s.sql' % target] + [
+            'sql_saga--%s--%s.sql' % (v, target) for v in sources],
             cwd=ROOT, check=True, capture_output=True, text=True)
-        for version in ('1.0', '1.1', '1.2', '1.3', '1.4'):
+        for version in sources:
             with self.subTest(version=version):
-                sql = (ROOT / ('sql_saga--%s--1.5.sql' % version)).read_text()
+                sql = (ROOT / ('sql_saga--%s--%s.sql' % (version, target))).read_text()
                 result = self.scan(sql)
                 self.assertEqual(result.returncode, 0, result)
                 self.assertIn('PASS:', result.stdout)

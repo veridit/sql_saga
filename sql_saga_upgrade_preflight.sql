@@ -59,10 +59,22 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.4 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.5' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regclass('sql_saga.history_policy_sync_guard') IS NULL
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid = 'sql_saga.foreign_keys'::pg_catalog.regclass AND a.attname = 'uk_truncate_trigger' AND NOT a.attisdropped)
+           OR pg_catalog.to_regprocedure('sql_saga.uk_truncate_check_c()') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.for_portion_of_apply_trigger()') IS NOT NULL
+           OR pg_catalog.strpos(pg_catalog.pg_get_functiondef('sql_saga.for_portion_of_trigger()'::pg_catalog.regprocedure), 'DELETE_FOR_PORTION_OF') = 0 THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.5 is not the supported v1.5 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.5 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3 or 1.4, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4 or 1.5, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3 or v1.4 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4 or v1.5 extension.';
     END IF;
 
     /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */
@@ -79,6 +91,21 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: regular foreign keys that sql_saga 1.4 does not support prevent upgrade:%', E'\n' || policy_list
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Drop each with sql_saga.drop_foreign_key_by_name before updating; after the update add it to each partition, or against a primary or natural key (doc/upgrade.md).';
+    END IF;
+
+    /* For_portion_of views that already have a trigger named as the 1.6 apply trigger refuse the update. */
+    SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I trigger %I', uv.view_schema, uv.view_name, t.tgname), E'\n' ORDER BY uv.view_schema, uv.view_name)
+    INTO policy_list
+    FROM sql_saga.updatable_view AS uv
+    JOIN pg_catalog.pg_trigger AS t
+      ON t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uv.view_schema, uv.view_name))
+     AND t.tgname = uv.trigger_name || '_apply'
+    WHERE uv.view_type = 'for_portion_of'
+      AND t.tgfoid IS DISTINCT FROM pg_catalog.to_regprocedure('sql_saga.for_portion_of_apply_trigger()');
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: triggers named as the 1.6 apply trigger of a for_portion_of view prevent upgrade:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Rename or drop each trigger before updating (doc/upgrade.md).';
     END IF;
 
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)

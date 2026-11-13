@@ -444,6 +444,7 @@ SELECT sql_saga.add_for_portion_of_view('readme.unit_with_range'::regclass);
  valid_range | daterange         |           |          | 
 Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON readme.legal_unit__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+    for_portion_of_valid_apply AFTER UPDATE ON readme.legal_unit__for_portion_of_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.for_portion_of_apply_trigger()
 
 \d readme.legal_unit__current_valid
              View "readme.legal_unit__current_valid"
@@ -468,6 +469,7 @@ Triggers:
  until_num | integer   |           |          | 
 Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON readme.unit_with_range__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+    for_portion_of_valid_apply AFTER UPDATE ON readme.unit_with_range__for_portion_of_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.for_portion_of_apply_trigger()
 
 \echo '\n--- Using the for_portion_of view (Historical Split) ---'
 

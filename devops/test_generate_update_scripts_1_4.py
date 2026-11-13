@@ -16,7 +16,10 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 VERSIONS = os.path.join(ROOT, "versions")
-SRC = os.path.join(ROOT, "src")
+# The 1.4 generator is specified against the released v1.4 source tree (later releases change src/).
+sys.path.insert(0, HERE)
+import released_tree  # noqa: E402
+SRC = released_tree.released_src("v1.4")
 DEVOPS = os.path.join(ROOT, "devops")
 MODULE_PATH = os.path.join(HERE, "generate_update_scripts_1_4.py")
 GATE = "SELECT sql_saga.check_integrity();"

@@ -94,6 +94,7 @@ TABLE sql_saga.updatable_view;
 (1 row)
 
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
+NOTICE:  sql_saga: Renamed trigger "for_portion_of_p_apply" on view "public.rename_test__for_portion_of_p" to "portion_trigger_apply" to follow the rename of trigger "for_portion_of_p"
 TABLE sql_saga.updatable_view;
  view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |  trigger_name   | current_func | generated_columns | ephemeral_columns 
 -------------+-------------------------------+----------------+--------------+-------------+----------+-----------------+--------------+-------------------+-------------------

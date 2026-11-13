@@ -244,10 +244,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT vat.integrity('after creating the views');
@@ -272,10 +272,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT count(*) AS pending_rows FROM sql_saga.__internal_updatable_view_pending;
@@ -355,10 +355,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT vat.integrity('after value_int TYPE bigint');
@@ -429,10 +429,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT uk.table_name, uk.unique_key_name, uk.column_names,
@@ -895,10 +895,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT c.relname AS user_view, pg_get_viewdef(c.oid) AS definition
@@ -1042,10 +1042,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SET vat.step = '5a';
@@ -1121,10 +1121,10 @@ TABLE vat.view_shape;
 (2 rows)
 
 TABLE vat.view_facts;
-            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                       triggers                        | extension  
----------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+-------------------------------------------------------+------------
- unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}            | 
- unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","log_update (O) audit"} | btree_gist
+            view_name            |                            reloptions                             | reader_select | reader_update_name |   view_comment    |                                      column_facts                                       |                                         triggers                                         | extension  
+---------------------------------+-------------------------------------------------------------------+---------------+--------------------+-------------------+-----------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------+------------
+ unit_loc__current_valid         | {check_option=cascaded,security_barrier=true,security_invoker=on} | t             | t                  | current locations | {"name: comment=display name default='unnamed'::text","value_int: comment=- default=7"} | {"current_valid (O) -","log_update (O) -"}                                               | 
+ unit_stat__for_portion_of_valid | {check_option=local,security_barrier=true,security_invoker=on}    | t             | t                  | stat portions     | {"name: comment=display name default='unnamed'::text"}                                  | {"for_portion_of_valid (O) -","for_portion_of_valid_apply (O) -","log_update (O) audit"} | btree_gist
 (2 rows)
 
 SELECT count(*) AS pending_rows FROM sql_saga.__internal_updatable_view_pending;
