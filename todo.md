@@ -17,7 +17,10 @@ the view, against 11 ms and 47-61 ms for one direct merge). Owner: prototype, th
 - [x] Docs (ec07283, 48c8b67): README "Many Rows in One Statement", `doc/upgrade.md` 1.6, frozen `doc/upgrade-1.5.md`
 - [x] Fast suite on a private 1.6 stage: 143/143 after accepting reviewed trigger-listing diffs (050/051/092/098/132)
 - [x] Final-code timing (load 62-95): 300 rows 91-123 ms, 3,000 rows 1.1-1.2 s (about 0.4 ms/row, linear)
-- [ ] Linux CI on the branch, including the 1.0-1.3 released-binary upgrade paths
+- [x] Linux CI 43420195486 on ec07283 green: 143/143 regressions, all six released-binary upgrades 1.0-1.5 to 1.6
+      GREEN (existing-view apply-trigger gate on 1.3, 1.4, 1.5), restore round trips, concurrency suites
+- Owner 2026-11-13: refusing a base-table trigger that writes through the same view is fine. Code on the base table
+  uses sql_saga (temporal_merge) directly; the view is the simple interface, for example through PostgREST
 - [x] Benchmark suite on the 1.6 stage (load about 10): 14/14 pass, scaling LINEAR at every doubling. The suite does
       not use for_portion_of views, so it guards the unchanged paths: 128k-entity scaling 13.0 s (1.5 baseline 12.2 s),
       temporal_merge seed parent 14,994 rows/s (14,355), 20% insert 80% patch parent 8,609 rows/s (8,995); within
