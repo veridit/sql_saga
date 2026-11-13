@@ -3,8 +3,6 @@
 A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
 
 ## Backlog
-- [ ] Batch INSERT through the `current` view like the 1.6 for_portion_of view (it still runs one `temporal_merge` per
-      row; its UPDATE and DELETE use plain DML already). Owner decides whether it is needed
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
       without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
       and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
@@ -18,7 +16,7 @@ A living document of upcoming tasks. Planned work is listed first; finished work
 - [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** No application speedup, not adopted.
       `prototype/defer-temporal-checks` is kept for reference only. Do not merge, release or resume it.
 
-StatBus side (their repository, for reference): pin 1.5 and build Remove on the view delete protocol (STATBUS-611);
+StatBus side (their repository, for reference): pin 1.7 and build Remove on the view delete protocol (STATBUS-611);
 switch the six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x
 `legal_unit_id`, `establishment_id`) to `ON DELETE CASCADE`, with test 142 asserting it.
 
@@ -41,6 +39,21 @@ failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
 
 # Done
 
+## 2026-11-13: Version 1.7 (tag v1.7, branch CI run 43440617841 green)
+- Batched INSERT through the current view, consistent with the 1.6 for_portion_of view: the row trigger only queues
+  each new row (starting now), and one `AFTER INSERT FOR EACH STATEMENT` apply trigger (`<row trigger>_apply`)
+  applies the statement with one MERGE_ENTITY_UPSERT `temporal_merge`, each row its own founding id. Results equal
+  1.6 row by row (new entity, existing entity, same entity twice: last row wins, RETURNING). 300 rows 60-74 ms
+  (1.6: 6.2-7.3 s); single-row cost unchanged. UPDATE and DELETE through the view unchanged. Test 159
+- Nested insert through the same view refused (`object_in_use`); missing apply trigger refused; check_integrity,
+  drop protection, trigger-rename following and view reshape know the apply trigger
+- Direct update scripts from 1.0-1.6 (frozen v1.6 artifacts, two builds byte-identical,
+  `devops/generate_update_scripts_1_7.py`); the update adds the apply trigger to existing current views in place
+- Acceptance: 144/144 regressions; local private-stage upgrade matrix 2,742 checks, 0 failures; branch CI
+  43440617841 green (generator, regressions, restore, seven released-binary upgrades, concurrency); benchmarks 13/13
+  after re-running 111 twice (one scaling step flagged under load average ~50, passed twice at ~25); 1.6 performance
+  baselines kept. Evidence: `tmp/journal_current_view_batch.md`, `tmp/cv_insert_perf_1[67].out`
+
 ## 2026-11-13: Version 1.6 (tag v1.6 at 252c0f7, CI run 43425840814 green)
 - Batched writes through the for_portion_of view: the row trigger only queues each matched row's portion, and one
   `AFTER UPDATE FOR EACH STATEMENT` apply trigger (`<row trigger>_apply`) applies the statement with one
@@ -54,7 +67,6 @@ failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
 - Acceptance: CI 43420195486 (branch) and 43425840814 (master head): 143/143 regressions, all six released-binary
   upgrades GREEN, restore round trips, concurrency; generator 53 tests plus wiring; benchmarks 14/14 linear, within
   noise of the 1.5 baselines. Evidence: `tmp/journal_view_batch.md`, `tmp/v16_*`
-- Not in 1.6: the `current` view's INSERT still runs one `temporal_merge` per row (backlog)
 
 ## 2026-11-13: Version 1.5 (tag v1.5 at 545839a, CI run 43397369063 green)
 - for_portion_of view delete protocol (STATBUS-611): `UPDATE view SET id = NULL, valid_from = S, valid_until = E
