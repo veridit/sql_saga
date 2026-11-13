@@ -3,6 +3,8 @@
 A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
 
 ## Backlog
+- [ ] Batch INSERT through the `current` view like the 1.6 for_portion_of view (it still runs one `temporal_merge` per
+      row; its UPDATE and DELETE use plain DML already). Owner decides whether it is needed
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
       without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
       and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
