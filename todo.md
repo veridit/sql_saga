@@ -2,19 +2,28 @@
 
 A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
 
-## Now - Prototype: batch writes through the for_portion_of view (branch `prototype/view-batch-merge`, 2026-11-13)
+## Now - Version 1.6: batch writes through the for_portion_of view (branch `prototype/view-batch-merge`, 2026-11-13)
 
-The INSTEAD OF row trigger runs a complete `temporal_merge` per row. Measured on 1.5 (one throwaway database,
-fastest of two runs after a warmup): 30 rows 203 ms through the view against 11 ms for one batched merge; 300 rows
-2.9-3.3 s against 47-61 ms. Delete and update cost the same. Single-row edits (about 8-9 ms) are fine (owner).
-Question: can the view batch at all? Decide with a prototype first; run the benchmark tests only if it is.
-- [ ] Hypothesis and baseline in `tmp/journal.md`
-- [ ] Row trigger queues the prepared source row; a statement-level trigger on the view runs one `temporal_merge` per
-      mode (update, delete) and raises on errors
-- [ ] Existing view tests (050-054, 157) pass unchanged, or every difference is explained
-- [ ] Edge cases: mixed delete and update in one statement, nested statements, errors and cleanup, RETURNING, row
-      counts, savepoints, permissions and RLS, several views in one transaction
-- [ ] Measure 1/30/300 rows before and after, report feasibility and trade-offs to the owner
+The INSTEAD OF row trigger ran a complete `temporal_merge` per row (1.5: 30 rows 203 ms, 300 rows 2.9-3.3 s through
+the view, against 11 ms and 47-61 ms for one direct merge). Owner: prototype, then release it (2026-11-13).
+- [x] Prototype (9d45928): row trigger queues, statement trigger merges once. Hypothesis confirmed
+      (`tmp/journal_view_batch.md`)
+- [x] Runtime (cc354c3): one `AFTER UPDATE FOR EACH STATEMENT` apply trigger `<row trigger>_apply`; removals then
+      changes; nested statement through the view being applied refused (`object_in_use`); row trigger refuses when the
+      apply trigger is missing; check_integrity, drop protection and rename following know it. Test 158
+- [x] Packaging (2ed0309): frozen v1.5 artifacts, direct updates from 1.0-1.5, repairs add the apply trigger to
+      existing views; preflight accepts 1.5 and lists trigger-name clashes; released 1.4/1.5 generator tests run on their
+      tagged trees. Local: generator 53 tests plus wiring, artifacts 50 ok, released-binary 1.5->1.6 and 1.4->1.6 GREEN
+- [x] Docs (ec07283, 48c8b67): README "Many Rows in One Statement", `doc/upgrade.md` 1.6, frozen `doc/upgrade-1.5.md`
+- [x] Fast suite on a private 1.6 stage: 143/143 after accepting reviewed trigger-listing diffs (050/051/092/098/132)
+- [x] Final-code timing (load 62-95): 300 rows 91-123 ms, 3,000 rows 1.1-1.2 s (about 0.4 ms/row, linear)
+- [ ] Linux CI on the branch, including the 1.0-1.3 released-binary upgrade paths
+- [x] Benchmark suite on the 1.6 stage (load about 10): 14/14 pass, scaling LINEAR at every doubling. The suite does
+      not use for_portion_of views, so it guards the unchanged paths: 128k-entity scaling 13.0 s (1.5 baseline 12.2 s),
+      temporal_merge seed parent 14,994 rows/s (14,355), 20% insert 80% patch parent 8,609 rows/s (8,995); within
+      machine noise, baselines kept. A first run at load 50-95 showed one 3.8x scaling step, gone on re-run
+- [ ] Fast-forward master, green master CI, tag v1.6
+- Not in 1.6 (backlog): the `current` view's INSERT still runs one `temporal_merge` per row
 
 ## Backlog
 - [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
