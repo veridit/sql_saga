@@ -858,6 +858,9 @@ BEGIN
         IF pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid)) IS NOT NULL THEN
             EXECUTE pg_catalog.format('DROP TABLE pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid);
         END IF;
+        IF pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid || '_delete')) IS NOT NULL THEN
+            EXECUTE pg_catalog.format('DROP TABLE pg_temp.%I', '__temp_for_portion_of_' || v_view.view_oid || '_delete');
+        END IF;
 
         SELECT pg_catalog.array_agg(pg_catalog.format('%I %s', a.attname, pg_catalog.format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum)
         INTO v_base_columns

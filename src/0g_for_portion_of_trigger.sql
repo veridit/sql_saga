@@ -134,11 +134,13 @@ BEGIN
         END;
     END IF;
 
-    -- Create a temporary table to hold the single source row. The table name
-    -- is based on the view's OID to be unique per view. It is created only if it
-    -- doesn't exist for the session to avoid noisy NOTICEs from CREATE IF NOT EXISTS,
-    -- and is truncated before use to ensure it's clean for each row trigger.
+    -- PROTOTYPE (view batching): the row trigger only queues the prepared source row.
+    -- One queue per view and mode (update, delete), named by the view's OID. The
+    -- statement-level sql_saga.for_portion_of_statement_trigger() merges each queue once.
     temp_source_table_name := format('__temp_for_portion_of_%s', TG_RELID);
+    IF delete_portion THEN
+        temp_source_table_name := temp_source_table_name || '_delete';
+    END IF;
 
     IF to_regclass('pg_temp.' || quote_ident(temp_source_table_name)) IS NULL THEN
         DECLARE
@@ -156,15 +158,10 @@ BEGIN
               AND pa.attname <> ALL(info.generated_columns)
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
-            EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s, merge_status jsonb) ON COMMIT DROP',
+            EXECUTE format('CREATE TEMP TABLE %I (row_id bigserial, %s, merge_status jsonb) ON COMMIT DROP',
                 temp_source_table_name, v_cols_def);
         END;
     END IF;
-
-    
-    -- Truncate the temp table before each row to ensure we only process one source row per trigger firing.
-    -- Each trigger firing calls temporal_merge independently.
-    EXECUTE format('DELETE FROM %I WHERE true;', temp_source_table_name);
 
     -- The `for_portion_of` view allows specifying a time slice using either the authoritative range
     -- column, or the convenient component columns (`valid_from`, `valid_until`, `valid_to`). This trigger must
@@ -280,38 +277,105 @@ BEGIN
                                 AND pa.attname = key
             WHERE pa.attnum > 0 AND NOT pa.attisdropped;
 
-            EXECUTE format('INSERT INTO %I (row_id, %s, merge_status) VALUES (1, %s, NULL)',
+            EXECUTE format('INSERT INTO %I (%s) VALUES (%s)',
                 temp_source_table_name, v_insert_cols, v_insert_vals)
             USING jnew;
         END;
     END;
 
-    -- Use temporal_merge to apply the change.
-    CALL sql_saga.temporal_merge(
-        target_table => info.table_oid,
-        source_table => temp_source_table_name::regclass,
-        primary_identity_columns => identifier_columns,
-        mode => merge_mode,
-        era_name => info.era_name,
-        update_source_with_feedback => true,
-        feedback_status_column => 'merge_status',
-        feedback_status_key => 'temporal_merge',
-        ephemeral_columns => info.ephemeral_columns
-    );
-
-    -- Check for errors from the merge operation and raise an exception if any occurred.
-    DECLARE
-        v_error_count integer;
-        v_error_message text;
-    BEGIN
-        EXECUTE format('SELECT count(*), max(merge_status->''temporal_merge''->>''error_message'') FROM %I WHERE (merge_status->''temporal_merge''->>''status'')::sql_saga.temporal_merge_feedback_status = ''ERROR''', temp_source_table_name)
-        INTO v_error_count, v_error_message;
-
-        IF v_error_count > 0 THEN
-            RAISE EXCEPTION 'sql_saga: applying the change for portion of time failed. First error: %', v_error_message;
-        END IF;
-    END;
-
     RETURN NEW;
 END;
 $for_portion_of_trigger$;
+
+/*
+ * PROTOTYPE (view batching). BEFORE and AFTER UPDATE FOR EACH STATEMENT on a for_portion_of view.
+ * BEFORE refuses a non-empty queue: a nested statement on the same view while its queue is being
+ * merged (for example from a user trigger on the base table) fails closed. AFTER runs one
+ * temporal_merge per non-empty queue, deletions first, then empties it. Runs as the caller.
+ */
+CREATE FUNCTION sql_saga.for_portion_of_statement_trigger()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $for_portion_of_statement_trigger$
+#variable_conflict use_variable
+DECLARE
+    info record;
+    identifier_columns text[];
+    queue record;
+    v_error_message text;
+    v_nonempty boolean;
+BEGIN
+    IF TG_WHEN = 'BEFORE' THEN
+        FOR queue IN
+            SELECT q.name FROM (VALUES ('__temp_for_portion_of_' || TG_RELID), ('__temp_for_portion_of_' || TG_RELID || '_delete')) AS q(name)
+            WHERE pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', q.name)) IS NOT NULL
+        LOOP
+            EXECUTE pg_catalog.format('SELECT EXISTS (SELECT FROM pg_temp.%I)', queue.name) INTO v_nonempty;
+            IF v_nonempty THEN
+                RAISE EXCEPTION 'sql_saga: a statement on view %.% cannot run while another statement on it is being applied',
+                    quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME)
+                    USING ERRCODE = 'object_in_use';
+            END IF;
+        END LOOP;
+        RETURN NULL;
+    END IF;
+
+    FOR queue IN
+        SELECT q.name, q.mode::sql_saga.temporal_merge_mode AS mode
+        FROM (VALUES (1, '__temp_for_portion_of_' || TG_RELID || '_delete', 'DELETE_FOR_PORTION_OF'),
+                     (2, '__temp_for_portion_of_' || TG_RELID, 'UPDATE_FOR_PORTION_OF')) AS q(ord, name, mode)
+        WHERE pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', q.name)) IS NOT NULL
+        ORDER BY q.ord
+    LOOP
+        EXECUTE pg_catalog.format('SELECT EXISTS (SELECT FROM pg_temp.%I)', queue.name) INTO v_nonempty;
+        CONTINUE WHEN NOT v_nonempty;
+
+        IF info IS NULL THEN
+            SELECT v.era_name, pg_catalog.format('%I.%I', v.table_schema, v.table_name)::regclass AS table_oid,
+                   COALESCE(v.ephemeral_columns, e.ephemeral_columns) AS ephemeral_columns,
+                   v.trigger_name,
+                   e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name
+            INTO info
+            FROM sql_saga.updatable_view AS v
+            JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+            WHERE v.view_schema = TG_TABLE_SCHEMA AND v.view_name = TG_TABLE_NAME
+              AND v.view_type = 'for_portion_of';
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'sql_saga: could not find metadata for view %.%', quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
+            END IF;
+
+            -- The identifier columns are the row trigger's arguments, minus the temporal columns.
+            SELECT pg_catalog.string_to_array(pg_catalog.rtrim(pg_catalog.encode(t.tgargs, 'escape'), E'\\000'), E'\\000')
+            INTO identifier_columns
+            FROM pg_catalog.pg_trigger AS t
+            WHERE (t.tgrelid, t.tgname) = (TG_RELID, info.trigger_name);
+            identifier_columns := array_remove(identifier_columns, info.range_column_name);
+            identifier_columns := array_remove(identifier_columns, info.valid_from_column_name);
+            identifier_columns := array_remove(identifier_columns, info.valid_until_column_name);
+            identifier_columns := array_remove(identifier_columns, info.valid_to_column_name);
+        END IF;
+
+        CALL sql_saga.temporal_merge(
+            target_table => info.table_oid,
+            source_table => pg_catalog.format('pg_temp.%I', queue.name)::regclass,
+            primary_identity_columns => identifier_columns,
+            mode => queue.mode,
+            era_name => info.era_name,
+            update_source_with_feedback => true,
+            feedback_status_column => 'merge_status',
+            feedback_status_key => 'temporal_merge',
+            ephemeral_columns => info.ephemeral_columns
+        );
+
+        EXECUTE pg_catalog.format('SELECT max(merge_status->''temporal_merge''->>''error_message'') FROM pg_temp.%I WHERE (merge_status->''temporal_merge''->>''status'')::sql_saga.temporal_merge_feedback_status = ''ERROR''', queue.name)
+        INTO v_error_message;
+        IF v_error_message IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: applying the change for portion of time failed. First error: %', v_error_message;
+        END IF;
+
+        EXECUTE pg_catalog.format('DELETE FROM pg_temp.%I', queue.name);
+    END LOOP;
+
+    RETURN NULL;
+END;
+$for_portion_of_statement_trigger$;
