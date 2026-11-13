@@ -39,7 +39,7 @@ failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
 
 # Done
 
-## 2026-11-13: Version 1.7 (tag v1.7, branch CI run 43440617841 green)
+## 2026-11-13: Version 1.7 (tag v1.7 at bc0fc53, CI run 43446262515 green)
 - Batched INSERT through the current view, consistent with the 1.6 for_portion_of view: the row trigger only queues
   each new row (starting now), and one `AFTER INSERT FOR EACH STATEMENT` apply trigger (`<row trigger>_apply`)
   applies the statement with one MERGE_ENTITY_UPSERT `temporal_merge`, each row its own founding id. Results equal
