@@ -84,6 +84,7 @@ SELECT sql_saga.add_current_view('employees'::regclass, current_func_name := 'te
  department  | text      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+    current_valid_apply AFTER INSERT ON employees__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 TABLE sql_saga.updatable_view;
  view_schema |        view_name         | view_type | table_schema | table_name | era_name | trigger_name  | current_func | generated_columns | ephemeral_columns 

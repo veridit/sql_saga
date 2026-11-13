@@ -35,7 +35,6 @@ DECLARE
     info record;
     identifier_columns name[];
     delete_mode name;
-    source_table_oid regclass;
     now_function text;
     source_table_name text;
     -- For manual UPDATE
@@ -79,73 +78,81 @@ BEGIN
                            info.range_subtype /* %s */);
 
     IF (TG_OP = 'INSERT') THEN
-        -- An INSERT creates a new history, starting now.
-        -- This logic is clean and can use temporal_merge.
-        IF to_regclass('pg_temp.current_view_trigger_source_seq') IS NULL THEN
-            CREATE TEMP SEQUENCE current_view_trigger_source_seq;
-            GRANT USAGE ON SEQUENCE pg_temp.current_view_trigger_source_seq TO PUBLIC;
-        END IF;
-        source_table_name := format('current_view_trigger_source_%s', nextval('pg_temp.current_view_trigger_source_seq') /* %s */);
+        -- An INSERT creates a new history, starting now. Inserts are batched (1.7): this row trigger only
+        -- prepares the row's source and appends it to pg_temp.__temp_current_view_<view oid>; the view's
+        -- statement-level trigger, sql_saga.current_view_apply_trigger(), applies the queue with one
+        -- temporal_merge (MERGE_ENTITY_UPSERT), exactly as the former per-row merge did, row by row.
+        source_table_name := format('__temp_current_view_%s', TG_RELID);
 
-        IF to_regclass(source_table_name) IS NOT NULL THEN
-            EXECUTE format('DROP TABLE %I', source_table_name /* %I */);
+        -- A statement on this view issued while its queue is being applied (for example by a trigger on the
+        -- base table) would add to, and apply, the queue being read. Refuse it.
+        IF TG_RELID::text = ANY (pg_catalog.string_to_array(pg_catalog.current_setting('sql_saga.current_view_applying', true), ',')) THEN
+            RAISE EXCEPTION 'sql_saga: cannot insert into view %.% while an insert through it is being applied',
+                quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME)
+                USING ERRCODE = 'object_in_use',
+                      HINT = 'Write to the base table directly from the trigger.';
         END IF;
 
-        -- Create temp table using explicit column list to exclude GENERATED columns
+        -- A queued row is applied only by the view's apply trigger. Without it (a view's triggers cannot be
+        -- disabled, but one can be dropped despite drop protection), refuse rather than report a row never stored.
+        IF NOT EXISTS (
+            SELECT FROM pg_catalog.pg_trigger AS t
+            WHERE t.tgrelid = TG_RELID
+              AND t.tgfoid = 'sql_saga.current_view_apply_trigger()'::pg_catalog.regprocedure
+              AND t.tgtype = 4) -- AFTER INSERT FOR EACH STATEMENT
+        THEN
+            RAISE EXCEPTION 'sql_saga: view %.% has no apply trigger, so its inserts would not be made',
+                quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME)
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Recreate the view with sql_saga.drop_current_view and sql_saga.add_current_view.';
+        END IF;
+
         DECLARE
+            v_cols_def text;
+            v_cols text;
             v_source_cols_expr text;
+            v_row_id bigint;
         BEGIN
-            SELECT string_agg(col_expr, ', ')
-            INTO v_source_cols_expr
-            FROM (
-                SELECT format('($1).%I', pa.attname) as col_expr
-                FROM pg_attribute pa
-                WHERE pa.attrelid = info.table_oid
-                  AND pa.attname <> ALL(info.generated_columns)
-                  AND pa.attnum > 0 AND NOT pa.attisdropped
-                ORDER BY pa.attnum
-            ) ordered_cols;
-            
-            EXECUTE format(
-                'CREATE TEMP TABLE %I ON COMMIT DROP AS SELECT 1 as row_id, %s',
-                source_table_name, v_source_cols_expr
-            ) USING NEW;
+            -- The base table's columns, excluding GENERATED columns that cannot be inserted.
+            SELECT string_agg(format('%I %s', pa.attname, format_type(pa.atttypid, pa.atttypmod)), ', ' ORDER BY pa.attnum),
+                   string_agg(format('%I', pa.attname), ', ' ORDER BY pa.attnum),
+                   string_agg(format('($1).%I', pa.attname), ', ' ORDER BY pa.attnum)
+            INTO v_cols_def, v_cols, v_source_cols_expr
+            FROM pg_attribute pa
+            WHERE pa.attrelid = info.table_oid
+              AND pa.attname <> ALL(info.generated_columns)
+              AND pa.attnum > 0 AND NOT pa.attisdropped;
+
+            IF to_regclass(format('pg_temp.%I', source_table_name)) IS NULL THEN
+                EXECUTE format('CREATE TEMP TABLE %I (row_id bigserial, %s, merge_status jsonb) ON COMMIT DROP',
+                    source_table_name, v_cols_def);
+            END IF;
+
+            EXECUTE format('INSERT INTO pg_temp.%I (%s) SELECT %s RETURNING row_id',
+                source_table_name, v_cols, v_source_cols_expr)
+            INTO v_row_id USING NEW;
+
+            -- The new history starts now: handle both range-only and boundary column modes.
+            IF info.valid_from_column_name IS NOT NULL AND info.valid_until_column_name IS NOT NULL THEN
+                EXECUTE format(
+                    'UPDATE pg_temp.%I SET %I = %s::%s, %I = ''infinity''::%s WHERE row_id = $1',
+                    source_table_name, /* %I */
+                    info.valid_from_column_name, /* %I */
+                    now_function, /* %s */
+                    info.range_subtype, /* %s */
+                    info.valid_until_column_name, /* %I */
+                    info.range_subtype /* %s */
+                ) USING v_row_id;
+            ELSE
+                EXECUTE format(
+                    'UPDATE pg_temp.%I SET %I = %srange(%s, ''infinity'') WHERE row_id = $1',
+                    source_table_name, /* %I */
+                    info.range_column_name, /* %I */
+                    info.range_subtype, /* %s */
+                    now_function /* %s */
+                ) USING v_row_id;
+            END IF;
         END;
-
-        -- Handle both range-only and boundary column modes
-        IF info.valid_from_column_name IS NOT NULL AND info.valid_until_column_name IS NOT NULL THEN
-            -- Boundary columns exist - use them
-            EXECUTE format(
-                'UPDATE %I SET %I = %s::%s, %I = ''infinity''::%s',
-                source_table_name, /* %I */
-                info.valid_from_column_name, /* %I */
-                now_function, /* %s */
-                info.range_subtype, /* %s */
-                info.valid_until_column_name, /* %I */
-                info.range_subtype /* %s */
-            );
-        ELSE
-            -- Range-only mode - set range column directly
-            EXECUTE format(
-                'UPDATE %I SET %I = %srange(%s, ''infinity'')',
-                source_table_name, /* %I */
-                info.range_column_name, /* %I */
-                info.range_subtype, /* %s */
-                now_function /* %s */
-            );
-        END IF;
-        source_table_oid := to_regclass(pg_my_temp_schema()::regnamespace::text || '.' || quote_ident(source_table_name));
-
-        CALL sql_saga.temporal_merge(
-            target_table             => info.table_oid,
-            source_table             => source_table_oid,
-            primary_identity_columns => identifier_columns::text[],
-            ephemeral_columns        => '{}'::text[],
-            era_name                 => info.era_name,
-            mode                     => 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
-            row_id_column            => 'row_id',
-            founding_id_column       => 'row_id'
-        );
         RETURN NEW;
 
     ELSIF (TG_OP = 'UPDATE') THEN
@@ -402,3 +409,105 @@ BEGIN
     RETURN NULL;
 END;
 $function$;
+
+/*
+ * The statement-level half of a current view's INSERT (1.7): AFTER INSERT FOR EACH STATEMENT, created by
+ * add_current_view as the view's apply trigger (updatable_view.trigger_name || '_apply').
+ *
+ * sql_saga.current_view_trigger() only prepares each inserted row's source (its new history starting now) and
+ * queues it in pg_temp.__temp_current_view_<view oid>. This trigger applies the queue with one temporal_merge
+ * (MERGE_ENTITY_UPSERT, each row its own founding id), exactly as the former per-row merge did, and empties it.
+ * Two rows for the same entity give the later row's values, as applying them one by one did.
+ *
+ * It runs inside the statement as the caller (SECURITY INVOKER): an error aborts the statement, and the
+ * caller's privileges and row-level security decide every physical change. While the queue is applied,
+ * sql_saga.current_view_applying names the view, and the row trigger refuses a nested insert through it.
+ */
+CREATE FUNCTION sql_saga.current_view_apply_trigger()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $current_view_apply_trigger$
+#variable_conflict use_variable
+DECLARE
+    info record;
+    identifier_columns name[];
+    queue_oid regclass;
+    v_nonempty boolean;
+    v_error_message text;
+    v_applying text;
+BEGIN
+    IF TG_LEVEL <> 'STATEMENT' OR TG_WHEN <> 'AFTER' OR TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'sql_saga: current_view_apply_trigger() must be an AFTER INSERT FOR EACH STATEMENT trigger'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    queue_oid := pg_catalog.to_regclass(pg_catalog.format('pg_temp.%I', '__temp_current_view_' || TG_RELID));
+    IF queue_oid IS NULL THEN
+        RETURN NULL;
+    END IF;
+    EXECUTE pg_catalog.format('SELECT EXISTS (SELECT FROM %s)', queue_oid) INTO v_nonempty;
+    IF NOT v_nonempty THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT v.era_name, v.trigger_name, pg_catalog.format('%I.%I', v.table_schema, v.table_name)::regclass AS table_oid,
+           e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name
+    INTO info
+    FROM sql_saga.updatable_view AS v
+    JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+    WHERE v.view_schema = TG_TABLE_SCHEMA AND v.view_name = TG_TABLE_NAME
+      AND v.view_type = 'current';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sql_saga: could not find metadata for view %.%', quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
+    END IF;
+
+    -- The entity identifier: the row trigger's arguments after its delete mode, without the temporal columns.
+    SELECT (pg_catalog.string_to_array(pg_catalog.rtrim(pg_catalog.encode(t.tgargs, 'escape'), E'\\000'), E'\\000'))[2:]::name[]
+    INTO identifier_columns
+    FROM pg_catalog.pg_trigger AS t
+    WHERE (t.tgrelid, t.tgname) = (TG_RELID, info.trigger_name);
+    IF identifier_columns IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: the row trigger "%" of view %.% is missing', info.trigger_name,
+            quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
+    END IF;
+    identifier_columns := pg_catalog.array_remove(identifier_columns, info.range_column_name);
+    identifier_columns := pg_catalog.array_remove(identifier_columns, info.valid_from_column_name);
+    identifier_columns := pg_catalog.array_remove(identifier_columns, info.valid_until_column_name);
+    identifier_columns := pg_catalog.array_remove(identifier_columns, info.valid_to_column_name);
+
+    v_applying := pg_catalog.current_setting('sql_saga.current_view_applying', true);
+    PERFORM pg_catalog.set_config('sql_saga.current_view_applying',
+        pg_catalog.concat_ws(',', NULLIF(v_applying, ''), TG_RELID::text), true);
+
+    CALL sql_saga.temporal_merge(
+        target_table             => info.table_oid,
+        source_table             => queue_oid,
+        primary_identity_columns => identifier_columns::text[],
+        ephemeral_columns        => '{}'::text[],
+        era_name                 => info.era_name,
+        mode                     => 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
+        row_id_column            => 'row_id',
+        founding_id_column       => 'row_id',
+        update_source_with_feedback => true,
+        feedback_status_column   => 'merge_status',
+        feedback_status_key      => 'temporal_merge'
+    );
+
+    PERFORM pg_catalog.set_config('sql_saga.current_view_applying', COALESCE(v_applying, ''), true);
+
+    EXECUTE pg_catalog.format($SQL$
+        SELECT q.merge_status->'temporal_merge'->>'error_message'
+        FROM %s AS q
+        WHERE (q.merge_status->'temporal_merge'->>'status')::sql_saga.temporal_merge_feedback_status = 'ERROR'
+        ORDER BY q.row_id
+        LIMIT 1
+    $SQL$, queue_oid) INTO v_error_message;
+    IF v_error_message IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: applying the insert through view %.% failed. First error: %',
+            quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME), v_error_message;
+    END IF;
+
+    EXECUTE pg_catalog.format('TRUNCATE %s', queue_oid);
+    RETURN NULL;
+END;
+$current_view_apply_trigger$;

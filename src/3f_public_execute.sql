@@ -7,6 +7,7 @@
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_apply_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION sql_saga.current_view_apply_trigger() TO PUBLIC;
 DO $grant_temporal_merge$
 DECLARE
     r record;

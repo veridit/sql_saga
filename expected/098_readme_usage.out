@@ -457,6 +457,7 @@ Triggers:
  valid_range | daterange         |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON readme.legal_unit__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+    current_valid_apply AFTER INSERT ON readme.legal_unit__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 \d readme.unit_with_range__for_portion_of_valid
   View "readme.unit_with_range__for_portion_of_valid"

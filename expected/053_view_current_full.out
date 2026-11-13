@@ -69,6 +69,7 @@ SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mod
  valid_until | date      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+    current_valid_apply AFTER INSERT ON test_schema.schema_test__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 TABLE sql_saga.updatable_view;
  view_schema |         view_name          | view_type | table_schema | table_name  | era_name | trigger_name  | current_func | generated_columns | ephemeral_columns 
@@ -145,6 +146,7 @@ RESET ROLE;
  valid_until | date      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_documented_ending', 'id')
+    current_valid_apply AFTER INSERT ON acl_test__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 TABLE sql_saga.updatable_view;
  view_schema |        view_name        | view_type | table_schema | table_name | era_name | trigger_name  | current_func | generated_columns | ephemeral_columns 
@@ -296,6 +298,7 @@ SELECT sql_saga.add_current_view('range_only_employees'::regclass, current_func_
  department  | text      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON range_only_employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+    current_valid_apply AFTER INSERT ON range_only_employees__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 -- Test SELECT: Should show only current records (Alice in R&D and Bob)
 \echo '--- Current view SELECT ---'
@@ -435,6 +438,7 @@ SELECT sql_saga.add_current_view('current_ephemeral_test'::regclass, current_fun
  edit_by_user_id | integer                  |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON current_ephemeral_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+    current_valid_apply AFTER INSERT ON current_ephemeral_test__current_valid FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.current_view_apply_trigger()
 
 -- Insert initial data via base table (not via CURRENT view to have full control)
 -- Create two adjacent rows with DIFFERENT names and DIFFERENT audit values

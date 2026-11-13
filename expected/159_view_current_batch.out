@@ -1,0 +1,23 @@
+\set ECHO none
+       tgname        | tgtype |               function                
+---------------------+--------+---------------------------------------
+ current_valid       |     93 | sql_saga.current_view_trigger()
+ current_valid_apply |      4 | sql_saga.current_view_apply_trigger()
+(2 rows)
+
+PASS one statement inserts several new entities from now
+PASS an existing entity gets a new version from now, a new one starts now
+PASS the same entity twice in one statement ends with the later row
+PASS a range-only table with a temporal primary key
+PASS RETURNING reports the inserted rows
+PASS a failing statement inserts nothing and leaves nothing queued
+PASS writable CTEs over the same and different views
+PASS UPDATE and DELETE through the view are unchanged
+PASS a base-table trigger cannot insert through the view being applied
+PASS the apply trigger is protected like the row trigger
+PASS an insert is refused when the view has no apply trigger
+PASS check_integrity requires exactly one apply trigger
+PASS the apply trigger follows a rename of the row trigger
+PASS the invoker may insert through the view under row-level security
+PASS a policy refusal rolls back the whole batched insert
+PASS 1.7 batched current view inserts

@@ -1664,30 +1664,32 @@ BEGIN
 
             -- Check if the registered trigger still exists on the view
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name) THEN
-                -- If it's stale, find the *new* trigger on that view that points to our function.
-                -- This currently only supports for_portion_of, but is extensible.
-                IF v_view_row.view_type = 'for_portion_of' THEN
-                    SELECT tgname INTO v_new_trigger_name FROM pg_trigger
-                    WHERE tgrelid = v_view_oid AND tgfoid = 'sql_saga.for_portion_of_trigger()'::regprocedure;
+                -- If it's stale, find the *new* row trigger on that view that points to our function, and keep
+                -- the apply trigger (1.6 for_portion_of, 1.7 current), named after the row trigger, paired with it.
+                SELECT tgname INTO v_new_trigger_name FROM pg_trigger
+                WHERE tgrelid = v_view_oid
+                  AND tgfoid = CASE v_view_row.view_type
+                      WHEN 'for_portion_of' THEN 'sql_saga.for_portion_of_trigger()'::regprocedure
+                      ELSE 'sql_saga.current_view_trigger()'::regprocedure END;
 
-                    IF FOUND THEN
-                        sql := format('UPDATE sql_saga.updatable_view SET trigger_name = %L WHERE (view_schema, view_name) = (%L, %L)',
-                            v_new_trigger_name, /* %L */
-                            v_view_row.view_schema, /* %L */
-                            v_view_row.view_name /* %L */
-                        );
-                        EXECUTE sql;
-                        -- The apply trigger (1.6) is named after the row trigger: keep the pair.
-                        IF EXISTS (SELECT FROM pg_trigger
-                                   WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name || '_apply'
-                                     AND tgfoid = 'sql_saga.for_portion_of_apply_trigger()'::regprocedure)
-                           AND NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_new_trigger_name || '_apply') THEN
-                            PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TRIGGER %I ON %s RENAME TO %I',
-                                v_view_row.trigger_name || '_apply', v_view_oid, v_new_trigger_name || '_apply'));
-                            RAISE NOTICE 'sql_saga: Renamed trigger "%" on view "%" to "%" to follow the rename of trigger "%"',
-                                v_view_row.trigger_name || '_apply', sql_saga.__internal_display_name(v_view_oid),
-                                v_new_trigger_name || '_apply', v_view_row.trigger_name;
-                        END IF;
+                IF FOUND THEN
+                    sql := format('UPDATE sql_saga.updatable_view SET trigger_name = %L WHERE (view_schema, view_name) = (%L, %L)',
+                        v_new_trigger_name, /* %L */
+                        v_view_row.view_schema, /* %L */
+                        v_view_row.view_name /* %L */
+                    );
+                    EXECUTE sql;
+                    IF EXISTS (SELECT FROM pg_trigger
+                               WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name || '_apply'
+                                 AND tgfoid = CASE v_view_row.view_type
+                                     WHEN 'for_portion_of' THEN 'sql_saga.for_portion_of_apply_trigger()'::regprocedure
+                                     ELSE 'sql_saga.current_view_apply_trigger()'::regprocedure END)
+                       AND NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_new_trigger_name || '_apply') THEN
+                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TRIGGER %I ON %s RENAME TO %I',
+                            v_view_row.trigger_name || '_apply', v_view_oid, v_new_trigger_name || '_apply'));
+                        RAISE NOTICE 'sql_saga: Renamed trigger "%" on view "%" to "%" to follow the rename of trigger "%"',
+                            v_view_row.trigger_name || '_apply', sql_saga.__internal_display_name(v_view_oid),
+                            v_new_trigger_name || '_apply', v_view_row.trigger_name;
                     END IF;
                 END IF;
             END IF;

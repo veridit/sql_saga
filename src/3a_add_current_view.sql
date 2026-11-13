@@ -174,6 +174,9 @@ BEGIN
 
             PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.current_view_trigger(%s)',
                 trigger_name, r.schema_name, view_name, trigger_args));
+            -- The row trigger queues each inserted row; the apply trigger merges the statement's inserts once.
+            PERFORM sql_saga.__internal_execute_as_caller(format('CREATE TRIGGER %I AFTER INSERT ON %I.%I FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.current_view_apply_trigger()',
+                trigger_name || '_apply', r.schema_name, view_name));
             INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func, generated_columns)
                 VALUES (r.schema_name, view_name, 'current', r.schema_name, r.table_name, r.era_name, trigger_name, now_function, generated_columns);
         END;
