@@ -8,6 +8,17 @@ A living document of upcoming tasks. Planned work is listed first; finished work
       and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
       baseline. Owner agreed 2026-10-26: practical narrow helpers in sql_saga, upstream changes for another time
 - [ ] Upstream parallel-restore report and patch (section below)
+- [ ] Clean code (suggested 2026-11-14, owner to choose):
+      - Share one update-script generator: `generate_update_scripts_1_6.py` and `_1_7.py` differ only in version
+        constants and the manifest. A `devops/release_generator.py` taking (target, previous, sources, hashes,
+        manifest, privileges, repairs) would make each release file a small data module
+      - Share the two apply triggers' common steps (find queue, read identifier from the row trigger, set and restore
+        the applying GUC, raise the first ERROR feedback, TRUNCATE) in one internal helper
+      - Untracked strays: `README.sync-conflict-*.md`, `todo.sync-conflict-*.md` (Syncthing, 2026-10-22),
+        `devops/__pycache__/` (add to .gitignore), and orphan expected files with no test:
+        `expected/118_system_versioning_move_workflow.out`, `expected/119_foreign_key_rename.out`,
+        `expected/119_foreign_key_renames.out`. Confirm, then delete
+      - `tmp/` holds about 2,000 files from earlier releases; archive or prune what is no longer evidence
 - [ ] Automate README.md example testing (literate programming approach)
 - [ ] Improve test documentation for complex/expected-failure cases
 - [ ] Package with pgxman for easier distribution
@@ -26,10 +37,13 @@ Parallel `pg_restore -j` of a database using sql_saga fails intermittently becau
 load order of extension configuration tables that reference each other (`doc/decision-log.md`, 2026-10-13 decision).
 The split restore in README.md is the supported workaround. The restore harness keeps the parallel case as a known
 failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
-- [ ] Delegate to an agent: finalize the `pgsql-bugs` report from the research in `tmp/upstream_pg_dump_fk_order.md`
-      and the minimal two-table reproducer in `doc/decision-log.md`; re-run the reproducer on current PostgreSQL
-      `master` and 18 before sending
-- [ ] Owner approves the report text, then it is sent
+- [x] Report finalized 2026-11-13: `tmp/upstream_repro_20261113/pgsql_bugs_report.txt` (reproducer and log beside it).
+      Re-run on PostgreSQL 18.3: serial restore works, `pg_restore -j 2` failed 5/5 with an FK error; the same code
+      is still in REL_18_STABLE (18.7) and master
+- [x] Owner approved the report text (2026-11-13)
+- [ ] **Next (planned Monday):** owner signs in at https://www.postgresql.org/account/submitbug/ in a window the
+      agent may use (not a client's window); the agent fills the form from the approved text, shows it, and submits
+      only after the owner confirms. The form mails `pgsql-bugs@lists.postgresql.org`
 - [ ] Kick off a second agent to write the PostgreSQL patch (keep the own TABLE as first archive dependency of TABLE
       DATA and add the referenced tables' TABLE DATA entries), with a pg_dump TAP test, for `pgsql-hackers`
 - [ ] When a fixed PostgreSQL is released, turn the harness known failure into a supported case and update README.md
