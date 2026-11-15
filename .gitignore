@@ -21,3 +21,4 @@ results/
 compile_commands.json
 /.cache
 .claude/settings.local.json
+__pycache__/
