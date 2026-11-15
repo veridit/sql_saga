@@ -193,3 +193,22 @@ routes each unique database to those files without changing global packages.
 `UPGRADE_ONLY=artifacts` checks tag provenance and package completeness without
 creating databases. `UPGRADE_ONLY=extension_scripts` checks a fresh candidate in
 one uniquely owned database.
+
+### Cutting the next release (maintainers)
+
+The release data lives in `devops/generate_update_scripts_<X_Y>.py`; `devops/direct_update.py` builds the
+scripts. For a release that only changes routines (as 1.6 and 1.7 did), with N the new and P the previous version:
+
+1. Freeze P: build `sql_saga--P.sql` and every `sql_saga--<source>--P.sql` twice from `git archive vP`, check that
+   both builds are byte-identical, copy them into `versions/` and record their SHA-256.
+2. Add `devops/generate_update_scripts_N.py` (a `Release(...)` with those hashes, the routines changed since P,
+   new routines and their privilege statements) and `devops/upgrade_N_repairs.sql` for data repairs that need the
+   new definitions. The generator refuses any source change outside the manifest. Add its specification test, and
+   point the P generator's test at `released_tree.released_src('vP')`.
+3. Set `default_version` in `sql_saga.control` and `expected/001_install.out`, and replace the version rule in the
+   Makefile (only the current version's rule is kept; older releases build from their own tags).
+4. Extend `sql_saga_upgrade_preflight.sql` for the P release shape, and `devops/upgrade_test.sh` with the vP
+   baseline, the frozen P artifacts and a gate for what the repairs change.
+5. Freeze this guide as `doc/upgrade-P.md` and describe N here.
+6. Branch CI, fast-forward master, master CI on the exact head (`gh workflow run` if the head is `[skip ci]`), then
+   the annotated tag `vN` ("sql_saga N") on that commit.

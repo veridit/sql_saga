@@ -39,7 +39,7 @@ make install && make test; make diff-fail-all              # Run all tests
 make install && make test fast; make diff-fail-all         # Run fast tests (exclude benchmarks)
 make install && make test benchmark; make diff-fail-all    # Run benchmark tests only
 devops/benchmark_settings.sh enable|disable|status       # Server settings benchmarks need (pg_stat_monitor, max_locks 256); restarts PostgreSQL
-make install && make test TESTS="001_install 052_era"; make diff-fail-all  # Run specific tests
+make install && make test TESTS="001_install 052_view_current_basis"; make diff-fail-all  # Run specific tests
 
 # View test diffs
 make diff-fail-all                      # Show all test failures (plain diff)
@@ -229,7 +229,13 @@ at `115`+ (`115` native packaging, `116`-`117` check_integrity, `118` system ver
 foreign key renames and shared helpers, `122` era boundary column renames, `123` history policy guard, `124` XOR key
 column order, `125` regular FK restore safety, `126` views follow ADD/DROP/RENAME COLUMN, `127` check_integrity repair
 hints, `128` FK column pairing, `129` regular FK constraint trigger, `130` catalog format safeguard, `131` quoting and
-renames, `132` view column type changes, `133` native cache schema changes, `134` dependency cleanup). Benchmarks
+renames, `132` view column type changes, `133` native cache schema changes, `134` dependency cleanup, `135` current
+view clock binding, `136` history policy integrity, `137`-`143` and `147`-`148` regular foreign keys (cascade,
+truncate, forged triggers, inheritance and partitions, predicated keys, plan cache, hardened schema, XOR keys),
+`140`, `144`-`146`, `150`-`155` caller rights and security (API ownership, immediate caller, user-code rights,
+search_path hijack, history ownership, predicate identity, health caller, view trigger replay, worker entry guard,
+caller context), `149` PostgreSQL parity, `156` regular era named system_time, `157` for_portion_of view delete,
+`158` batched for_portion_of view writes, `159` batched current view inserts). Benchmarks
 are selected by the word `benchmark` in the test name, not by number.
 
 **Self-Contained Test Template:**

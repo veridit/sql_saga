@@ -181,12 +181,12 @@ Our process deliberately adds verification steps (`CHANGE -> VERIFY -> CLEANUP -
   - **Usage:**
     - To run all tests: `make install && make test; make diff-fail-all`
     - To run fast tests (excluding benchmarks): `make install && make test fast; make diff-fail-all`
-    - To run specific tests: `make install && make test TESTS="01_install 51_quoted_identifiers"; make diff-fail-all`
-  - **Note on Self-Contained Tests:** The `01_install.sql` test handles setup required by older tests. Newer tests should be self-contained.
+    - To run specific tests: `make install && make test TESTS="001_install 085_quoted_identifiers"; make diff-fail-all`
+  - **Note on Self-Contained Tests:** The `001_install.sql` test handles setup required by older tests. Newer tests should be self-contained.
     - Include `\i sql/include/test_setup.sql` at the beginning to create necessary roles and permissions.
     - Include `\i sql/include/test_teardown.sql` at the end to clean up.
     - For tests that verify transactional behavior, the `BEGIN`/`ROLLBACK` block should wrap only the test logic, not the setup/teardown of non-transactional objects like roles.
-    - When running a specific older test, `01_install` must still be run first.
+    - When running a specific older test, `001_install` must still be run first.
     - **Test Isolation Patterns:** To ensure tests are robust and independent, use `SAVEPOINT`s to manage transactional state within a test file.
         - **For successful test cases:** Wrap each distinct scenario in a `SAVEPOINT <name>` and `RELEASE SAVEPOINT <name>` block. This creates a nested transaction for the scenario. If it succeeds, its changes are committed to the main transaction.
           ```sql
