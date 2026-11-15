@@ -23,6 +23,11 @@ make -s $out
 sleep 1
 touch devops/upgrade_1_7_repairs.sql
 make -n $out | grep -q generate_update_scripts_1_7 || { echo 'FAIL: repairs change does not regenerate' >&2; exit 1; }
+sleep 1
+make -s $out
+sleep 1
+touch devops/direct_update.py
+make -n $out | grep -q generate_update_scripts_1_7 || { echo 'FAIL: shared generator change does not regenerate' >&2; exit 1; }
 # An omitted source change must invalidate the stamp and fail closed.
 printf '\nSELECT 617;\n' >> src/3c_current_view_trigger.sql
 if make -s $out > omission.log 2>&1; then echo 'FAIL: omitted change accepted' >&2; exit 1; fi
