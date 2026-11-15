@@ -8,17 +8,10 @@ A living document of upcoming tasks. Planned work is listed first; finished work
       and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
       baseline. Owner agreed 2026-10-26: practical narrow helpers in sql_saga, upstream changes for another time
 - [ ] Upstream parallel-restore report and patch (section below)
-- [ ] Clean code (suggested 2026-11-14, owner to choose):
-      - Share one update-script generator: `generate_update_scripts_1_6.py` and `_1_7.py` differ only in version
-        constants and the manifest. A `devops/release_generator.py` taking (target, previous, sources, hashes,
-        manifest, privileges, repairs) would make each release file a small data module
-      - Share the two apply triggers' common steps (find queue, read identifier from the row trigger, set and restore
-        the applying GUC, raise the first ERROR feedback, TRUNCATE) in one internal helper
-      - Untracked strays: `README.sync-conflict-*.md`, `todo.sync-conflict-*.md` (Syncthing, 2026-10-22),
-        `devops/__pycache__/` (add to .gitignore), and orphan expected files with no test:
-        `expected/118_system_versioning_move_workflow.out`, `expected/119_foreign_key_rename.out`,
-        `expected/119_foreign_key_renames.out`. Confirm, then delete
-      - `tmp/` holds about 2,000 files from earlier releases; archive or prune what is no longer evidence
+- [ ] Design docs cited from code live in untracked `tmp/` (37 citations in src/, sql/, devops/ to
+      `tmp/design_final.md`, `tmp/design_restore_clean.md`, `tmp/design_manual_schema_changes.md`,
+      `tmp/fable_audit_v13.md` ...), so a fresh clone cannot follow them. Owner decides: move the cited designs into
+      `doc/design/` (a few name local paths and need a short edit first) and repoint the comments, or keep them local
 - [ ] Automate README.md example testing (literate programming approach)
 - [ ] Improve test documentation for complex/expected-failure cases
 - [ ] Package with pgxman for easier distribution
@@ -52,6 +45,25 @@ failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
       constraint triggers; owner decides whether to send it
 
 # Done
+
+## 2026-11-15: Clean-code pass after 1.7 (no release; nothing installed changes)
+- One direct-update builder, `devops/direct_update.py`; `generate_update_scripts_1_6.py` and `_1_7.py` now hold only
+  their release data (about 130 duplicated lines gone). Proof: the 1.6 file on the v1.6 tree reproduces all six frozen
+  `versions/sql_saga--*--1.6.sql` byte for byte, and the eight 1.7 scripts keep their SHA-256. 1.4 and 1.5 generators
+  stay as released. Makefile keeps only the 1.7 rule (90 unreachable lines for 1.2-1.6 removed; old releases build
+  from their tags). Maintainer release recipe added to `doc/upgrade.md`
+- Removed 12 tracked expected files no test produces (renamed tests, alternates for the removed plan cache) and 3
+  untracked empty ones; `__pycache__/` ignored; merged branches deleted locally and on GitHub (current-view-batch,
+  for-portion-delete, view-batch-merge, rust-sweep-line-planner, speedup). Kept: `prototype-valid-ranges` (2 commits
+  not in master), `prototype/defer-temporal-checks` (shelved, reference) and the 10 old stashes
+- `tmp/` 1.4 GB / 28,065 entries archived to `/Users/jhf/ssb/sql_saga_archive/sql_saga_tmp_2026-11-15.tar.zst` (148 MB,
+  listing verified), then pruned to the 55 entries tracked files cite plus current evidence (2.4 MB). Two stale git
+  worktrees in tmp/ (Oct 17/21) unregistered; their uncommitted diffs kept as `tmp/worktree_*_uncommitted.patch`
+- Not done, by decision: one shared helper for the two view apply triggers. It would have to be executable by PUBLIC
+  (both triggers run as the caller), widening the PUBLIC function set test 117 pins; it changes released routine
+  bodies, so it needs a 1.8 release; and the shared part is about 25 lines of two differently shaped triggers
+  (two ordered queues vs one, two modes vs one, ephemeral columns vs founding id)
+- AGENTS.md test slots through 159; real test names in AGENTS.md and CONVENTIONS.md examples
 
 ## 2026-11-13: Version 1.7 (tag v1.7 at bc0fc53, CI run 43446262515 green)
 - Batched INSERT through the current view, consistent with the 1.6 for_portion_of view: the row trigger only queues
