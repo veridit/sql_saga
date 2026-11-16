@@ -111,6 +111,7 @@ sql_saga owns every policy on `B_history`:
 | ALTER on a managed view | `security_invoker` kept; the gated view's body unchanged |
 | ALTER TABLE on a history table | RLS enabled, FORCE equal to the base |
 | policy DDL on B or B_history | synchronization for that family; direct DROP/ALTER of a managed policy refused |
+| DROP POLICY on B (`sql_drop`) | the history copy of that policy is dropped by the same synchronization; not during a `pg_restore --clean` teardown, which drops the dumped copies itself |
 | owner change of B | every derived object follows |
 | GRANT / REVOKE | nothing |
 
