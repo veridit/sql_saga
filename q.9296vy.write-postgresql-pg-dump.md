@@ -1,0 +1,32 @@
+---
+id: 9296vy
+title: "Write the PostgreSQL pg_dump patch for extension table load order"
+status: todo
+type: feature
+priority: "medium"
+assignee: []
+labels: ["upstream"]
+created: 2026-11-16
+updated: 2026-11-16
+---
+
+## Goal
+A patch for pgsql-hackers makes pg_dump record the load order of extension configuration tables that reference each other, with a pg_dump TAP test
+
+## Purpose
+So parallel pg_restore works without the split-restore workaround
+
+## Principle
+Delegated to a separate agent after the report is filed; sql_saga keeps its foreign keys between catalog tables (decision-log 2026-10-13)
+
+## Relevant details
+Approach: keep the own TABLE as first archive dependency of TABLE DATA and add the referenced tables' TABLE DATA entries
+
+## Depends on
+- hsa1hp
+
+## Acceptance
+- [ ] Patch applies to PostgreSQL master and its TAP test passes
+- [ ] Sent to pgsql-hackers, link recorded
+
+## Notes
