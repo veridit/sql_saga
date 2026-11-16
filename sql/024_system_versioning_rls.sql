@@ -1,7 +1,7 @@
 \i sql/include/test_setup.sql
 
 /*
- * Row-level security on history (tmp/design_final.md sections 3, 8, 9, 10, 12).
+ * Row-level security on history (doc/design/history-access.md).
  *
  * When RLS on the base table B is active for the caller, history read through B_with_history and
  * the as-of functions is filtered by B's own SELECT policies:
@@ -172,7 +172,7 @@ RESET ROLE;
 SELECT count(*) AS owner_rows FROM doc_with_history;
 
 \echo '--- FORCE ROW LEVEL SECURITY: a non-superuser owner is filtered on current rows and on history alike'
--- FORCE on doc is mirrored to doc_history (owner decision 5, tmp/design_final.md section 15).
+-- FORCE on doc is mirrored to doc_history (owner decision 5, doc/design/history-access.md).
 CREATE ROLE rls_owner;
 GRANT USAGE, CREATE ON SCHEMA public TO rls_owner;
 ALTER TABLE doc OWNER TO rls_owner;

@@ -2,7 +2,7 @@
  * Hardened databases revoke EXECUTE from PUBLIC by default (ALTER DEFAULT PRIVILEGES ... REVOKE
  * EXECUTE ON FUNCTIONS FROM PUBLIC). The FOR PORTION OF and current views are open to PUBLIC and
  * call these routines as the caller, whose rights on the base table decide what happens; so the
- * routines themselves must stay executable by PUBLIC (tmp/design_final.md section 5).
+ * routines themselves must stay executable by PUBLIC (doc/design/history-access.md).
  */
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_apply_trigger() TO PUBLIC;

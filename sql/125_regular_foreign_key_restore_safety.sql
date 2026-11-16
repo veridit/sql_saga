@@ -8,7 +8,7 @@
  * function that reads the referenced table. pg_dump emits a CHECK constraint inline with its table, so
  * it is active while the data is loaded: when the child's data is loaded before the parent's (a child
  * named "activity" sorts before its parent "legal_unit"), even a serial or --single-transaction restore
- * fails with "violates check constraint" (tmp/fable_audit_v13_brief.md, defect B).
+ * fails with "violates check constraint" (doc/design/catalog-column-order.md, restore order).
  *
  * This test states both contracts:
  *   enforcement   a missing parent key is refused on INSERT and on UPDATE of the child, NULL in a key

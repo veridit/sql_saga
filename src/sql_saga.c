@@ -574,7 +574,7 @@ GetHistoryTable(Relation rel)
 
 /*
  * Columns of a system-versioned table and its history correspond by NAME, never by position
- * (tmp/design_manual_schema_changes.md). The helpers below find live columns by name, refuse a
+ * (doc/design/manual-schema-changes.md). The helpers below find live columns by name, refuse a
  * history that cannot take every base value, and build the history row.
  */
 static AttrNumber
@@ -1230,7 +1230,8 @@ alter_table_changes_column_shape(PG_FUNCTION_ARGS)
 }
 
 /*
- * Regular (non-temporal) to temporal foreign keys (design B, tmp/fable_audit_v13.md section 2.3).
+ * Regular (non-temporal) to temporal foreign keys (doc/decision-log.md, "Use Constraint Triggers for
+ * Regular-to-Temporal Foreign Keys", and doc/design/catalog-column-order.md).
  *
  * The referencing side is a constraint trigger (regular_fk_check_c) and the referenced side the
  * uk_update / uk_delete constraint triggers. All three take the same 17 arguments
@@ -3329,7 +3330,7 @@ write_history(PG_FUNCTION_ARGS)
 								   range_column_name, RelationGetRelationName(history_rel))));
 
 		/*
-		 * Columns correspond by name (tmp/design_manual_schema_changes.md). Every base column
+		 * Columns correspond by name (doc/design/manual-schema-changes.md). Every base column
 		 * must be in the history with the same type, typmod and collation; otherwise fail before
 		 * writing anything, never leaving a base value out. History-only columns get NULL.
 		 */

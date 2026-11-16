@@ -2,7 +2,7 @@
 
 /*
  * XOR unique keys (add_unique_key ... mutually_exclusive_columns => ...) whose column order is not
- * alphabetical, in the shapes StatBus uses (tmp/STATBUS_REPORT_xor_key_order.md):
+ * alphabetical, in the shapes StatBus uses (doc/design/catalog-column-order.md, A1):
  *   activity         (type, legal_unit_id, establishment_id)
  *   location         (type, establishment_id, legal_unit_id)
  *   contact          (legal_unit_id, establishment_id)

@@ -1,5 +1,5 @@
 /*
- * sql_saga 1.3 update preamble (fragment P of devops/generate_update_scripts.py; tmp/v13_upgrade_integration_plan.md).
+ * sql_saga 1.3 update preamble (fragment P of devops/generate_update_scripts.py; doc/design/catalog-column-order.md).
  *
  * The generator places this fragment right after the header and the trusted source-version line
  *   SELECT pg_catalog.set_config('sql_saga.upgrade_from', '<1.0|1.1|1.2>', true);

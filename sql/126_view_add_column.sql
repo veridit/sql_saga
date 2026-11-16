@@ -1,7 +1,7 @@
 \i sql/include/test_setup.sql
 
 /*
- * Updatable views follow the column shape of their base table (tmp/fable_audit_v13.md finding 3, A3).
+ * Updatable views follow the column shape of their base table (doc/design/catalog-column-order.md, A3).
  *
  * add_for_portion_of_view and add_current_view create views whose column list is frozen when the view is
  * created. ALTER TABLE ... ADD COLUMN on the base afterwards is a normal, supported operation (StatBus did it

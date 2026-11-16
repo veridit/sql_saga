@@ -1,7 +1,7 @@
 \i sql/include/test_setup.sql
 
 /*
- * Policies on a history table are managed by sql_saga (tmp/design_final.md decision 7).
+ * Policies on a history table are managed by sql_saga (doc/design/history-access.md, decision 7).
  *
  * The history table's row-level security is the base table's: its policies are copies of the base
  * table's SELECT/ALL policies plus two fixed ones. A policy of one's own on the history table would be

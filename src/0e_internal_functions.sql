@@ -166,7 +166,7 @@ END;
 $function$;
 
 /*
- * Is this statement part of the teardown phase of pg_restore --clean (tmp/design_restore_clean.md)?
+ * Is this statement part of the teardown phase of pg_restore --clean (doc/design/restore.md)?
  *
  * pg_restore --clean drops every archived object, dependents first and each base table last, before
  * it recreates them, so the objects of a sql_saga family disappear one at a time while their catalog

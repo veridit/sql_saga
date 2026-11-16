@@ -9,7 +9,7 @@ SET client_min_messages = warning;
 
 /*
  * The referencing (child) side of a regular foreign key is a constraint trigger, not a CHECK constraint
- * (design B, tmp/fable_audit_v13.md section 2.3 and P2 item 8; proof tmp/v13_design_B_proof.md). sql/125 states
+ * (doc/decision-log.md, "Use Constraint Triggers for Regular-to-Temporal Foreign Keys"). sql/125 states
  * enforcement and restore safety; this test states the rest of the contract:
  *
  * Part 1  temporal_merge on a referenced parent: reshaping the parent's timeline (MERGE_ENTITY_REPLACE with

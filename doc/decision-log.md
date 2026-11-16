@@ -17,9 +17,8 @@ with the reason; it is never engineered around without asking.
       minimal rights, because elevated code must otherwise re-create PostgreSQL's whole security system, which opens
       many holes (Q1-Q4 are examples). Target: API workers SECURITY INVOKER (native checks decide); only tiny,
       auditable definer functions remain, for writes to sql_saga's own catalog, each checking the caller's rights
-- [x] D1 step 1 DONE 2026-10-26: all 44 definers plus every C identity switch inventoried. Consolidated report
-      `tmp/d1_inventory.md`; per-function evidence in `tmp/d1_api_inventory_agent.md` and
-      `tmp/d1_helper_inventory_agent.md`. API: 14 need only catalog helpers, 10 have an additional case. Five
+- [x] D1 step 1 DONE 2026-10-26: all 44 definers plus every C identity switch inventoried (the inventories are archived
+      with the 1.4 working notes, outside the repository). API: 14 need only catalog helpers, 10 have an additional case. Five
       definers are redundant. Event triggers verified to run as the DDL issuer when SECURITY INVOKER. Decisions D1a-D1d
       below; no implementation yet
 - [x] D1a APPROVED 2026-10-26: allow narrowly scoped, fixed-operation elevated helpers for sql_saga catalog writes and
@@ -114,7 +113,7 @@ the `temporal_merge` planner and executor.
   without a parent. 1.4 adds a statement-level `AFTER TRUNCATE` trigger per regular foreign key on the parent
   (`foreign_keys.uk_truncate_trigger`) that refuses, as native foreign keys do, while a child row references it.
 
-### Measured cost (macOS, PostgreSQL 18.3, best of 3; `tmp/bench_cascade_run.sh`)
+### Measured cost (macOS, PostgreSQL 18.3, best of 3; `devops/bench_regular_fk_cascade.sh`)
 
 Measured on the final 1.4 code (after the security fixes and the per-transaction trigger verification cache) and on
 v1.3 in the same session. The native baseline varied between 55 and 69 ms across runs on this machine, so

@@ -1,5 +1,5 @@
 /*
- * Foreign key column pairing (tmp/fable_audit_v13.md W11, C2, C3, C4).
+ * Foreign key column pairing (doc/design/catalog-column-order.md).
  *
  * A foreign key pairs its i-th child column (foreign_keys.column_names[i]) with the i-th column of the referenced
  * unique key, in the order of the key's native constraint (conkey without the range column). These helpers give

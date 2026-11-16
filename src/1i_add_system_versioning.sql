@@ -1,5 +1,5 @@
 /*
- * The views and as-of functions of a system-versioned table (tmp/design_manual_schema_changes.md).
+ * The views and as-of functions of a system-versioned table (doc/design/manual-schema-changes.md).
  *
  * One generator serves add_system_versioning and rebuild_system_versioning_views, so both create the
  * same objects. Columns correspond by NAME: the views show the base table's columns in its order,
@@ -7,7 +7,7 @@
  * must be in the history with the same type, typmod and collation, except those left out with
  * without_columns, which only shapes the views for one call and is stored nowhere.
  *
- * The objects keep the fixed access shape of tmp/design_final.md: owner = base owner, SELECT (views)
+ * The objects keep the fixed access shape of doc/design/history-access.md: owner = base owner, SELECT (views)
  * or EXECUTE (functions) granted to PUBLIC and to nobody else, B_with_history security_invoker,
  * B_history_gated owner-rights with its gate.
  */
@@ -582,7 +582,7 @@ COMMENT ON FUNCTION sql_saga.__api_add_system_versioning(regclass, name, name, n
 'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes. An existing table named history_table_name in the table''s schema is adopted as the history (reported by a NOTICE); history_table_must_exist => true requires it, as when moving a system-versioned table.';
 
 /*
- * The as-of functions of a versioned table are executable by PUBLIC (tmp/design_final.md section 5).
+ * The as-of functions of a versioned table are executable by PUBLIC (doc/design/history-access.md).
  * add_system_versioning grants it explicitly, because hardened databases revoke EXECUTE from PUBLIC by
  * default. pg_dump writes no GRANT for a function ACL equal to the default, so a pg_restore --clean into
  * a database where those default privileges already apply recreates the functions owner-only. The
@@ -614,7 +614,7 @@ AFTER INSERT ON sql_saga.system_versioning
 FOR EACH ROW EXECUTE FUNCTION sql_saga.__internal_grant_query_functions();
 
 /*
- * Manual schema changes (tmp/design_manual_schema_changes.md): after the owner changed the base and
+ * Manual schema changes (doc/design/manual-schema-changes.md): after the owner changed the base and
  * history tables by hand, this recreates the views and as-of functions from the current columns.
  *
  * SECURITY DEFINER lets this checked public gateway use the private canonical generator. The

@@ -5,7 +5,7 @@
  *
  * sql_saga manages the row-level security of every history table: its policies are copies of the
  * base table's SELECT/ALL policies plus two fixed ones, RLS is enabled, and FORCE mirrors the base
- * table (tmp/design_final.md decisions 7-10). The event triggers refuse direct changes to these, and
+ * table (doc/design/history-access.md, decision 7). The event triggers refuse direct changes to these, and
  * re-synchronize the history when the base table's policies or RLS settings change.
  *
  * The synchronizer authorizes its own nested DDL through a private, transaction-scoped guard row

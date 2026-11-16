@@ -1,7 +1,7 @@
 \i sql/include/test_setup.sql
 
 /*
- * pg_restore --clean into a database that already holds sql_saga families (tmp/design_restore_clean.md).
+ * pg_restore --clean into a database that already holds sql_saga families (doc/design/restore.md).
  *
  * pg_restore --clean drops every archived object, dependents first and each base table last, before it
  * recreates them. sql_saga's drop protection must let that teardown through, and only that:

@@ -72,7 +72,7 @@ SELECT 'real policy-sync API remains sanctioned | ' || dp_guard_order.probe(
 -- Determinism here means: the same statement against the same freshly-created database state
 -- always reports the same error. PostgreSQL follows dependency/drop order, which dump/restore may
 -- recreate differently. Every case below makes sql_saga catalog order A then B, but payload order B
--- then A, as verified independently by tmp/pair_dp1/order_probe_039.sql in three fresh databases.
+-- then A, as verified independently by a PostgreSQL-only probe in three fresh databases (2026-10-15).
 
 CREATE TABLE dp_guard_order.period_order (
     id int,
@@ -226,7 +226,7 @@ SELECT dp_guard_order.case_result(
 -- The sql_saga metadata rows for each omitted class are created before the competing SYSTEM
 -- VERSIONING family. The dependency objects are then recreated after the history view, making
 -- PostgreSQL emit the later-priority view before the omitted class. The independent PostgreSQL-only
--- probe in tmp/pair_dp1/order_probe_039_g4r2.sql observes these payload orders in three fresh databases.
+-- probe observed these payload orders in three fresh databases (2026-10-15).
 
 CREATE FUNCTION dp_guard_order.pred_dep(integer) RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$ SELECT true $$;

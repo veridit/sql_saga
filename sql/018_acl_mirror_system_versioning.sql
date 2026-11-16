@@ -3,7 +3,7 @@
 /*
  * Privileges on the derived objects of system-versioned tables (access-time authority).
  *
- * Fixed state, independent of the base table's ACL (tmp/design_final.md sections 2, 3, 9):
+ * Fixed state, independent of the base table's ACL (doc/design/history-access.md):
  *   B_with_history          security_invoker view, PUBLIC SELECT
  *   B_history_gated         owner-rights view, PUBLIC SELECT, raises 42501 unless the caller has SELECT on B
  *   B_history               PUBLIC SELECT, RLS enabled (not forced), policies sql_saga_history_reader_<token>
@@ -12,7 +12,7 @@
  * Who may read history is decided when it is read, by the caller's SELECT on B. No GRANT or REVOKE
  * needs any action by sql_saga.
  *
- * Defects of the earlier ACL-copying implementation, asserted here as behaviour (tmp/design_a_review.md):
+ * Defects of the earlier ACL-copying implementation, asserted here as behaviour (doc/design/history-access.md, Principle):
  *   F3  REVOKE from a role that inherits another grantee.
  *   F4  a grantee on one table gained privileges on another table's history table.
  *   F5  after one GRANT on a versioned table, unrelated GRANTs failed.

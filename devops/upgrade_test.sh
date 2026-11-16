@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 #
 # upgrade_test.sh - prove that databases created with each released sql_saga baseline reach the
-# candidate design with one ALTER EXTENSION command. Target 1.3 (UPGRADE_NEW_VERSION overrides, e.g. 1.2
-# to re-run the released 1.2 gates): every released baseline older than the target (v1.0, v1.1, v1.2)
-# takes its own direct single-hop script <baseline>--1.3 (tmp/v13_upgrade_integration_plan.md section 0).
-# Design: tmp/design_drop_protection_v12_r4.md section 6 and the retained 1.1 upgrade assertions.
+# candidate design with one ALTER EXTENSION command. Target: the candidate's default_version
+# (UPGRADE_NEW_VERSION overrides). Every released baseline older than the target takes its own direct
+# single-hop script <baseline>--<target>, never a chain of older scripts, whose final integrity gates would
+# run before the newer repairs. Design: doc/upgrade.md, doc/design/drop-protection.md and the retained 1.1
+# upgrade assertions.
 #
 # What it does
 #   1. Builds each selected released baseline from its tag, including its install SQL and old binaries.
-#   2. Assembles a private extension directory containing that tag-built baseline plus candidate 1.2
-#      files (control, fresh install SQL, and both update hops) from UPGRADE_CANDIDATE_DIR
+#   2. Assembles a private extension directory containing that tag-built baseline plus the candidate's
+#      files (control, fresh install SQL, and the direct update scripts) from UPGRADE_CANDIDATE_DIR
 #      (default: the installed extension dir, i.e. what `make install` deployed). Every scratch database
 #      gets `ALTER DATABASE .. SET extension_control_path = '<private dir>:$system'`, so it sees
 #      exactly these scripts. NOTHING is written into the global extension directory. Released
 #      install scripts are built from their tags and compared byte-for-byte with frozen artifacts.
 #   3. Builds old-state fixtures in saga_up_old while that database loads the selected release binaries
 #      (per-database dynamic_library_path), then resets the path: the "restart with new binaries".
-#   4. Runs ALTER EXTENSION sql_saga UPDATE TO '1.2', then asserts shape and behaviour,
-#      fresh-1.2 versus upgraded equivalence, idempotence, atomic rollback, preflight acceptance and
+#   4. Runs ALTER EXTENSION sql_saga UPDATE TO the target, then asserts shape and behaviour,
+#      fresh versus upgraded equivalence, idempotence, atomic rollback, preflight acceptance and
 #      refusal, query-function preservation, and dump/restore after the upgrade.
 #
 # Exit status: 0 all assertions pass (GREEN), 1 assertions failed (RED), 2 harness/setup error.
@@ -1559,7 +1560,7 @@ sql_saga.temporal_merge_drop_temp_tables()
 sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)"
 canon10_grants() { local r; printf '%s\n' "$CANON10_ROUTINES" | while IFS= read -r r; do echo "GRANT EXECUTE ON ROUTINE $r TO PUBLIC;"; done; }
 # acl10_refusal <db> <label> <routine named first>: the 1.0 update refuses a noncanonical routine ACL, atomically,
-# with the frozen guard text (tmp/v13_acl_replay/guard_proto.sql sha256 2edefcdd, devops/test_generate_update_scripts.py).
+# with the frozen guard text of the released 1.0 to 1.3 update (versions/sql_saga--1.0--1.3.sql).
 ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
 acl10_refusal() {
     local db=$1 label=$2 routine=$3 before out acl
@@ -2467,7 +2468,7 @@ if version_lt "$BASELINE_VERSION" 1.3; then  # StatBus shapes: 1.0-1.2 rename_fo
 # ---------------------------------------------------------------------------------------------
 section "StatBus shapes: XOR keys sorted by unrelated DDL, regular FK child sorting before its parent" "expected RED"
 # ---------------------------------------------------------------------------------------------
-# tmp/STATBUS_REPORT_xor_key_order.md and tmp/fable_audit_v13_brief.md (defects A and B). A healthy
+# doc/design/catalog-column-order.md (A1 and restore order). A healthy
 # baseline database shaped like StatBus: XOR unique keys (add_unique_key with mutually_exclusive_columns)
 # whose given column order is not alphabetical, then unrelated DDL, after which the baseline's
 # rename_following has rewritten unique_keys.column_names sorted by name (the constraints are unchanged);
@@ -2611,7 +2612,7 @@ if version_lt "$BASELINE_VERSION" 1.3; then  # mispaired FKs against a sorted XO
 # ---------------------------------------------------------------------------------------------
 section "foreign keys created against a sorted XOR key are mispaired: the update refuses with the exact repair" "expected RED"
 # ---------------------------------------------------------------------------------------------
-# tmp/fable_audit_v13.md C2/C3/C4 and P1 item 7 (the xorfk10 shape), tmp/v13_fkpair_red_brief.md. On the
+# doc/design/catalog-column-order.md, foreign key pairing. On the
 # baseline, unrelated DDL sorts the catalog list of an XOR key (W1). add_foreign_key then finds the key only
 # by that sorted list (C4), so the user passes it, and pairs the child columns, given in the user's order,
 # with it: the child column a_person is paired with establishment_id, and so on. The regular FK's helper and
@@ -2747,7 +2748,7 @@ if version_lt "$BASELINE_VERSION" 1.3; then  # CHECK + helper conversion (1.0-1.
 # ---------------------------------------------------------------------------------------------
 section "regular FK child side: the update converts the CHECK into a constraint trigger" "expected RED"
 # ---------------------------------------------------------------------------------------------
-# tmp/v13_designB_red_brief.md item 5, tmp/fable_audit_v13.md section 2.3 and P2 item 8, sql/129. Up to 1.2
+# doc/decision-log.md (constraint triggers for regular foreign keys), sql/129. Up to 1.2
 # the referencing side of a regular foreign key is a CHECK constraint calling a helper that reads the
 # parent, which pg_dump emits inline with the child table (restore order defect B). The update replaces
 # each such CHECK with a constraint trigger on the child (DEFERRABLE INITIALLY IMMEDIATE, AFTER INSERT OR
@@ -2894,7 +2895,7 @@ if version_lt "$BASELINE_VERSION" 1.3; then  # quoted orphan refusal of the CHEC
 # ---------------------------------------------------------------------------------------------
 section "regular FK child side: the orphan refusal quotes names that need quoting" "expected RED"
 # ---------------------------------------------------------------------------------------------
-# tmp/review_v13_designB_red.md R2. The same refusal for a schema, tables, columns and a foreign key whose
+# The same refusal for a schema, tables, columns and a foreign key whose
 # names contain a double quote, an apostrophe, a space and upper case. The message names relations and
 # columns as quote_ident/regclass text would (identifier quoting), the FK name in quote_ident form, and the
 # emitted scan must run verbatim and list exactly the orphan rows. The update must be atomic.
@@ -2959,7 +2960,7 @@ check "quoted regular FK orphan: deleting a referenced parent is refused after t
 fi
 if version_lt "$BASELINE_VERSION" 1.3; then  # view column drift (1.1 and 1.2 did not follow ADD COLUMN); not reachable from 1.3
 # ---------------------------------------------------------------------------------------------
-# tmp/fable_audit_v13.md finding 3 (A3). The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
+# doc/design/catalog-column-order.md, A3. The updatable views are created as "AS TABLE t" / "SELECT * FROM t",
 # so their column list is frozen; StatBus then ran ALTER TABLE ... ADD COLUMN on era tables that already had
 # views (stat_for_unit.stat GENERATED ALWAYS ... STORED; location.region_version_id plain + FK + CHECK). On
 # v1.0 the embedded 1.0 -> 1.1 migration recreates every view, so that path passes today and is kept as a
@@ -3045,7 +3046,7 @@ check "view drift: ADD COLUMN after the update is exposed by every view of the t
     "location__current_valid:- location__for_portion_of_valid:- stat_for_unit__for_portion_of_valid:-" "$(q "$DRIFT" "$VIEW_DRIFT_SQL")"
 
 # =============================================================================================
-# 1.3 release-gate fixtures (tmp/v13_upgrade_harness_brief.md). Each builds its own database on the
+# 1.3 release-gate fixtures. Each builds its own database on the
 # released baseline binaries, then "restarts" onto the candidate and runs the update.
 # =============================================================================================
 
@@ -3061,7 +3062,7 @@ xor_presort_case() {  # xor_presort_case <label> <sorting statement>
     local label=$1 sorter=$2 db=${PREFIX}_xorpre_$1 got
     # Controlled construction: on every released baseline, add_era and add_foreign_key are themselves DDL that
     # the baseline's rename_following answers by sorting the XOR catalog, so the second FK of a pair can never be
-    # registered against the constraint order (tmp/v13_upgrade_harness/logs/xorpre_probe.log). The state a site
+    # registered against the constraint order (probed on every released baseline, 2026-10-20). The state a site
     # reaches by creating its FKs and only later running unrelated DDL is built by disabling ONLY
     # sql_saga_rename_following while both FKs are registered, re-enabling it (state O) right after, and then
     # running the tested sort explicitly ($sorter), with the prerequisites below proved in between.
@@ -3134,7 +3135,7 @@ fi
 # ---------------------------------------------------------------------------------------------
 section "base table grant made before both managed views exist: the update keeps every role's reads" "expected RED"
 # ---------------------------------------------------------------------------------------------
-# tmp/g4_upgrade_fragments/upgrade10.log (Owl, pre-fix RED): on 1.0 a SELECT grant on the base table made
+# Observed before the fix (1.3 review): on 1.0 a SELECT grant on the base table made
 # before add_for_portion_of_view/add_current_view leaves derived ACL entries on the managed views, and 1.0's
 # health_checks refused the update's own REVOKE ("cannot revoke SELECT directly from ...__current_valid").
 # The core fixture grants after its views, so it never reached this. Maintained regression for that fix. No user-dependent object and no direct view GRANT here. Grants
@@ -3154,7 +3155,7 @@ PG_BASE_ACL_SQL="SELECT coalesce(relacl::text, '') FROM pg_class WHERE oid = 'pg
 FAILURE_CLASS=prerequisite
 check "base grant before views: the $BASELINE_VERSION baseline has both managed views" "2" \
     "$(q "$PG_DB" "SELECT count(*) FROM sql_saga.updatable_view WHERE table_name = 'pg_base'")"
-# Observed on the released builds (tmp/v13_upgrade_harness/logs/pregrant_probe*.log): 1.1 and 1.2 let the role
+# Observed on the released builds: 1.1 and 1.2 let the role
 # read the base and both views; released 1.0 refuses the for_portion_of view. After the update: base ACL
 # unchanged and the 1.3 derived view access (role reads base and both views).
 if [ "$BASELINE_VERSION" = 1.0 ]; then PG_READS_BEFORE="denied: permission denied for view pg_base__for_portion_of_valid"; else PG_READS_BEFORE="1|1|1"; fi
@@ -3535,7 +3536,7 @@ else
     if [ "$NEW_VERSION" = 1.2 ]; then
         check "pristine v$BASELINE_VERSION ACL digest is preserved by the $NEW_VERSION update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
     else
-        # Adapted for 1.3 (coordinator-approved normalization, tmp/v13_upgrade_harness/logs/acl_digest_probe.log):
+        # Adapted for 1.3 (normalization approved during the 1.3 release):
         # the expected entry set is the baseline's, unchanged, plus exactly the documented changes:
         #   1.1 only: add_system_versioning's 7-argument signature replaced by the 8-argument one (1.2 contract);
         #   new PUBLIC EXECUTE routines, each only where the baseline lacks it, as a fresh 1.3 install grants them:

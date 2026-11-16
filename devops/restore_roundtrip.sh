@@ -9,7 +9,7 @@
 #
 # The clean* variants restore into a database that already holds the dumped database (restored
 # there once first), so pg_restore must tear every sql_saga family down before recreating it
-# (tmp/design_restore_clean.md):
+# (doc/design/restore.md):
 #   clean             pg_restore --clean --if-exists (the dump's history policy names carry another
 #                     installation's token)
 #   clean_single_txn  the same with --single-transaction
@@ -43,7 +43,7 @@
 # `parallel_known_failure` case still runs `-j 4` restores and reports their outcome, but does not
 # fail the run; if they all succeed (PostgreSQL fixed), the summary says so.
 #
-# Old-dump cases (old_dump_10, old_dump_11, old_dump_12; tmp/v13_olddump_design.md): a database made by the RELEASED
+# Old-dump cases (old_dump_10, old_dump_11, old_dump_12; doc/design/restore.md): a database made by the RELEASED
 # v1.0 / v1.1 / v1.2 build (tag built in a scratch dir, with its own C and native libraries, selected per
 # database through extension_control_path / dynamic_library_path) is dumped and restored into the
 # candidate package with the procedure documented in doc/upgrade.md between "<!-- BEGIN old-dump-restore -->"
@@ -83,7 +83,7 @@ psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 SPLIT_CASES=(catalog_only manual_schema_changes fk_views quoted_names rls_history regular_fk_order)
 # Split cases for which a regular-FK CHECK load-order failure is NOT the documented README limitation but a
 # hard failure: regular_fk_order states the 1.3 contract (design B, the referencing side is a post-data
-# constraint trigger, so the -j data phase cannot trip it; tmp/v13_designB_red2_brief.md N2).
+# constraint trigger, so the -j data phase cannot trip it; doc/decision-log.md).
 SPLIT_HARD_CHECK_ORDER_CASES=(regular_fk_order)
 SPLIT_RUNS=${SPLIT_RUNS:-20}
 README_PATH="$(cd "$(dirname "$0")/.." && pwd)/README.md"
@@ -171,8 +171,8 @@ SQL
 }
 
 # Row-level security of every table. Policy copies on history tables (sql_saga_<hash>) are named
-# after the hash of their base policy name and the per-installation token (tmp/design_final.md
-# section 14), so their names differ after a restore by design. They carry no comment; the base
+# after the hash of their base policy name and the per-installation token (doc/design/history-access.md,
+# decision 1), so their names differ after a restore by design. They carry no comment; the base
 # policy of a copy is found by recomputing the hash with this database's token.
 policies() {
     psql -X -At -d "$1" <<'SQL'
@@ -209,7 +209,7 @@ SQL
 
 # Number of history policy copies that are missing, orphaned (no base policy hashes to their name)
 # or stale (definition differs from the base policy: FOR SELECT, roles, permissive, USING).
-# The desired USING is normalized on the history side (tmp/design_final.md section 10): each base
+# The desired USING is normalized on the history side (doc/design/history-access.md, decision 3): each base
 # qual is created as a probe policy on the history table inside a rolled-back transaction and
 # deparsed there, exactly as a copy would be. 0 = in sync.
 policy_copy_faults() {
@@ -443,7 +443,7 @@ SQL
 # Temporal and regular foreign keys, current and FOR PORTION OF views with synchronized columns, and a
 # versioned regular table referencing a temporal one. The regular foreign key's triggers on p are created
 # in post-data, after the catalog rows and after r's history policies are synchronized (the restore must
-# not check for them in between; tmp/design_restore_clean.md section 5).
+# not check for them in between).
 build_fk_views() {
     { common_header; cat <<SQL
 CREATE TABLE p (id int, valid_range daterange NOT NULL, valid_from date, valid_until date, x text);
@@ -473,7 +473,7 @@ SQL
 # and a temporal sibling (establishment) with a temporal FK to the same parent. pg_dump loads table
 # data in name order, so a referencing-side check that reads the parent while the child's COPY runs
 # fails even a serial or --single-transaction restore (1.0 to 1.2: a CHECK constraint calling the
-# helper; tmp/fable_audit_v13_brief.md defect B).
+# helper; doc/design/catalog-column-order.md, restore order).
 build_regular_fk_order() {
     { common_header; cat <<SQL
 CREATE TABLE legal_unit (id int NOT NULL, ident_type text NOT NULL, ident text NOT NULL,
@@ -585,7 +585,7 @@ SQL
 
 # ---------------------------------------------------------------------------------------------
 # Old dumps: databases made by the released v1.0 / v1.1 builds, restored into the candidate package
-# with the documented procedure, then updated (tmp/v13_olddump_design.md).
+# with the documented procedure, then updated (doc/design/restore.md).
 # ---------------------------------------------------------------------------------------------
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OLD_DUMP_DOC_PATH=${OLD_DUMP_DOC_PATH:-$REPO_ROOT/doc/upgrade.md}

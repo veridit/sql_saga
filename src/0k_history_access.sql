@@ -1,5 +1,5 @@
 /*
- * Access-time authority and row-level security on history (tmp/design_final.md).
+ * Access-time authority and row-level security on history (doc/design/history-access.md).
  *
  * Derived objects hold no copy of who may use them: views are security_invoker and granted to
  * PUBLIC, so PostgreSQL checks the caller's rights on the base table when the data is used.

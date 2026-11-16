@@ -8,7 +8,7 @@ SET client_min_messages = warning;
 \o /dev/null
 
 /*
- * Foreign key column pairing (tmp/fable_audit_v13.md W11, C2, C3, C4; P1 items 6 and 7).
+ * Foreign key column pairing (doc/design/catalog-column-order.md).
  *
  * A foreign key pairs its i-th child column with the i-th referenced column. sql_saga must pair them as the
  * user gave them, whatever plan the server picks and whatever order the catalog lists the key in:

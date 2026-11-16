@@ -1,8 +1,8 @@
 \i sql/include/test_setup.sql
 
 /*
- * Manual schema changes of a system-versioned table (tmp/design_manual_schema_changes.md, owner
- * answers in its section 12; tmp/design_final.md section 11).
+ * Manual schema changes of a system-versioned table (doc/design/manual-schema-changes.md, owner
+ * answers of 2026-10-15).
  *
  * sql_saga never changes the base table B or its history table H by itself. The owner changes both
  * by hand and then calls sql_saga.rebuild_system_versioning_views(B), which recreates B_with_history,
