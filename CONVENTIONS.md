@@ -221,7 +221,7 @@ The `temporal_merge` planner includes a permanent `trace` column in its output (
 4.  **Trace Aggregation:** When multiple atomic time segments are coalesced into a single final plan operation, their individual traces must be aggregated into a `jsonb` array using `jsonb_agg`. This provides a complete diagnostic record of all atomic segments that were merged into the final operation. The trace for each atomic segment includes the Allen Interval Relation (`s_t_relation`) between the covering source and target rows, providing detailed insight into the initial temporal interaction that created the segment.
 
 ### 8. Conclude: Update Documentation
-- **Action:** Only after the fix has been successfully validated in Step 7, update `todo.md` to move the task to a "done" state (e.g., `[x]`).
+- **Action:** Only after the fix has been successfully validated in Step 7, tick its acceptance checks and run `hug task done ID`. Released work is also recorded under Done in `todo.md`.
 
 ## General Development Principles
 - **Embrace Falsifiability**: Treat every hypothesis and plan as provisional until proven by direct, empirical observation. Frame plans as "Current Plan" or "Next Step," not "Final Plan." The goal is to be prepared to be wrong and to allow evidence to guide the development process. Optimism should be rooted in the rigor of the process itself, not in the assumed correctness of any single solution. This mindset is the primary defense against hubris and wasted effort.

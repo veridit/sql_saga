@@ -1,48 +1,7 @@
 # SQL Saga - TODO
 
-A living document of upcoming tasks. Planned work is listed first; finished work moves to Done.
-
-## Backlog
-- [ ] Upstream PostgreSQL: design and eventually submit native support for regular-to-temporal foreign keys (a child
-      without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete
-      and CASCADE semantics). Separate project; use the 1.4 C-trigger behavior and parity tests as the semantic
-      baseline. Owner agreed 2026-10-26: practical narrow helpers in sql_saga, upstream changes for another time
-- [ ] Upstream parallel-restore report and patch (section below)
-- [ ] Design docs cited from code live in untracked `tmp/` (37 citations in src/, sql/, devops/ to
-      `tmp/design_final.md`, `tmp/design_restore_clean.md`, `tmp/design_manual_schema_changes.md`,
-      `tmp/fable_audit_v13.md` ...), so a fresh clone cannot follow them. Owner decides: move the cited designs into
-      `doc/design/` (a few name local paths and need a short edit first) and repoint the comments, or keep them local
-- [ ] Automate README.md example testing (literate programming approach)
-- [ ] Improve test documentation for complex/expected-failure cases
-- [ ] Package with pgxman for easier distribution
-- [ ] Optional: fail closed on direct history-table reads between a parallel restore and its final
-      `sync_all_history_policies()`; owner judged it likely unnecessary
-- [x] **Shelved 2026-11-12: temporal-check deferral experiment (STATBUS-591).** No application speedup, not adopted.
-      `prototype/defer-temporal-checks` is kept for reference only. Do not merge, release or resume it.
-
-StatBus side (their repository, for reference): pin 1.7 and build Remove on the view delete protocol (STATBUS-611);
-switch the six regular-to-temporal addendum references (`external_ident`, `tag_for_unit`, `unit_notes` x
-`legal_unit_id`, `establishment_id`) to `ON DELETE CASCADE`, with test 142 asserting it.
-
-## Backlog detail - Upstream PostgreSQL work on the parallel-restore bug (by delegated agents)
-
-Parallel `pg_restore -j` of a database using sql_saga fails intermittently because `pg_dump` does not record the
-load order of extension configuration tables that reference each other (`doc/decision-log.md`, 2026-10-13 decision).
-The split restore in README.md is the supported workaround. The restore harness keeps the parallel case as a known
-failure so an upstream fix is noticed (7/20 failures in the 1.5 CI run).
-- [x] Report finalized 2026-11-13: `tmp/upstream_repro_20261113/pgsql_bugs_report.txt` (reproducer and log beside it).
-      Re-run on PostgreSQL 18.3: serial restore works, `pg_restore -j 2` failed 5/5 with an FK error; the same code
-      is still in REL_18_STABLE (18.7) and master
-- [x] Owner approved the report text (2026-11-13)
-- [ ] **Next (planned Monday):** owner signs in at https://www.postgresql.org/account/submitbug/ in a window the
-      agent may use (not a client's window); the agent fills the form from the approved text, shows it, and submits
-      only after the owner confirms. The form mails `pgsql-bugs@lists.postgresql.org`
-- [ ] Kick off a second agent to write the PostgreSQL patch (keep the own TABLE as first archive dependency of TABLE
-      DATA and add the referenced tables' TABLE DATA entries), with a pg_dump TAP test, for `pgsql-hackers`
-- [ ] When a fixed PostgreSQL is released, turn the harness known failure into a supported case and update README.md
-- [ ] Optional, separate report: CHECK constraints that call functions reading other tables
-      (`tmp/upstream_pg_dump_check_order.md`, draft not sent). No longer affects sql_saga since 1.3, which uses
-      constraint triggers; owner decides whether to send it
+The record of finished work, newest first. Open work is tracked with hug tasks (branch `hug/tasks`, at
+`.hug/tasks/`): `hug task ls`, `hug task next`, `hug tui`.
 
 # Done
 

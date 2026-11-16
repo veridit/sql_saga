@@ -6,7 +6,25 @@ This PostgreSQL extension provides temporal table management. This document prov
 
 - **API Documentation:** See `doc/api.md` for complete function signatures without implementation details
 - **Conventions:** See `CONVENTIONS.md` for detailed code style and architecture patterns
-- **Tasks:** See `todo.md` for current project status and pending work
+- **Tasks:** `hug task ls` / `hug task next` for open work (section "Tasks: hug" below); `todo.md` records finished work
+- **Design:** `doc/design/` holds the design documents that code comments cite
+
+## Tasks: hug
+Track all work with hug tasks (on the git branch "hug/tasks", at .hug/tasks/).
+Start: hug task next (or hug task take ID), then hug task show ID.
+While working: hug task check ID N with evidence, hug task note ID "evidence".
+Finish: hug task done ID when every acceptance check is ticked.
+New work: hug task new "short title" --goal "..." --purpose "..." --principle "..." --details "..." --accept "observable check".
+Describe a task with Goal (where we aim), Purpose (why), Principle (what we do
+and do not do), Relevant details, then Acceptance. Titles stay under 80
+characters; detail goes in the Goal.
+Epics: hug task set ID --parent EPIC; hug task promote ID N turns item N into
+its own task. hug task ls --epic EPIC shows an epic and its children.
+MCP tools (hug mcp): task_list, task_show, task_new, task_next, task_take,
+task_done, task_update (actions set, check, promote, note, move, dep, drop).
+Old backlog ids (TASK-123) work as aliases.
+Never edit .hug/tasks/ files by hand while another agent may be writing; use the commands.
+When a release ships, also add its entry under Done in todo.md (the release record).
 
 ## Build, Test, and Lint Commands
 
@@ -263,7 +281,7 @@ COMMIT;
 5. **Analyze** - Confirm hypothesis or return to step 1
 6. **Implement** - Apply permanent changes
 7. **Validate** - Run full regression tests
-8. **Conclude** - Update `todo.md`
+8. **Conclude** - `hug task done ID` with evidence; record released work in `todo.md`
 
 **Key Principles:**
 - Never skip verification steps
@@ -684,6 +702,7 @@ make renumber-tests-from SLOT=066       # Shift tests from 066 onwards to make r
 ## Additional Resources
 
 - Full conventions: `CONVENTIONS.md`
-- Project tasks: `todo.md`
+- Open tasks: `hug task ls`; finished work: `todo.md`
+- Design documents: `doc/design/`
 - API documentation: `doc/api.md`
 - PostgreSQL docs: https://www.postgresql.org/docs/current/

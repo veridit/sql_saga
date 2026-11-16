@@ -11,7 +11,8 @@ sql_saga is a PostgreSQL extension (C + PL/pgSQL) for temporal table management,
 - **`AGENTS.md`** — Comprehensive AI agent guidelines (build commands, code style, architecture, debugging, pitfalls). Read this first for any non-trivial task.
 - **`CONVENTIONS.md`** — Development workflow, hypothesis-driven cycle, coding standards.
 - **`doc/api.md`** — Complete function signatures.
-- **`todo.md`** — Current project tasks.
+- **Tasks:** `hug task ls` / `hug task next` (see AGENTS.md "Tasks: hug"); `todo.md` records finished work.
+- **`doc/design/`** — Design documents that code comments cite.
 
 ## Build and Test Commands
 
