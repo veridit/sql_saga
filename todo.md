@@ -5,6 +5,16 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-16: hug tasks and design documents (no release; nothing installed changes)
+- Open work moved from todo.md to hug tasks (branch `hug/tasks`); AGENTS.md, CLAUDE.md and CONVENTIONS.md say how.
+  Memory was already wired (771 project memories)
+- `doc/design/`: five reviewed designs (history access, manual schema changes, drop protection and check_integrity,
+  restore, catalog column order) with an index, checked against the 1.7 code. Citations in src, sql, expected, devops
+  and doc point there; 5 inside function bodies released in 1.7 wait for the next change to them (hug bqtzce).
+  Cited benchmark kept as `devops/bench_regular_fk_cascade.sh`. CI 43872663796 green on 74b0212
+- The local PostgreSQL 18 server had stopped on 2026-11-15 (system out of file descriptors); restarted, benchmark
+  settings intact
+
 ## 2026-11-15: Clean-code pass after 1.7 (no release; nothing installed changes)
 - One direct-update builder, `devops/direct_update.py`; `generate_update_scripts_1_6.py` and `_1_7.py` now hold only
   their release data (about 130 duplicated lines gone). Proof: the 1.6 file on the v1.6 tree reproduces all six frozen
@@ -16,7 +26,8 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
   for-portion-delete, view-batch-merge, rust-sweep-line-planner, speedup). Kept: `prototype-valid-ranges` (2 commits
   not in master), `prototype/defer-temporal-checks` (shelved, reference) and the 10 old stashes
 - `tmp/` 1.4 GB / 28,065 entries archived to `/Users/jhf/ssb/sql_saga_archive/sql_saga_tmp_2026-11-15.tar.zst` (148 MB,
-  listing verified), then pruned to the 55 entries tracked files cite plus current evidence (2.4 MB). Two stale git
+  listing verified), then pruned to the entries tracked files cite plus current evidence (2.4 MB). On 2026-11-16 the
+  design notes moved to `doc/design/` and their tmp/ copies were removed (still in the archive). Two stale git
   worktrees in tmp/ (Oct 17/21) unregistered; their uncommitted diffs kept as `tmp/worktree_*_uncommitted.patch`
 - Not done, by decision: one shared helper for the two view apply triggers. It would have to be executable by PUBLIC
   (both triggers run as the caller), widening the PUBLIC function set test 117 pins; it changes released routine
