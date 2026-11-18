@@ -60,26 +60,31 @@ Three parts.
 **1. One managed trigger fills the columns.** `BEFORE INSERT OR UPDATE FOR EACH ROW` on the base table, created by
 `add_era`/`set_era_provenance_columns`, named like sql_saga's other managed triggers. For each row:
 
-- *carried write by sql_saga* (see 2): leave the values exactly as the planner supplied them (the old piece's);
+- *written by sql_saga's executor* (see 2): leave the values as written (the old piece's for a carried piece, `DEFAULT` for a changed one);
 - *otherwise*: overwrite every provenance column with its `DEFAULT`, whatever the statement supplied
   (cases 4 and 5 become correct; forging is impossible);
 - an `UPDATE` that changes no non-provenance column is a no-op for provenance too (keep OLD values), so a re-save
   stays a re-save (case 2).
 
-**2. sql_saga marks its own carried writes, unforgeably.** The trigger cannot tell a carried `INSERT` from a user's
+**2. sql_saga marks its own writes, unforgeably.** The trigger cannot tell a carried `INSERT` from a user's
 `INSERT` by looking at the row (no OLD; probe 2 shows carried pieces are written as both `UPDATE` and `INSERT`). The
-executor knows: it is the planner that decided which pieces are carried. Proposal: the executor sets an in-backend
-marker in sql_saga's C library (the same kind of process-local stack that already records the management caller,
-`api_caller` in `src/sql_saga.c`) around each statement that writes carried pieces, and the trigger asks the library
-"is this row a carried write of the statement sql_saga is running right now?". User SQL cannot set it: it is not a
-GUC and not a table, and the stack is suspended while caller-supplied code runs (`caller_context`), like the
-existing guard. Writes stay ordinary statements run as the caller, so D0/D1 hold: PostgreSQL authorizes them, no
-elevated role.
+executor knows: it is the planner that decided which pieces are carried. Writes stay ordinary statements run as the
+caller, so D0/D1 hold: PostgreSQL authorizes them, no elevated role.
 
 Which rows are carried is decided per piece by the planner: the diff already separates pieces whose data changed
-from pieces whose data equals their ancestor's. Not yet verified: whether the executor ever writes a carried and a
-changed piece in the same statement. If it never does, the marker is per statement; if it can, the executor passes
-the set of carried row identities with the marker. The prototype settles this first.
+from pieces whose data equals their ancestor's. The executor does not write them in separate statements: its
+`UPDATE`s are batched by `statement_seq`, which groups by update effect (a data change with no time change and a
+shrink of a carried piece share one statement, `src/2l_temporal_merge_execute.sql`), and its `INSERT`s are one
+statement. So the mark must travel with each row.
+
+Simplest form: the executor writes a carried piece with the provenance values the planner gives it (the old
+piece's), and a changed piece with the provenance columns set to `DEFAULT` in the statement itself. The trigger then
+only needs to know "is this row written by sql_saga's executor right now", once per statement, and can trust the
+values in NEW for those rows: they are either the old piece's or the `DEFAULT` just computed. That one bit is the
+in-backend marker: a flag in sql_saga's C library that `temporal_merge_execute` sets around its DML and clears in
+every exit path, readable by the trigger. User SQL cannot set it (not a GUC, not a table), and a user trigger that
+fires during the executor's DML runs inside the window, so the flag is suspended while caller-supplied code runs, as
+the management caller stack already is (`caller_context` in `src/sql_saga.c`).
 
 **3. The planner keeps changed and carried pieces apart.**
 
