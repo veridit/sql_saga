@@ -130,16 +130,19 @@ BEGIN
             sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
-    /* And the history tables, too */
+    /* And the history tables of system-versioned tables, which must keep every change */
     FOR r IN
-        SELECT c.oid AS table_oid
-        FROM sql_saga.era AS e
-        JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
-        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
-        WHERE e.audit_table_name IS NOT NULL AND c.relpersistence <> 'p'
+        SELECT h.oid AS history_oid,
+               pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)) AS base_oid
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_catalog.pg_namespace AS hn ON hn.nspname = sv.history_schema_name
+        JOIN pg_catalog.pg_class AS h ON h.relnamespace = hn.oid AND h.relname = sv.history_table_name
+        WHERE h.relpersistence <> 'p'
     LOOP
-        RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
-            sql_saga.__internal_display_name(r.table_oid);
+        RAISE EXCEPTION 'history table "%" must remain persistent because it is used in SYSTEM VERSIONING for table "%"',
+            sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid)
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = pg_catalog.format('Run: ALTER TABLE %s SET LOGGED;', r.history_oid::regclass);
     END LOOP;
 
     /* Fix up history and for-portion objects ownership */

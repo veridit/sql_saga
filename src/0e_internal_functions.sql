@@ -127,8 +127,7 @@ BEGIN
             JOIN pg_catalog.pg_class AS c ON c.oid = er.rel_oid
             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
             WHERE EXISTS (SELECT 1 FROM sql_saga.era AS e
-                          WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname)
-                             OR (e.audit_schema_name, e.audit_table_name) = (n.nspname, c.relname))
+                          WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname))
                OR EXISTS (SELECT 1 FROM sql_saga.system_time_era AS ste
                           WHERE (ste.table_schema, ste.table_name) = (n.nspname, c.relname))
                OR EXISTS (SELECT 1 FROM sql_saga.unique_keys AS uk

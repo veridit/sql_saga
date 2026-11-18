@@ -1,0 +1,13 @@
+\set ECHO none
+ column_name 
+-------------
+(0 rows)
+
+PASS sql_saga.era has no audit columns
+PASS SET UNLOGGED on a history table is refused and nothing changes
+WARNING:  55000 history table "hp_160.doc_history" must remain persistent because it is used in SYSTEM VERSIONING for table "hp_160.doc"
+WARNING:  HINT: Run: ALTER TABLE hp_160.doc_history SET LOGGED;
+PASS SET UNLOGGED on the base table is still refused
+PASS an unrelated table may become UNLOGGED
+PASS check_integrity
+PASS 1.8 history persistence without the era audit columns

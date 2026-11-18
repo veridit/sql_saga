@@ -84,9 +84,7 @@ CREATE TABLE sql_saga.era (
     trigger_applies_defaults boolean NOT NULL DEFAULT false,
     sync_temporal_trg_name name,
     sync_temporal_trg_function_name name,
-    audit_schema_name name,
-    audit_table_name name,
-    ephemeral_columns name[] DEFAULT NULL, -- Columns excluded from coalescing comparison (e.g., audit columns)
+    ephemeral_columns name[] DEFAULT NULL, -- Columns excluded from coalescing comparison (e.g., edit_at, edit_by_user_id)
     -- catalog_format: the sql_saga release that introduced the current catalog layout. No default, on purpose:
     -- a dump of an older (or newer) catalog restored into this install fails at the first era row. A release that
     -- changes the catalog layout updates this value and the CHECK in its upgrade script; others leave both alone.
@@ -96,7 +94,7 @@ CREATE TABLE sql_saga.era (
 
     CHECK (valid_from_column_name <> valid_until_column_name),
     -- IS NOT NULL is needed: a plain equality is NULL for a missing value and a CHECK passes on NULL.
-    CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md" CHECK (catalog_format IS NOT NULL AND catalog_format = '1.4')
+    CONSTRAINT "restore old sql_saga dumps per doc/upgrade.md" CHECK (catalog_format IS NOT NULL AND catalog_format = '1.8')
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
 COMMENT ON COLUMN sql_saga.era.ephemeral_columns IS 'Columns excluded from coalescing comparison during temporal_merge operations. These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not prevent adjacent periods from being merged.';
