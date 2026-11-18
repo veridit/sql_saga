@@ -39,3 +39,4 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 
 ## History
 - 2026-11-18T20:18 request 1 by jorgen
+- 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
