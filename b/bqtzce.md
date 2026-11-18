@@ -1,7 +1,7 @@
 ---
 id: bqtzce
 title: "Repoint tmp/ design citations inside released function bodies"
-state: "doing"
+state: "done"
 type: chore
 priority: "low"
 assignee: ["sabertooth"]
@@ -10,11 +10,10 @@ group: ""
 rank: "e"
 created: 2026-11-16
 updated: 2026-11-16
-doing_since: "2026-11-18T22:14"
-stage: "active"
 model: "claude"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-18T22:14"
 ---
 
 ## Goal
@@ -44,8 +43,10 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 ## Notes
 
 
+Reflection (open, 2026-11-18, sabertooth): Released in v1.8 (tag ef5dfee on ea6542e, master CI 44390659266 green: regressions, restore round trips, upgrade matrix 1.0..1.7 -> 1.8, concurrency checks). Local: 145/145 fast, upgrade matrix GREEN 0 FAIL, old dumps 1.0/1.1/1.2/1.7 restore. git grep 'tmp/design' src is empty.
 ## History
 - 2026-11-18T20:18 request 1 by jorgen
 - 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
 - 2026-11-18T20:24 resolved request 1 by sabertooth
 - 2026-11-18T22:14 todo -> doing/active (take)
+- 2026-11-18T22:14 doing/active -> done (done); was doing_since: 2026-11-18T22:14
