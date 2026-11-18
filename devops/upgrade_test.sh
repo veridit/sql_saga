@@ -3527,7 +3527,7 @@ UPDATE ah SET payload = 'b';"
     # An unlogged history table can only arise with event triggers bypassed.
     q "$AUDIT_DB" "SET session_replication_role = replica; ALTER TABLE ah_history SET UNLOGGED" >/dev/null
     check "unlogged history table: update refused with the repair" \
-        'ERROR:  sql_saga: history table "ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "ah"' \
+        'ERROR:  sql_saga: integrity violation for system-versioned table "public.ah": history table "public.ah_history" is not persistent; repair with ALTER TABLE public.ah_history SET LOGGED' \
         "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     check "unlogged history table: extension still $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$AUDIT_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     q "$AUDIT_DB" "ALTER TABLE ah_history SET LOGGED" >/dev/null
@@ -3536,7 +3536,7 @@ UPDATE ah SET payload = 'b';"
         "$(q "$AUDIT_DB" "$audit_cols_sql")|$(q "$AUDIT_DB" "SELECT string_agg(DISTINCT catalog_format, ',') FROM sql_saga.era")"
     check "history data preserved" "a|b" "$(q "$AUDIT_DB" "SELECT string_agg(payload, '|' ORDER BY payload) FROM (SELECT payload FROM ah_history UNION ALL SELECT payload FROM ah) AS s")"
     check "after 1.8, SET UNLOGGED on a history table is refused" \
-        'ERROR:  sql_saga: history table "ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "ah"' \
+        'ERROR:  history table "public.ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "public.ah"' \
         "$(q "$AUDIT_DB" "ALTER TABLE ah_history SET UNLOGGED" | grep -m1 '^ERROR')"
     assert_integrity "$AUDIT_DB"
 fi
