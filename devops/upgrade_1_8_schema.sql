@@ -1,8 +1,8 @@
 /*
  * sql_saga 1.8 update: catalog layout changes (schema fragment of devops/generate_update_scripts_1_8.py).
  * Runs on a catalog with the 1.4 layout (1.4 to 1.7): directly from 1.4 to 1.7, or after the embedded update from
- * 1.0 to 1.3. Kept in step with src/0b_schema.sql. The generator places it before the 1.8 routines, which no
- * longer read the dropped columns.
+ * 1.0 to 1.3. Kept in step with src/0b_schema.sql. The generator places it after the 1.8 routines: the DROP COLUMN
+ * fires sql_saga's event triggers, whose 1.7 definitions still read the dropped columns.
  */
 
 /*

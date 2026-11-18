@@ -41,15 +41,18 @@ class Packaging(unittest.TestCase):
             for routine in ('__internal_health_checks()', 'check_integrity()', '__internal_ddl_command_affects_managed_object()'):
                 self.assertIn('CREATE OR REPLACE FUNCTION sql_saga.' + routine, text, name)
 
-    def test_schema_fragment_once_before_the_routines(self):
+    def test_schema_fragment_once_after_the_routines(self):
         for name, text in self.build().items():
             self.assertEqual(text.count(SCHEMA_MARK), 2, name)
             self.assertEqual(text.count(FORMAT_MARK), 2, name)
-            # After every embedded older update (which may itself change sql_saga.era), before the 1.8 routines.
-            first_routine = text.index('CREATE OR REPLACE FUNCTION sql_saga.__internal_ddl_command_affects_managed_object()',
-                                       text.rindex(SCHEMA_MARK))
-            self.assertLess(text.rindex(FORMAT_MARK), first_routine, name)
-            if name not in ('sql_saga--1.7--1.8.sql',):
+            # The DROP COLUMN fires sql_saga's event triggers, so the 1.8 definitions of the routines must already be in
+            # place: the 1.7 ones read the dropped columns ("column e.audit_schema_name does not exist").
+            for routine in R.routine_manifest:
+                fn = 'CREATE OR REPLACE FUNCTION ' + routine.split('(')[0] + '('
+                self.assertLess(text.rindex(fn), text.index(SCHEMA_MARK), (name, routine))
+            self.assertLess(text.rindex(FORMAT_MARK), text.index(direct_update.GATE), name)
+            # After every embedded older update (which may itself change sql_saga.era).
+            if name != 'sql_saga--1.7--1.8.sql':
                 self.assertLess(text.rindex("'sql_saga 1.8 upgrade'"), text.index(SCHEMA_MARK), name)
 
     def test_embedded_updates_keep_catalog_markers(self):

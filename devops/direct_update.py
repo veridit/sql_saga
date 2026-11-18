@@ -10,9 +10,10 @@ Each script <source>--<target> it builds is:
       guard, lock and final integrity gate, with only native guards, actionable update hints and the upgrade lock
       retargeted to the target (catalog markers and GUCs keep their earlier values),
   the delta, the same for every source:
-      devops/<schema>, the catalog DDL, before the routines that read the new layout,
       every routine of the manifest as CREATE OR REPLACE (new routines are created),
       the privilege statements on new routines,
+      devops/<schema>, the catalog DDL, after the routines: the DDL fires sql_saga's event triggers, which must run
+          the new definitions (the previous ones may read what the DDL removes),
       devops/<repairs> (data repairs that need the new definitions),
   exactly one final integrity gate.
 Every other difference between src/ and the frozen previous installation fails the build, except the CREATE TABLE
@@ -75,7 +76,7 @@ class Release:
     new_privileges: tuple         # the privilege statements on new routines, exactly as src/ has them
     repairs: str                  # fragment in devops/, loaded after the definitions
     sources_without_inner_guards: tuple = ()  # embedded updates with no native guard after their opening prefix
-    schema: str = None            # fragment in devops/ with the catalog DDL, loaded before the routines
+    schema: str = None            # fragment in devops/ with the catalog DDL, loaded after the routines
     changed_tables: tuple = ()    # sql_saga tables whose CREATE TABLE the schema fragment changes
 
     @property
@@ -159,7 +160,7 @@ class Release:
         for source in self.sources:
             prior = '' if source == self.previous else self.embedded(
                 frozen['sql_saga--%s--%s.sql' % (source, self.previous)], source not in self.sources_without_inner_guards)
-            text = (release.header(self.target) + '\n' + guard_prefix(self.target) + prior + schema + change + repairs
+            text = (release.header(self.target) + '\n' + guard_prefix(self.target) + prior + change + schema + repairs
                     + GATE + '\n')
             if text.splitlines().count(GATE) != 1:
                 raise GeneratorError('expected exactly one integrity gate')

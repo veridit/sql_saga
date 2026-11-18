@@ -206,8 +206,9 @@ builds gave byte-identical files.
 
 `devops/generate_update_scripts_1_8.py` authenticates those assets by SHA-256,
 retargets native guards, actionable hints and locks in embedded older migrations,
-and appends the same 1.8 tail to every path: `devops/upgrade_1_8_schema.sql` (the
-catalog change above), the 1.8 routine delta and `devops/upgrade_1_8_repairs.sql`.
+and appends the same 1.8 tail to every path: the 1.8 routine delta,
+`devops/upgrade_1_8_schema.sql` (the catalog change above, after the routines because
+its DDL fires sql_saga's event triggers) and `devops/upgrade_1_8_repairs.sql`.
 Each script has exactly one final integrity gate. Unmanifested SQL changes, including
 a catalog table change outside the declared tables, fail generation rather than
 silently disappearing from upgrades. The specification tests of the released 1.4 to
@@ -236,7 +237,8 @@ scripts. For a release that changes routines (as 1.6, 1.7 and 1.8 did), with N t
    new routines and their privilege statements) and `devops/upgrade_N_repairs.sql` for data repairs that need the
    new definitions. The generator refuses any source change outside the manifest. A release that also changes a
    catalog table (as 1.8 did) declares it in `changed_tables` and supplies `devops/upgrade_N_schema.sql`, placed
-   before the routines; if the layout changes, bump `catalog_format` there and in the source. Add its specification
+   after the routines (its DDL fires the event triggers, which must already run the new definitions); if the layout
+   changes, bump `catalog_format` there and in the source. Add its specification
    test, and point the P generator's test at `released_tree.released_src('vP')`.
 3. Set `default_version` in `sql_saga.control` and `expected/001_install.out`, and replace the version rule in the
    Makefile (only the current version's rule is kept; older releases build from their own tags).
