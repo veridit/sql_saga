@@ -26,4 +26,12 @@ Owner judged it likely unnecessary; do not build without a decision
 ## Acceptance
 - [ ] Decision recorded in a note
 
+## Requests
+- 2026-11-18T20:18 request 1 by jorgen:
+  I don't understand what this gives us. You're missing the relevant details. I don't understand how you would possibly do this. It's like, I would do something. Yes. What? Why? How?
+
 ## Notes
+
+
+## History
+- 2026-11-18T20:18 request 1 by jorgen
