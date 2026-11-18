@@ -29,4 +29,12 @@ References: external_ident, tag_for_unit, unit_notes x legal_unit_id, establishm
 ## Acceptance
 - [ ] StatBus repository pins 1.7
 
+## Requests
+- 2026-11-18T20:17 request 1 by jorgen:
+  This makes no sense to have here. It is long since done in StatBus. We should never make tickets in our system for things in another system
+
 ## Notes
+
+
+## History
+- 2026-11-18T20:17 request 1 by jorgen
