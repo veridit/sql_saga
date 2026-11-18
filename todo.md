@@ -5,6 +5,29 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-18: Version 1.8 (tag v1.8 at TAG_COMMIT, CI CI_RUN green)
+- `sql_saga.era` loses `audit_schema_name` and `audit_table_name` (left from the periods extension, never written).
+  The update drops them only when every row is NULL; catalog_format 1.4 -> 1.8, so a plain restore of an older dump
+  is refused at the era COPY (it names the dropped column) and the documented old-dump procedure restores it
+- `ALTER TABLE <history> SET UNLOGGED` on a system-versioned table's history is refused at once
+  (`Run: ALTER TABLE X SET LOGGED;`). The old check read the never-populated columns and never fired.
+  `check_integrity()` reports an unlogged history table (event triggers bypassed) with that repair. Test 160
+- temporal_merge builds its key-column SQL in declared order. `string_agg` over `unnest(columns) JOIN pg_attribute`
+  had no ORDER BY, so the generated join condition followed the join strategy (test 063 failed in CI runs
+  42399588469 and 44353986606); a probe toggling hash, merge and nested-loop joins gave two orders before, one after
+- Update scripts: `direct_update.py` gains a schema fragment and `changed_tables` (a catalog table change outside them
+  fails generation). The fragment runs after the routine delta: the DROP COLUMN fires the event triggers, which in
+  the first matrix run still ran the 1.7 health check and failed every path. Preflight accepts 1.7 and lists audit
+  values and unlogged history tables. Frozen v1.7 artifacts built twice from bc0fc53, byte-identical
+- Native library built unstripped: before Rust 1.98, cargo's strip leaves the Mach-O string pool 4-byte aligned and
+  macOS 27's dyld refuses it (rust-lang/rust#157750); upgrade and restore harnesses build released tags the same way
+- Acceptance (local, private stage): 145 fast regressions; generator suite and make wiring; upgrade matrix 1.0..1.7
+  -> 1.8 GREEN, 0 FAIL; restore round trips 12 cases plus old dumps 1.0, 1.1, 1.2, 1.7. Benchmarks: 111 scaling
+  flags one doubling step at random under load average 350-415 (45 users); A/B back to back, v1.7 then 1.8, three
+  rounds: 0/6 flagged each, 39.9/47.0/47.6 s against 39.0/49.3/48.1 s. Other 12 benchmarks pass
+- doc/upgrade.md describes 1.8, the 1.7 guide is frozen as doc/upgrade-1.7.md; two tmp/ citations in routines 1.8
+  replaces anyway now point at doc/design/history-access.md (three remain, hug bqtzce)
+
 ## 2026-11-16: hug tasks and design documents (no release; nothing installed changes)
 - Open work moved from todo.md to hug tasks (branch `hug/tasks`); AGENTS.md, CLAUDE.md and CONVENTIONS.md say how.
   Memory was already wired (771 project memories)
