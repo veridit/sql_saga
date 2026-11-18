@@ -7,7 +7,7 @@ priority: "medium"
 assignee: []
 labels: ["statbus"]
 group: ""
-rank: "zz"
+rank: "c"
 created: 2026-11-18
 updated: 2026-11-18
 ---
