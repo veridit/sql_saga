@@ -550,7 +550,7 @@ BEGIN
     END IF;
 
     /*
-     * Access-time authority (tmp/design_final.md): the history objects are granted to PUBLIC and
+     * Access-time authority (doc/design/history-access.md): the history objects are granted to PUBLIC and
      * hold no copy of the base table's ACL. Callers are checked against the base when they read:
      *   - B_history_gated (owner-rights) raises 42501 unless the caller may SELECT B, and serves
      *     callers that B's row-level security does not apply to;

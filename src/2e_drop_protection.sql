@@ -580,7 +580,7 @@ BEGIN
     ---
 
     /*
-     * Teardown by pg_restore --clean (sql_saga.__internal_is_clean_teardown, tmp/design_restore_clean.md).
+     * Teardown by pg_restore --clean (sql_saga.__internal_is_clean_teardown, doc/design/restore.md).
      * The checks below that complain about missing objects are skipped, and so is cleanup of objects
      * pg_restore drops itself. One thing pg_restore cannot do: drop the managed history policies,
      * whose names carry this installation's token while the dump carries another. They depend on the
@@ -732,7 +732,7 @@ BEGIN
     END LOOP;
 
     /*
-     * Policies (tmp/design_final.md sections 8, 13). A dropped policy on a versioned base table
+     * Policies (doc/design/history-access.md). A dropped policy on a versioned base table
      * drops its history copy. Policies sql_saga manages on a history table cannot be dropped
      * directly. address_names of a policy are {schema, table, policy}.
      */

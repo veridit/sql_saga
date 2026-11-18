@@ -15,15 +15,9 @@ that implements it and the tests that hold it.
 The planning briefs, review rounds and probe logs these were distilled from are archived outside the repository
 (`sql_saga_archive/sql_saga_tmp_2026-11-15.tar.zst`).
 
-## Old names
-
-Comments inside the bodies of three functions released in 1.8 still name the working notes. Changing a released body
-needs a release, so they are updated with the next change to those functions. Until then:
-
-| Cited as | Now |
-|---|---|
-| `tmp/design_final.md` (any section or decision) | [history-access.md](history-access.md) |
-| `tmp/design_restore_clean.md` | [restore.md](restore.md) |
-| `tmp/design_manual_schema_changes.md` | [manual-schema-changes.md](manual-schema-changes.md) |
-| `tmp/fable_audit_v13.md`, `tmp/STATBUS_REPORT_xor_key_order.md` | [catalog-column-order.md](catalog-column-order.md) |
-| `tmp/design_drop_protection_v12_r4.md` | [drop-protection.md](drop-protection.md) |
+The frozen release scripts in `versions/` cite those notes by their old names, which cannot change:
+`tmp/design_final.md` is [history-access.md](history-access.md), `tmp/design_restore_clean.md` is
+[restore.md](restore.md), `tmp/design_manual_schema_changes.md` is [manual-schema-changes.md](manual-schema-changes.md),
+`tmp/design_drop_protection_v12_r4.md` is [drop-protection.md](drop-protection.md), and `tmp/fable_audit_v13.md` and
+`tmp/STATBUS_REPORT_xor_key_order.md` are [catalog-column-order.md](catalog-column-order.md). Installed code cites
+`doc/design/` directly since 1.8.

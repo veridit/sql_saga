@@ -25,8 +25,8 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
   -> 1.8 GREEN, 0 FAIL; restore round trips 12 cases plus old dumps 1.0, 1.1, 1.2, 1.7. Benchmarks: 111 scaling
   flags one doubling step at random under load average 350-415 (45 users); A/B back to back, v1.7 then 1.8, three
   rounds: 0/6 flagged each, 39.9/47.0/47.6 s against 39.0/49.3/48.1 s. Other 12 benchmarks pass
-- doc/upgrade.md describes 1.8, the 1.7 guide is frozen as doc/upgrade-1.7.md; two tmp/ citations in routines 1.8
-  replaces anyway now point at doc/design/history-access.md (three remain, hug bqtzce)
+- doc/upgrade.md describes 1.8, the 1.7 guide is frozen as doc/upgrade-1.7.md; every tmp/ design citation in installed code
+  now points at doc/design/ (five comments in four routines, hug bqtzce)
 
 ## 2026-11-16: hug tasks and design documents (no release; nothing installed changes)
 - Open work moved from todo.md to hug tasks (branch `hug/tasks`); AGENTS.md, CLAUDE.md and CONVENTIONS.md say how.

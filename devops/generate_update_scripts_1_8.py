@@ -32,6 +32,9 @@ RELEASE = Release(
         # Generated SQL lists key columns in their declared order, not in the order the catalog join returned them.
         'sql_saga.temporal_merge_plan(regclass, regclass, sql_saga.temporal_merge_mode, name, text[], name, name, sql_saga.temporal_merge_delete_mode, jsonb, text[], boolean, boolean)',
         'sql_saga.temporal_merge_execute(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean)',
+        # Comments only: their design citations now name doc/design/ instead of the archived tmp/ notes.
+        'sql_saga.__api_add_system_versioning(regclass, name, name, name, name, name, name, boolean)',
+        'sql_saga.__internal_drop_protection()',
     ),
     new_routines=(),
     new_privileges=(),
