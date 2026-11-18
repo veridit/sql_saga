@@ -1352,9 +1352,14 @@ BEGIN
         END IF;
         IF history_oid IS NULL OR NOT EXISTS (
                 SELECT 1 FROM pg_catalog.pg_class AS h
-                WHERE h.oid = history_oid AND h.relkind = 'r' AND h.relpersistence = 'p') THEN
+                WHERE h.oid = history_oid AND h.relkind = 'r') THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with rebuild_system_versioning_views',
                 sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF EXISTS (SELECT 1 FROM pg_catalog.pg_class AS h WHERE h.oid = history_oid AND h.relpersistence <> 'p') THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history table "%" is not persistent; repair with ALTER TABLE % SET LOGGED',
+                sql_saga.__internal_display_name(base_oid::regclass), sql_saga.__internal_display_name(history_oid::regclass),
+                history_oid::regclass;
         END IF;
         IF EXISTS (
                 SELECT 1 FROM pg_catalog.pg_class AS b JOIN pg_catalog.pg_class AS h ON h.oid = history_oid

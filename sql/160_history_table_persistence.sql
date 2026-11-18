@@ -68,6 +68,27 @@ ALTER TABLE plain_history SET UNLOGGED;
 \echo PASS an unrelated table may become UNLOGGED
 ROLLBACK TO unrelated;
 
+SAVEPOINT bypassed;
+-- Made UNLOGGED while the event triggers were off: check_integrity names the repair.
+SET LOCAL session_replication_role = replica;
+ALTER TABLE doc_history SET UNLOGGED;
+RESET session_replication_role;
+DO $assert$
+BEGIN
+    BEGIN
+        PERFORM sql_saga.check_integrity();
+        RAISE EXCEPTION 'Expected integrity violation' USING ERRCODE = 'P0002';
+    EXCEPTION WHEN raise_exception THEN
+        IF SQLERRM <> 'sql_saga: integrity violation for system-versioned table "hp_160.doc": history table "hp_160.doc_history" is not persistent; repair with ALTER TABLE hp_160.doc_history SET LOGGED' THEN
+            RAISE;
+        END IF;
+    END;
+    ALTER TABLE doc_history SET LOGGED;
+    PERFORM sql_saga.check_integrity();
+END $assert$;
+\echo PASS check_integrity names ALTER TABLE ... SET LOGGED, which repairs it
+ROLLBACK TO bypassed;
+
 SELECT sql_saga.check_integrity() AS ignored \gset
 \echo PASS check_integrity
 ROLLBACK;

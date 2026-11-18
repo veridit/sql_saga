@@ -9,5 +9,6 @@ WARNING:  55000 history table "hp_160.doc_history" must remain persistent becaus
 WARNING:  HINT: Run: ALTER TABLE hp_160.doc_history SET LOGGED;
 PASS SET UNLOGGED on the base table is still refused
 PASS an unrelated table may become UNLOGGED
+PASS check_integrity names ALTER TABLE ... SET LOGGED, which repairs it
 PASS check_integrity
 PASS 1.8 history persistence without the era audit columns
