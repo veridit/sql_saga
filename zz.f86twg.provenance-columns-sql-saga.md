@@ -31,3 +31,5 @@ Probe on 1.7, 2026-11-18, era with ephemeral edit_by/edit_at: (1) a split keeps 
 ## Notes
 
 Shape discussed with owner 2026-11-18: explicit registration per era, not discovery by name. E.g. sql_saga.set_era_provenance(table, era, writer_column => 'edit_by_user_id', writer_function => 'auth.uid()', time_column => 'edit_at', time_function => 'statement_timestamp()'), stored in sql_saga.era (catalog change, so a release with catalog_format bump), function bound by signature and validated at registration like add_current_view's current_func_name, called once per statement as the caller. Alternative: no function, use each column's DEFAULT (StatBus already has DEFAULT auth.uid()). Open: an explicitly supplied writer in the source (import on behalf of someone) wins or is overwritten.
+
+Owner 2026-11-18 01:53: must be declarative, no detection. Simplest form proposed: one era property listing provenance columns, values from each column's own DEFAULT, e.g. add_era(..., provenance_columns => ARRAY['edit_by_user_id','edit_at']) / set_era_provenance_columns(table, era, columns). Owner thinks it over until morning.
