@@ -29,6 +29,8 @@ Owner judged it likely unnecessary; do not build without a decision
 ## Requests
 - 2026-11-18T20:18 request 1 by jorgen:
   I don't understand what this gives us. You're missing the relevant details. I don't understand how you would possibly do this. It's like, I would do something. Yes. What? Why? How?
+  resolved 2026-11-18T21:44 by sabertooth:
+    Rewrote the task in the note: which restore, what happens to readers during the window, the possible change, and why I recommend dropping it. Waiting for your yes/no.
 
 ## Notes
 
@@ -37,3 +39,4 @@ What this is about, in full. Only the parallel restore in README (Backup and Res
 ## History
 - 2026-11-18T20:18 request 1 by jorgen
 - 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
+- 2026-11-18T21:44 resolved request 1 by sabertooth
