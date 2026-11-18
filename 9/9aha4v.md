@@ -1,7 +1,7 @@
 ---
 id: 9aha4v
 title: "StatBus: pin sql_saga 1.7 and use the view delete protocol"
-state: todo
+state: "dropped"
 type: chore
 priority: "medium"
 assignee: []
@@ -10,6 +10,8 @@ group: ""
 rank: "zx"
 created: 2026-11-16
 updated: 2026-11-16
+dropped_reason: "Work in another system (StatBus), done there long ago. sql_saga tracks only its own work."
+dropped_at: "2026-11-18T21:46"
 ---
 
 ## Goal
@@ -39,3 +41,4 @@ References: external_ident, tag_for_unit, unit_notes x legal_unit_id, establishm
 ## History
 - 2026-11-18T20:17 request 1 by jorgen
 - 2026-11-18T20:17 request 1 not delivered: no coordinator set (hug task coordinator NAME)
+- 2026-11-18T21:46 todo -> dropped (drop)
