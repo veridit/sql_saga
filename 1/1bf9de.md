@@ -1,7 +1,7 @@
 ---
 id: 1bf9de
 title: "Decide whether history reads fail closed during a parallel restore"
-state: todo
+state: "dropped"
 type: spike
 priority: "low"
 assignee: []
@@ -10,6 +10,8 @@ group: ""
 rank: "zv"
 created: 2026-11-16
 updated: 2026-11-16
+dropped_reason: "Owner agrees (2026-11-18): direct history-table reads during a parallel restore are already filtered by the dumped policies, history views already fail closed, and the window ends with the procedure's next command. Not worth a restore-only mechanism on every history table."
+dropped_at: "2026-11-18T21:46"
 ---
 
 ## Goal
@@ -40,3 +42,4 @@ What this is about, in full. Only the parallel restore in README (Backup and Res
 - 2026-11-18T20:18 request 1 by jorgen
 - 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
 - 2026-11-18T21:44 resolved request 1 by sabertooth
+- 2026-11-18T21:46 todo -> dropped (drop)
