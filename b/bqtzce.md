@@ -27,7 +27,7 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 ## Depends on
 
 ## Acceptance
-- [ ] git grep 'tmp/design' src returns nothing
+- [x] git grep 'tmp/design' src returns nothing
 - [ ] the old-names table in doc/design/README.md is removed
 
 ## Requests
