@@ -48,8 +48,10 @@ class Packaging(unittest.TestCase):
             # The DROP COLUMN fires sql_saga's event triggers, so the 1.8 definitions of the routines must already be in
             # place: the 1.7 ones read the dropped columns ("column e.audit_schema_name does not exist").
             for routine in R.routine_manifest:
-                fn = 'CREATE OR REPLACE FUNCTION ' + routine.split('(')[0] + '('
-                self.assertLess(text.rindex(fn), text.index(SCHEMA_MARK), (name, routine))
+                head = re.compile(r'CREATE OR REPLACE (?:FUNCTION|PROCEDURE) ' + re.escape(routine.split('(')[0]) + r'\(')
+                starts = [m.start() for m in head.finditer(text)]
+                self.assertTrue(starts, (name, routine))
+                self.assertLess(starts[-1], text.index(SCHEMA_MARK), (name, routine))
             self.assertLess(text.rindex(FORMAT_MARK), text.index(direct_update.GATE), name)
             # After every embedded older update (which may itself change sql_saga.era).
             if name != 'sql_saga--1.7--1.8.sql':

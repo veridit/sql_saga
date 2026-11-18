@@ -188,7 +188,7 @@ BEGIN
     -- Introspect the primary key columns, excluding temporal columns.
     -- They will be excluded from UPDATE SET clauses.
     -- Must happen after temporal columns are discovered.
-    SELECT COALESCE(array_agg(a.attname), '{}'::name[])
+    SELECT COALESCE(array_agg(a.attname ORDER BY array_position(c.conkey, a.attnum)), '{}'::name[])
     INTO v_pk_cols
     FROM pg_constraint c
     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
@@ -564,7 +564,7 @@ BEGIN
                 format_type(a.atttypid, -1),
                 col || '_ek'  -- Suffix to avoid collision with other plan columns
             ),
-            ', '
+            ', ' ORDER BY ic.ord
         ),
         string_agg(
             CASE WHEN a.attnotnull THEN
@@ -581,13 +581,13 @@ BEGIN
                     format_type(a.atttypid, -1)
                 )
             END,
-            ' AND '
+            ' AND ' ORDER BY ic.ord
         )
     INTO
         v_entity_key_select_list,
         v_entity_key_join_clause
-    FROM unnest(identity_columns) AS col
-    JOIN pg_attribute a ON a.attrelid = temporal_merge_execute.target_table AND a.attname = col AND NOT a.attisdropped;
+    FROM unnest(identity_columns) WITH ORDINALITY AS ic(col, ord)
+    JOIN pg_attribute a ON a.attrelid = temporal_merge_execute.target_table AND a.attname = ic.col AND NOT a.attisdropped;
 
     v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
     v_entity_key_select_list := COALESCE(v_entity_key_select_list, '');
@@ -1145,7 +1145,7 @@ BEGIN
                     BEGIN
                         SELECT string_agg(
                             format('%I = (p.entity_keys->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
-                            ', '
+                            ', ' ORDER BY j.key
                         )
                         INTO v_source_update_set_clause
                         FROM (

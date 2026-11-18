@@ -108,6 +108,11 @@ Earlier releases carried a check for this that read the never-populated audit co
 and so never fired. If event triggers were bypassed, `check_integrity()` reports an
 unlogged history table with the same repair.
 
+`temporal_merge` builds the SQL for multi-column keys with the columns in their
+declared order. Before, the order could follow the plan PostgreSQL chose for a catalog
+lookup, so the generated SQL (and its cached plan) could differ between servers.
+Results were the same either way.
+
 The changed routines are replaced with `CREATE OR REPLACE`, retaining their OIDs,
 owners and site-specific privileges. No routine is added or removed, no user table is
 rebuilt and no user data is rewritten. See [the 1.7 guide](upgrade-1.7.md).

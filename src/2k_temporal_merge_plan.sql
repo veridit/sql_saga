@@ -154,7 +154,7 @@ BEGIN
     IF v_valid_until_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_until_col; END IF;
 
     -- 1.2: Introspect the primary key (must happen after v_temporal_cols is defined).
-    SELECT COALESCE(array_agg(a.attname), '{}'::name[]) INTO v_pk_cols
+    SELECT COALESCE(array_agg(a.attname ORDER BY array_position(c.conkey, a.attnum)), '{}'::name[]) INTO v_pk_cols
     FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
     WHERE c.conrelid = target_table AND c.contype = 'p' AND a.attname <> ALL(v_temporal_cols);
 
@@ -623,11 +623,11 @@ BEGIN
                         THEN format('(tpu.unified_canonical_nk_json->>%L)::%s AS %I', col, type, col)
                         ELSE format('tpu.%I', col)
                     END,
-                    ', '
+                    ', ' ORDER BY ord
                 )
                 FROM (
-                    SELECT col, format_type(a.atttypid, a.atttypmod) as type
-                    FROM unnest(v_original_entity_segment_key_cols) c(col)
+                    SELECT col, c.ord, format_type(a.atttypid, a.atttypmod) as type
+                    FROM unnest(v_original_entity_segment_key_cols) WITH ORDINALITY AS c(col, ord)
                     JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c.col
                     WHERE col <> ALL(v_temporal_cols)
                 ) AS all_id_cols
@@ -675,9 +675,9 @@ BEGIN
                                 WHEN a.attname IS NULL THEN 'true'
                                 ELSE format('source_table.%I IS NULL', c.col)
                             END,
-                            ' AND '
+                            ' AND ' ORDER BY c.ord
                         )
-                        FROM unnest(COALESCE(v_all_lookup_cols, '{}')) AS c(col)
+                        FROM unnest(COALESCE(v_all_lookup_cols, '{}')) WITH ORDINALITY AS c(col, ord)
                         LEFT JOIN pg_attribute a ON a.attrelid = temporal_merge_plan.source_table AND a.attname = c.col AND a.attnum > 0 AND NOT a.attisdropped
                     ),
                     'true'
@@ -868,8 +868,8 @@ BEGIN
                         WHEN sa.attname IS NOT NULL THEN format('source_table.%I', c.col) -- Column exists in source
                         ELSE format('NULL::%s AS %I', format_type(ta.atttypid, ta.atttypmod), c.col) -- Column exists only in target
                     END,
-                ', '), '')
-                FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+                ', ' ORDER BY c.ord), '')
+                FROM unnest(v_original_entity_segment_key_cols) WITH ORDINALITY AS c(col, ord)
                 JOIN pg_attribute ta ON ta.attrelid = target_table AND ta.attname = c.col AND ta.attnum > 0 AND NOT ta.attisdropped
                 LEFT JOIN pg_attribute sa ON sa.attrelid = source_table AND sa.attname = c.col AND sa.attnum > 0 AND NOT sa.attisdropped
                 WHERE c.col <> ALL(v_temporal_cols)
@@ -1053,10 +1053,10 @@ BEGIN
                         WHEN a.attname IS NULL THEN 'true' -- Column doesn't exist, so it's conceptually NULL.
                         ELSE format('source_table.%I IS NULL', c.col)
                     END,
-                ' AND '), 'true')
+                ' AND ' ORDER BY c.ord), 'true')
             INTO
                 v_entity_id_check_is_null_expr
-            FROM unnest(v_identity_columns) AS c(col)
+            FROM unnest(v_identity_columns) WITH ORDINALITY AS c(col, ord)
             LEFT JOIN pg_attribute a ON a.attrelid = temporal_merge_plan.source_table AND a.attname = c.col AND a.attnum > 0 AND NOT a.attisdropped;
     
             -- Determine the scope of target entities to process based on the mode.
@@ -1387,13 +1387,13 @@ BEGIN
                                     -- NULLABLE column: must use null-safe comparison
                                     format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
                             END,
-                            ' AND '
+                            ' AND ' ORDER BY k.ord
                         )
-                        FROM jsonb_array_elements_text(v_key) AS c
-                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c AND NOT a.attisdropped
+                        FROM jsonb_array_elements_text(v_key) WITH ORDINALITY AS k(c, ord)
+                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = k.c AND NOT a.attisdropped
                     )),
-                ' OR ')
-                FROM jsonb_array_elements(lookup_keys) AS v_key
+                ' OR ' ORDER BY lk.ord)
+                FROM jsonb_array_elements(lookup_keys) WITH ORDINALITY AS lk(v_key, ord)
             );
 
             IF v_source_rows_exists_join_expr IS NULL THEN
@@ -1406,10 +1406,10 @@ BEGIN
                             ELSE
                                 format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
                         END,
-                        ' AND '
+                        ' AND ' ORDER BY ic.ord
                     )
-                    FROM unnest(v_identity_columns) as col
-                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
+                    FROM unnest(v_identity_columns) WITH ORDINALITY AS ic(col, ord)
+                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = ic.col AND NOT a.attisdropped
                 );
             END IF;
     

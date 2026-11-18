@@ -2,8 +2,9 @@
 """Direct 1.0..1.7 to 1.8 updates from authenticated v1.7 artifacts (devops/direct_update.py builds them).
 
 Specified by devops/test_generate_update_scripts_1_8.py. The 1.8 delta: sql_saga.era loses the never-written
-audit_schema_name and audit_table_name (devops/upgrade_1_8_schema.sql, catalog_format 1.8), and the health check
-refuses an UNLOGGED history table of a system-versioned table.
+audit_schema_name and audit_table_name (devops/upgrade_1_8_schema.sql, catalog_format 1.8), the health check
+refuses an UNLOGGED history table of a system-versioned table, and temporal_merge generates its key-column SQL in a
+deterministic order.
 """
 from direct_update import Release, GeneratorError  # noqa: F401  (GeneratorError: for the tests)
 
@@ -28,6 +29,9 @@ RELEASE = Release(
         'sql_saga.__internal_add_system_time_era(regclass, name, name, name, name, name, name[])',
         'sql_saga.__internal_health_checks()',
         'sql_saga.check_integrity()',
+        # Generated SQL lists key columns in their declared order, not in the order the catalog join returned them.
+        'sql_saga.temporal_merge_plan(regclass, regclass, sql_saga.temporal_merge_mode, name, text[], name, name, sql_saga.temporal_merge_delete_mode, jsonb, text[], boolean, boolean)',
+        'sql_saga.temporal_merge_execute(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean)',
     ),
     new_routines=(),
     new_privileges=(),
