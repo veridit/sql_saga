@@ -34,7 +34,7 @@ Uses: src/0b_schema.sql:87-88, src/0e_internal_functions.sql:131 (__internal_ddl
 ## Acceptance
 - [x] Failing test first: ALTER TABLE <history> SET UNLOGGED is refused with 'history table ... must remain persistent' and HINT naming SET LOGGED
 - [x] audit_schema_name and audit_table_name gone from src, fresh install and every update path; check_integrity passes after update
-- [ ] Upgrade matrix and restore round trips green, including an old dump restored at its own version
+- [x] Upgrade matrix and restore round trips green, including an old dump restored at its own version
 
 ## Notes
 
