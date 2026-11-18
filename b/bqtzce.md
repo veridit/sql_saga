@@ -30,4 +30,12 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 - [ ] git grep 'tmp/design' src returns nothing
 - [ ] the old-names table in doc/design/README.md is removed
 
+## Requests
+- 2026-11-18T20:18 request 1 by jorgen:
+  I think we should try to get this into the next release so that we do the cleanup and we don't leave garbage lying around
+
 ## Notes
+
+
+## History
+- 2026-11-18T20:18 request 1 by jorgen
