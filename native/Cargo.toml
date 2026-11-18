@@ -25,3 +25,7 @@ panic = "unwind"
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+# Before Rust 1.98, cargo's default debuginfo strip (rust-objcopy) leaves the Mach-O string pool 4-byte aligned, and
+# macOS 27's dyld refuses such a library ("mis-aligned LINKEDIT string pool", rust-lang/rust#157750). Unstripped costs
+# about 44 KB.
+strip = "none"
