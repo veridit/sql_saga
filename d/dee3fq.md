@@ -1,7 +1,7 @@
 ---
 id: dee3fq
 title: "Remove the dead era audit columns; guard history tables' persistence"
-state: "doing"
+state: "done"
 type: bug
 priority: "high"
 assignee: ["sabertooth"]
@@ -10,11 +10,10 @@ group: ""
 rank: "zzh"
 created: 2026-11-18
 updated: 2026-11-18
-doing_since: "2026-11-18T16:48"
-stage: "active"
 model: "claude"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-18T22:14"
 ---
 
 ## Goal
@@ -40,5 +39,7 @@ Uses: src/0b_schema.sql:87-88, src/0e_internal_functions.sql:131 (__internal_ddl
 
 
 1.8 on feature/clean-era-audit-columns (64e9198). Test 160 red then green (SET UNLOGGED on history refused, Run: ALTER TABLE X SET LOGGED). Columns gone in fresh install and all 8 direct paths (1.0..1.7 -> 1.8), catalog_format 1.8. Local: 145/145 fast, generator suite + wiring OK, upgrade matrix GREEN 0 FAIL, restore 12+4 old-dump cases pass. Found on the way: DROP COLUMN must follow the routine delta (event triggers ran 1.7 health check); 063 CI flake fixed (unordered string_agg in temporal_merge planner/executor); macOS 27 dyld refuses rustc-stripped native lib (strip=none). Waiting on branch CI 44362679383.
+Reflection (open, 2026-11-18, sabertooth): Released in v1.8 (tag ef5dfee on ea6542e, master CI 44390659266 green: regressions, restore round trips, upgrade matrix 1.0..1.7 -> 1.8, concurrency checks). Local: 145/145 fast, upgrade matrix GREEN 0 FAIL, old dumps 1.0/1.1/1.2/1.7 restore. Lesson: catalog DDL in an update fires sql_saga's own event triggers, so it must run after the new routines.
 ## History
 - 2026-11-18T16:48 todo -> doing/active (take)
+- 2026-11-18T22:14 doing/active -> done (done); was doing_since: 2026-11-18T16:48
