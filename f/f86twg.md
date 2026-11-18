@@ -1,15 +1,20 @@
 ---
 id: f86twg
 title: "Provenance columns: sql_saga stamps changed pieces, keeps carried ones"
-state: todo
+state: "doing"
 type: spike
 priority: "medium"
-assignee: []
+assignee: ["sabertooth"]
 labels: ["statbus"]
 group: ""
 rank: "c"
 created: 2026-11-18
 updated: 2026-11-18
+doing_since: "2026-11-18T22:14"
+stage: "active"
+model: "claude"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -45,3 +50,7 @@ Probe 2 (tmp/prov_probe2.sql): user runs temporal_merge PATCH with a source that
 New probe facts (test 161 on 1.8): in the view split the carried remainder [2024-07,2025) is INSERTed with a NEW edit_at but the old edit_by (DEFAULT fires for edit_at because the planner did not supply it, but did supply edit_by): today's carried pieces already lose their time. Case 8: a source-supplied edit_by='admin' for a NEW entity is kept, edit_at=0 replaced by DEFAULT (0 is not... actually new; check).
 
 Correction of the previous note. Test 161 (hand-written expected = correct behaviour) fails on 1.8 exactly where the proposal says: registration missing; split: changed piece 'mid' credited to admin, and the carried remainder A [2024-07,2025) keeps writer admin but gets a NEW edit_at (the planner supplies edit_by from the target but the INSERT takes edit_at from its DEFAULT: today carried pieces already lose their time); case 3 user's piece credited to admin; 4 forged writer kept; 5 writer not updated; 7 and 8 new piece credited to admin. Case 2 (re-save) already right.
+
+
+## History
+- 2026-11-18T22:14 todo -> doing/active (take)
