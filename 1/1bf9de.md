@@ -35,3 +35,4 @@ Owner judged it likely unnecessary; do not build without a decision
 
 ## History
 - 2026-11-18T20:18 request 1 by jorgen
+- 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
