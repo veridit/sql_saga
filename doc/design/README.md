@@ -17,7 +17,7 @@ The planning briefs, review rounds and probe logs these were distilled from are 
 
 ## Old names
 
-Comments inside the bodies of functions released in 1.7 still name the working notes. Changing a released body
+Comments inside the bodies of three functions released in 1.8 still name the working notes. Changing a released body
 needs a release, so they are updated with the next change to those functions. Until then:
 
 | Cited as | Now |

@@ -1,6 +1,6 @@
 # Catalog consistency: key and foreign key column order, view shape (1.3 audit)
 
-Status: findings of the 1.3 coverage audit (2026-10-20, on v1.2), all fixed in 1.3 and current in 1.7.
+Status: findings of the 1.3 coverage audit (2026-10-20, on v1.2), all fixed in 1.3 and current in 1.8.
 Code: `src/1k_foreign_key_pairing.sql`, `src/2f_rename_following.sql`, `src/2h_health_checks.sql`,
 `src/2o_updatable_view_column_follow.sql`, `src/2a_add_foreign_key.sql`. Tests: 124, 126, 128, 129, 132.
 Related decision: "Use Constraint Triggers for Regular-to-Temporal Foreign Keys" in `doc/decision-log.md`.

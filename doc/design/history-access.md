@@ -1,6 +1,6 @@
 # History access: privileges and row-level security
 
-Status: implemented in 1.1, current in 1.7. Owner-approved 2026-10-13 to 2026-10-15 (decisions 1 to 7 below).
+Status: implemented in 1.1, current in 1.8. Owner-approved 2026-10-13 to 2026-10-15 (decisions 1 to 7 below).
 Code: `src/0k_history_access.sql`, `src/1i_add_system_versioning.sql`, `src/2h_health_checks.sql`,
 `src/2e_drop_protection.sql`. Tests: 018, 024, 028, 123, 136. User documentation: README.md, "Privileges and
 history policies".

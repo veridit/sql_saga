@@ -206,7 +206,7 @@ BEGIN
     END LOOP;
 
     /*
-     * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
+     * Row-level security of history tables (doc/design/history-access.md).
      * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
      * either, re-synchronizes that family's history policies. Direct changes to the policies
      * sql_saga manages, and to the history's RLS settings, are refused. Only the synchronizer's own

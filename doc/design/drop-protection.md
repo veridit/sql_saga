@@ -1,6 +1,6 @@
 # Drop and rename protection, and `check_integrity()`
 
-Status: implemented in 1.2, current in 1.7 (revision 4 of the 1.2 design, 2026-10-15). Code:
+Status: implemented in 1.2, current in 1.8 (revision 4 of the 1.2 design, 2026-10-15). Code:
 `src/2e_drop_protection.sql`, `src/2f_rename_following.sql`, `src/2h_health_checks.sql`,
 `src/2j_event_triggers.sql`. Tests: 037-039, 094, 116, 117, 127. User documentation: README.md.
 

@@ -1,6 +1,6 @@
 # Manual schema changes of a system-versioned table
 
-Status: implemented in 1.1, current in 1.7. Owner-approved 2026-10-14 (rule), answers 2026-10-15.
+Status: implemented in 1.1, current in 1.8. Owner-approved 2026-10-14 (rule), answers 2026-10-15.
 Code: `src/1i_add_system_versioning.sql` (`rebuild_system_versioning_views`, `__internal_check_history_columns`),
 `src/sql_saga.c` (`write_history`, `CheckHistoryTupleCompatibility`). Tests: 027, 056.
 User documentation: README.md, "Manual schema changes".

@@ -26,7 +26,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.7: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.8: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -51,14 +51,17 @@ fi
 [ -n "$(printf x | md5)" ] || { echo "HARNESS ERROR: no working md5/md5sum" >&2; exit 2; }
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
+# Released tags strip their native library with rustc's objcopy, whose layout macOS 27's dyld refuses before Rust 1.98
+# (rust-lang/rust#157750); unstripped builds of the same sources load. No effect on Linux.
+export CARGO_PROFILE_RELEASE_STRIP=none
 . "$REPO/devops/upgrade_migration_safety.sh" || exit 2
 PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.7}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.8}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -87,6 +90,9 @@ frozen_artifacts() {
     fi
     if version_lt 1.6 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4 1.5; do echo "sql_saga--$source--1.6.sql"; done
+    fi
+    if version_lt 1.7 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6; do echo "sql_saga--$source--1.7.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -3494,6 +3500,45 @@ CREATE TRIGGER user_audit AFTER INSERT ON cv_batch_upgrade__current_valid FOR EA
         "1:p1:[2024-01-01,today),1:new:[today,infinity),2:p2:[2024-01-01,infinity),5:second:[today,infinity),6:n6:[today,infinity)" \
         "$(q "$CV_BATCH_DB" "INSERT INTO cv_batch_upgrade__current_valid (id, payload) VALUES (1, 'new'), (5, 'first'), (5, 'second'), (6, 'n6'); SELECT replace(string_agg(id || ':' || payload || ':' || valid_range::text, ',' ORDER BY id, valid_range), current_date::text, 'today') FROM cv_batch_upgrade")"
     assert_integrity "$CV_BATCH_DB"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 1.8: sql_saga.era loses the never-written audit_schema_name and audit_table_name (catalog_format 1.8). The update
+# refuses hand-written values in them and an unlogged history table, and changes nothing until both are fixed.
+if ! version_lt "$NEW_VERSION" 1.8 && ! version_lt "$BASELINE_VERSION" 1.1; then
+    section "$BASELINE_VERSION era audit columns and history persistence on the way to 1.8" "expected RED"
+    AUDIT_DB=${PREFIX}_audit18
+    v13_db "$AUDIT_DB" "CREATE TABLE au (id integer, valid_range daterange);
+SELECT sql_saga.add_era('au', 'valid_range', 'valid');
+CREATE TABLE ah (id integer, payload text);
+SELECT sql_saga.add_system_versioning('ah');
+INSERT INTO ah VALUES (1, 'a');
+UPDATE ah SET payload = 'b';"
+    v13_restart "$AUDIT_DB"
+    audit_cols_sql="SELECT coalesce(string_agg(attname, ',' ORDER BY attname), '-') FROM pg_attribute WHERE attrelid = 'sql_saga.era'::regclass AND attname LIKE 'audit%' AND NOT attisdropped"
+    check "$BASELINE_VERSION era has both audit columns" "audit_schema_name,audit_table_name" "$(q "$AUDIT_DB" "$audit_cols_sql")"
+    q "$AUDIT_DB" "UPDATE sql_saga.era SET audit_table_name = 'by_hand' WHERE table_name = 'au'" >/dev/null
+    check "hand-written audit value: update refused, names the column" \
+        "ERROR:  sql_saga: 1 rows of sql_saga.era have audit_schema_name or audit_table_name set; sql_saga never writes them" \
+        "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "hand-written audit value: extension still $BASELINE_VERSION" "$BASELINE_VERSION|audit_schema_name,audit_table_name" \
+        "$(q "$AUDIT_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$AUDIT_DB" "$audit_cols_sql")"
+    q "$AUDIT_DB" "UPDATE sql_saga.era SET audit_table_name = NULL" >/dev/null
+    # An unlogged history table can only arise with event triggers bypassed.
+    q "$AUDIT_DB" "SET session_replication_role = replica; ALTER TABLE ah_history SET UNLOGGED" >/dev/null
+    check "unlogged history table: update refused with the repair" \
+        'ERROR:  sql_saga: history table "ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "ah"' \
+        "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "unlogged history table: extension still $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$AUDIT_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    q "$AUDIT_DB" "ALTER TABLE ah_history SET LOGGED" >/dev/null
+    check "after both repairs the update succeeds" "" "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "audit columns dropped, every era row at catalog_format 1.8" "-|1.8" \
+        "$(q "$AUDIT_DB" "$audit_cols_sql")|$(q "$AUDIT_DB" "SELECT string_agg(DISTINCT catalog_format, ',') FROM sql_saga.era")"
+    check "history data preserved" "a|b" "$(q "$AUDIT_DB" "SELECT string_agg(payload, '|' ORDER BY payload) FROM (SELECT payload FROM ah_history UNION ALL SELECT payload FROM ah) AS s")"
+    check "after 1.8, SET UNLOGGED on a history table is refused" \
+        'ERROR:  sql_saga: history table "ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "ah"' \
+        "$(q "$AUDIT_DB" "ALTER TABLE ah_history SET UNLOGGED" | grep -m1 '^ERROR')"
+    assert_integrity "$AUDIT_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"

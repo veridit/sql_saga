@@ -1,6 +1,6 @@
 # Restoring dumps: `pg_restore --clean` and dumps of older releases
 
-Status: implemented in 1.2 (`--clean`) and 1.3 (old dumps), current in 1.7. The decision record is in
+Status: implemented in 1.2 (`--clean`) and 1.3 (old dumps), current in 1.8. The decision record is in
 `doc/decision-log.md`, "Recognize the Teardown of `pg_restore --clean` in the Drop Protection", including the 1.4
 amendment. User procedures: README.md (restore sections) and `doc/upgrade.md`. Tests: 029,
 `devops/restore_roundtrip.sh` (variants `clean`, `clean_single_txn`, `clean_same`, `clean_psql`,
@@ -78,7 +78,9 @@ with `for_portion_of` or `current` views restored as 1.1 succeeds, and the views
 step gives them. Hence: always use the source's recorded version.
 
 Since 1.4, `sql_saga.era.catalog_format` has no default and a named check,
-`"restore old sql_saga dumps per doc/upgrade.md"`. A plain restore of a dump older than the catalog layout fails at
+`"restore old sql_saga dumps per doc/upgrade.md"`. It names the release that introduced the current era layout: 1.3,
+then 1.4 (1.4 to 1.7) and 1.8, which dropped the unused audit columns. A plain restore of a dump older than the
+catalog layout fails at
 the first catalog COPY with that name instead of loading old rows into a newer catalog; a current dump names the
 column and restores plainly. The exact commands are in `doc/upgrade.md`, "Restore at the dump's own extension
 version". `pg_restore --clean` is not usable for old dumps: it drops the pre-created extension and recreates the

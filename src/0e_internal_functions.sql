@@ -82,7 +82,7 @@ BEGIN
     SELECT array_agg(command_tag) INTO tags FROM pg_event_trigger_ddl_commands();
 
     -- GRANT and REVOKE never need any action: privileges on derived objects are decided at access
-    -- time by the caller's rights on the base table (tmp/design_final.md). Answer quickly.
+    -- time by the caller's rights on the base table (doc/design/history-access.md). Answer quickly.
     IF tags <@ ARRAY['GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES'] THEN
         RETURN false;
     END IF;
