@@ -10,13 +10,13 @@ EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/defau
 SQL_SAGA_PYTHON ?= python3
 # Each released tag carries its own Makefile, so only the current version's rules live here (the upgrade test and
 # released_tree.py build older releases from their tags with `git archive`).
-ifeq ($(EXTVERSION),1.7)
-# Direct single-hop updates from every release: devops/generate_update_scripts_1_7.py holds the 1.7 release data
-# (SHA-256 of the frozen 1.6 artifacts, the routines changed since 1.6, devops/upgrade_1_7_repairs.sql), and
-# devops/direct_update.py builds the scripts.
-DIRECT_UPDATE = $(foreach v,1.0 1.1 1.2 1.3 1.4 1.5 1.6,$(EXTENSION)--$(v)--1.7.sql)
-UPDATE_GENERATOR = devops/generate_update_scripts_1_7.py
-UPDATE_GENERATOR_INPUTS = $(UPDATE_GENERATOR) devops/direct_update.py devops/generate_update_scripts_1_4.py devops/generate_update_scripts.py devops/upgrade_1_7_repairs.sql $(wildcard versions/*.sql src/[0-9][a-z]_*.sql)
+ifeq ($(EXTVERSION),1.8)
+# Direct single-hop updates from every release: devops/generate_update_scripts_1_8.py holds the 1.8 release data
+# (SHA-256 of the frozen 1.7 artifacts, the routines and catalog tables changed since 1.7,
+# devops/upgrade_1_8_schema.sql and devops/upgrade_1_8_repairs.sql), and devops/direct_update.py builds the scripts.
+DIRECT_UPDATE = $(foreach v,1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7,$(EXTENSION)--$(v)--1.8.sql)
+UPDATE_GENERATOR = devops/generate_update_scripts_1_8.py
+UPDATE_GENERATOR_INPUTS = $(UPDATE_GENERATOR) devops/direct_update.py devops/generate_update_scripts_1_4.py devops/generate_update_scripts.py devops/upgrade_1_8_schema.sql devops/upgrade_1_8_repairs.sql $(wildcard versions/*.sql src/[0-9][a-z]_*.sql)
 DATA = $(wildcard versions/*.sql) $(DIRECT_UPDATE) $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
 else
 $(error no update-script generation rule for EXTVERSION $(EXTVERSION))
@@ -150,6 +150,7 @@ update_scripts_force:
 .PHONY: test-generator
 test-generator:
 	$(SQL_SAGA_PYTHON) devops/test_upgrade_migration_safety.py
+	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_8.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_7.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_6.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_5.py

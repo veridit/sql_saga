@@ -81,10 +81,20 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.6 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.7' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.for_portion_of_apply_trigger()') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.current_view_apply_trigger()') IS NULL
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid = 'sql_saga.era'::pg_catalog.regclass AND a.attname = 'audit_table_name' AND NOT a.attisdropped) THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.7 is not the supported v1.7 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.7 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5 or 1.6, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6 or 1.7, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5 or v1.6 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6 or v1.7 extension.';
     END IF;
 
     /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */
@@ -131,6 +141,34 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: triggers named as the 1.7 apply trigger of a current view prevent upgrade:%', E'\n' || policy_list
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Rename or drop each trigger before updating (doc/upgrade.md).';
+    END IF;
+
+    /* Values someone wrote by hand into the era audit columns, which the 1.8 update drops; no release writes them. */
+    IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+               WHERE a.attrelid = 'sql_saga.era'::pg_catalog.regclass AND a.attname = 'audit_table_name' AND NOT a.attisdropped) THEN
+        EXECUTE $q$SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I era %I', e.table_schema, e.table_name, e.era_name), E'\n'
+                       ORDER BY e.table_schema, e.table_name, e.era_name)
+                   FROM sql_saga.era AS e WHERE e.audit_schema_name IS NOT NULL OR e.audit_table_name IS NOT NULL$q$
+        INTO policy_list;
+        IF policy_list IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: era rows with audit_schema_name or audit_table_name set prevent upgrade:%', E'\n' || policy_list
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Set both columns to NULL in those rows (no sql_saga release reads them), then update.';
+        END IF;
+    END IF;
+
+    /* History tables of system-versioned tables that are not persistent: the 1.8 update refuses them. */
+    SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name), E'\n'
+               ORDER BY sv.history_schema_name, sv.history_table_name)
+    INTO policy_list
+    FROM sql_saga.system_versioning AS sv
+    JOIN pg_catalog.pg_namespace AS hn ON hn.nspname = sv.history_schema_name
+    JOIN pg_catalog.pg_class AS h ON h.relnamespace = hn.oid AND h.relname = sv.history_table_name
+    WHERE h.relpersistence <> 'p';
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: history tables that are not persistent prevent upgrade:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Run ALTER TABLE <history table> SET LOGGED for each before updating.';
     END IF;
 
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)

@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Direct single-hop update scripts for a release that changes only routines (1.6 onwards). Standard library only.
+"""Direct single-hop update scripts for the releases since 1.6. Standard library only.
 
 A release file (devops/generate_update_scripts_<X_Y>.py) holds only data: a Release with the target and previous
 version, the SHA-256 of every frozen previous artifact, the routine manifest, new routines and their privilege
-statements, and the repairs fragment. Each script <source>--<target> it builds is:
+statements, the repairs fragment and, when the catalog layout changes, the schema fragment and the changed tables.
+Each script <source>--<target> it builds is:
   header, target native-library guard and upgrade lock,
   for an older source: the frozen, SHA-256 authenticated <source>--<previous> update without its header, native
       guard, lock and final integrity gate, with only native guards, actionable update hints and the upgrade lock
       retargeted to the target (catalog markers and GUCs keep their earlier values),
   the delta, the same for every source:
+      devops/<schema>, the catalog DDL, before the routines that read the new layout,
       every routine of the manifest as CREATE OR REPLACE (new routines are created),
       the privilege statements on new routines,
       devops/<repairs> (data repairs that need the new definitions),
   exactly one final integrity gate.
-Every other difference between src/ and the frozen previous installation fails the build.
+Every other difference between src/ and the frozen previous installation fails the build, except the CREATE TABLE
+of the tables the release declares changed (their DDL is in the schema fragment).
 
 The 1.4 and 1.5 generators predate this module and are kept as released.
 """
 import argparse
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +38,14 @@ def routine_key(statement):
         return None
     r = g._parse_routine(statement)
     return g._key(g._identity(r['name'], r['args']))
+
+
+_TABLE_RE = re.compile(r'CREATE\s+TABLE\s+(sql_saga\.[A-Za-z_][A-Za-z0-9_]*)\s*\(', re.I)
+
+
+def table_key(statement):
+    m = _TABLE_RE.match(g._core(statement))
+    return m.group(1) if m else None
 
 
 def guard_prefix(version):
@@ -63,6 +75,8 @@ class Release:
     new_privileges: tuple         # the privilege statements on new routines, exactly as src/ has them
     repairs: str                  # fragment in devops/, loaded after the definitions
     sources_without_inner_guards: tuple = ()  # embedded updates with no native guard after their opening prefix
+    schema: str = None            # fragment in devops/ with the catalog DDL, loaded before the routines
+    changed_tables: tuple = ()    # sql_saga tables whose CREATE TABLE the schema fragment changes
 
     @property
     def native_guard_anchors(self):
@@ -75,11 +89,19 @@ class Release:
         current = g.split_sql(''.join(p.read_text() for p in sorted(Path(src).glob('[0-9][a-z]_*.sql'))))
 
         def remainder(statements):
-            return [g._core(s).strip() for s in statements if routine_key(s) not in self.routine_manifest]
+            return [g._core(s).strip() for s in statements
+                    if routine_key(s) not in self.routine_manifest and table_key(s) not in self.changed_tables]
         if remainder(old) != [s for s in remainder(current) if s not in self.new_privileges]:
             raise GeneratorError('source changes outside the %s routine manifest' % self.target)
         if sorted(s for s in remainder(current) if s in self.new_privileges) != sorted(self.new_privileges):
             raise GeneratorError('expected exactly the %s privilege statements on new routines' % self.target)
+        for table in self.changed_tables:
+            before = [g._core(s).strip() for s in old if table_key(s) == table]
+            after = [g._core(s).strip() for s in current if table_key(s) == table]
+            if len(before) != 1 or len(after) != 1:
+                raise GeneratorError('changed table must be created exactly once: ' + table)
+            if before == after:
+                raise GeneratorError('changed table unchanged since %s: %s' % (self.previous, table))
 
         chunks = []
         for key in self.routine_manifest:
@@ -128,13 +150,17 @@ class Release:
         frozen = {n: release.authenticate(os.path.join(versions, n), h) for n, h in self.frozen_sha256.items()}
         change = self.delta(src, frozen['sql_saga--%s.sql' % self.previous])
         repairs = Path(devops, self.repairs).read_text()
-        if GATE in repairs:
-            raise GeneratorError('the repairs fragment must not contain the integrity gate')
+        schema = Path(devops, self.schema).read_text() if self.schema else ''
+        if self.changed_tables and not self.schema:
+            raise GeneratorError('changed tables need a schema fragment')
+        if GATE in repairs or GATE in schema:
+            raise GeneratorError('the repairs and schema fragments must not contain the integrity gate')
         outputs = {}
         for source in self.sources:
             prior = '' if source == self.previous else self.embedded(
                 frozen['sql_saga--%s--%s.sql' % (source, self.previous)], source not in self.sources_without_inner_guards)
-            text = release.header(self.target) + '\n' + guard_prefix(self.target) + prior + change + repairs + GATE + '\n'
+            text = (release.header(self.target) + '\n' + guard_prefix(self.target) + prior + schema + change + repairs
+                    + GATE + '\n')
             if text.splitlines().count(GATE) != 1:
                 raise GeneratorError('expected exactly one integrity gate')
             outputs['sql_saga--%s--%s.sql' % (source, self.target)] = text
