@@ -1,7 +1,7 @@
 ---
 id: 52jxcn
 title: "Package sql_saga with pgxman"
-status: todo
+state: todo
 type: chore
 priority: "low"
 assignee: []

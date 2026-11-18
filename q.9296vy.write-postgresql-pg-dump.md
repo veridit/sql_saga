@@ -1,7 +1,7 @@
 ---
 id: 9296vy
 title: "Write the PostgreSQL pg_dump patch for extension table load order"
-status: todo
+state: todo
 type: feature
 priority: "medium"
 assignee: []

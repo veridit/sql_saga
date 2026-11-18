@@ -1,7 +1,7 @@
 ---
 id: 9aha4v
 title: "StatBus: pin sql_saga 1.7 and use the view delete protocol"
-status: todo
+state: todo
 type: chore
 priority: "medium"
 assignee: []

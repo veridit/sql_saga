@@ -1,7 +1,7 @@
 ---
 id: 6m0gcw
 title: "Design native regular-to-temporal foreign keys for PostgreSQL"
-status: todo
+state: todo
 type: spike
 priority: "low"
 assignee: []

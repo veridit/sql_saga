@@ -1,7 +1,7 @@
 ---
 id: xbxw8m
 title: "Test README.md examples automatically"
-status: todo
+state: todo
 type: feature
 priority: "low"
 assignee: []

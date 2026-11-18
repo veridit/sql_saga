@@ -1,7 +1,7 @@
 ---
 id: hsa1hp
 title: "Submit the parallel-restore bug report to pgsql-bugs"
-status: todo
+state: todo
 type: chore
 priority: "high"
 assignee: []

@@ -1,7 +1,7 @@
 ---
 id: 1bf9de
 title: "Decide whether history reads fail closed during a parallel restore"
-status: todo
+state: todo
 type: spike
 priority: "low"
 assignee: []

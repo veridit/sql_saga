@@ -1,7 +1,7 @@
 ---
 id: bqtzce
 title: "Repoint tmp/ design citations inside released function bodies"
-status: todo
+state: todo
 type: chore
 priority: "low"
 assignee: []

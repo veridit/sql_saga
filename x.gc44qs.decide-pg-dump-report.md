@@ -1,7 +1,7 @@
 ---
 id: gc44qs
 title: "Decide on a pg_dump report for CHECK constraints that read other tables"
-status: todo
+state: todo
 type: spike
 priority: "low"
 assignee: []

@@ -1,7 +1,7 @@
 ---
 id: 1rtz1q
 title: "Support parallel pg_restore once PostgreSQL fixes the load order"
-status: todo
+state: todo
 type: feature
 priority: "low"
 assignee: []
