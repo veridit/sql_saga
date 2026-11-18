@@ -6,6 +6,8 @@ type: spike
 priority: "low"
 assignee: []
 labels: ["upstream"]
+group: ""
+rank: "x"
 created: 2026-11-16
 updated: 2026-11-16
 ---

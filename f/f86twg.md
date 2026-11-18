@@ -6,6 +6,8 @@ type: spike
 priority: "medium"
 assignee: []
 labels: ["statbus"]
+group: ""
+rank: "zz"
 created: 2026-11-18
 updated: 2026-11-18
 ---

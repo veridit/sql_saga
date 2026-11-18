@@ -6,6 +6,8 @@ type: feature
 priority: "low"
 assignee: []
 labels: ["upstream"]
+group: ""
+rank: "v"
 created: 2026-11-16
 updated: 2026-11-16
 ---
