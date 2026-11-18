@@ -38,3 +38,4 @@ References: external_ident, tag_for_unit, unit_notes x legal_unit_id, establishm
 
 ## History
 - 2026-11-18T20:17 request 1 by jorgen
+- 2026-11-18T20:17 request 1 not delivered: no coordinator set (hug task coordinator NAME)
