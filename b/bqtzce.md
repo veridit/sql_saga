@@ -33,6 +33,8 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 ## Requests
 - 2026-11-18T20:18 request 1 by jorgen:
   I think we should try to get this into the next release so that we do the cleanup and we don't leave garbage lying around
+  resolved 2026-11-18T20:24 by sabertooth:
+    Folded into 1.8 (not yet tagged): the last three tmp/ citations (__api_add_system_versioning, __internal_drop_protection x2) now name doc/design/; the other two went with 1.8's earlier changes. git grep 'tmp/design' src is empty. The old-names table became one note for the frozen versions/ scripts, which cannot change.
 
 ## Notes
 
@@ -40,3 +42,4 @@ src/0e_internal_functions.sql:85 (__internal_ddl_command_affects_managed_object)
 ## History
 - 2026-11-18T20:18 request 1 by jorgen
 - 2026-11-18T20:18 request 1 not delivered: no coordinator set (hug task coordinator NAME)
+- 2026-11-18T20:24 resolved request 1 by sabertooth
