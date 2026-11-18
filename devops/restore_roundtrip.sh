@@ -53,7 +53,8 @@
 # row and history row must equal the source, and the restored database must equal an in-place
 # `ALTER EXTENSION sql_saga UPDATE` of the source (schema dump, history policy tokens normalized).
 # When the candidate's catalog layout is newer than the dump's, a plain pg_restore of the dump (no preinstalled old version) must fail at the era
-# data with the exact catalog_format CHECK ("restore old sql_saga dumps per doc/upgrade.md"), not a later
+# data first (old_dump_refusal: the catalog_format CHECK "restore old sql_saga dumps per doc/upgrade.md", or from 1.8
+# for an older dump the era COPY naming a dropped column), not a later
 # incidental error, and a --single-transaction attempt must leave no extension and no rows behind.
 # OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, <dir>/v1.1, <dir>/v1.2, <dir>/v1.7) instead of building.
 #
@@ -703,6 +704,17 @@ old_dump_normalized_dump() {
 # old_dump_strict <dump version> <candidate version>: true when the candidate's catalog layout (catalog_format) is
 # newer than the dump's, so a plain restore must be refused. Layouts: 1.3, 1.4 (1.4 to 1.7) and 1.8.
 old_dump_layout() { case "$1" in 1.0|1.1|1.2) echo 0 ;; 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; *) echo "$1" ;; esac; }
+# old_dump_refusal <dump version> <candidate version>: the first error of a plain restore. A dump made before 1.8 copies
+# into sql_saga.era the audit columns 1.8 dropped, so a 1.8+ candidate refuses its era COPY by the missing column
+# before any row reaches the catalog_format check; otherwise the named check refuses the first era row.
+version_before() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
+old_dump_refusal() {
+    if ! version_before "$2" 1.8 && version_before "$1" 1.8; then
+        echo 'column "audit_schema_name" of relation "era" does not exist'
+    else
+        echo 'new row for relation "era" violates check constraint "restore old sql_saga dumps per doc/upgrade.md"'
+    fi
+}
 old_dump_strict() { case "$2" in 1.0|1.1|1.2|'') return 1 ;; esac; [ "$(old_dump_layout "$1")" != "$(old_dump_layout "$2")" ]; }
 
 run_old_dump_case() {
@@ -752,9 +764,9 @@ run_old_dump_case() {
     elif old_dump_strict "$version" "$candidate_version"; then
         local first_err; first_err=$(grep -m1 -E 'ERROR' "$WORK/$case.plain.log" | sed 's/^.*ERROR: *//')
         case "$first_err" in
-            'new row for relation "era" violates check constraint "restore old sql_saga dumps per doc/upgrade.md"'*)
-                echo "    plain restore refused first by the catalog_format constraint: ok" ;;
-            *) echo "    FAIL: plain restore refused, but the first error is not the catalog_format constraint: $first_err"; ok=0 ;;
+            "$(old_dump_refusal "$version" "$candidate_version")"*)
+                echo "    plain restore refused first at the era rows: ok" ;;
+            *) echo "    FAIL: plain restore refused, but the first error is not '$(old_dump_refusal "$version" "$candidate_version")': $first_err"; ok=0 ;;
         esac
         out=$(psql -X -At -d "$dst" -c "SELECT (SELECT count(*) FROM pg_extension WHERE extname = 'sql_saga') || '|' || (SELECT count(*) FROM pg_namespace WHERE nspname = 'app')" 2>&1)
         if [ "$out" = "0|0" ]; then echo "    refused single-transaction restore left no extension, schema or rows: ok"
@@ -764,9 +776,9 @@ run_old_dump_case() {
         pg_restore --exit-on-error -d "$dst" "$dump" >"$WORK/$case.plain_serial.log" 2>&1
         first_err=$(grep -m1 -E 'ERROR' "$WORK/$case.plain_serial.log" | sed 's/^.*ERROR: *//')
         case "$first_err" in
-            'new row for relation "era" violates check constraint "restore old sql_saga dumps per doc/upgrade.md"'*)
-                echo "    serial plain restore refused first by the catalog_format constraint: ok" ;;
-            *) echo "    FAIL: serial plain restore: first error is not the catalog_format constraint: $first_err"; ok=0 ;;
+            "$(old_dump_refusal "$version" "$candidate_version")"*)
+                echo "    serial plain restore refused first at the era rows: ok" ;;
+            *) echo "    FAIL: serial plain restore: first error is not '$(old_dump_refusal "$version" "$candidate_version")': $first_err"; ok=0 ;;
         esac
         out=$(psql -X -At -d "$dst" -c "SELECT (SELECT extversion FROM pg_extension WHERE extname = 'sql_saga') || '|' || (SELECT count(*) FROM sql_saga.era)" 2>&1)
         if [ "$out" = "$candidate_version|0" ]; then echo "    serial refusal: candidate version, no era row loaded: ok"

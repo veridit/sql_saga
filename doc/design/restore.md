@@ -80,8 +80,9 @@ step gives them. Hence: always use the source's recorded version.
 Since 1.4, `sql_saga.era.catalog_format` has no default and a named check,
 `"restore old sql_saga dumps per doc/upgrade.md"`. It names the release that introduced the current era layout: 1.3,
 then 1.4 (1.4 to 1.7) and 1.8, which dropped the unused audit columns. A plain restore of a dump older than the
-catalog layout fails at
-the first catalog COPY with that name instead of loading old rows into a newer catalog; a current dump names the
+catalog layout fails at the first catalog COPY with that name instead of loading old rows into a newer catalog. (A
+pre-1.8 dump restored into 1.8 fails one step earlier, at the same COPY: it names the dropped column
+`audit_schema_name`.) A current dump names the
 column and restores plainly. The exact commands are in `doc/upgrade.md`, "Restore at the dump's own extension
 version". `pg_restore --clean` is not usable for old dumps: it drops the pre-created extension and recreates the
 default version.
