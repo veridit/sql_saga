@@ -18,6 +18,10 @@ New work: hug task new "short title" --goal "..." --purpose "..." --principle ".
 Describe a task with Goal (where we aim), Purpose (why), Principle (what we do
 and do not do), Relevant details, then Acceptance. Titles stay under 80
 characters; detail goes in the Goal.
+Only sql_saga's own work gets a task here. Work in another system (StatBus or any other repository) is tracked
+there, never here, even "for visibility".
+Write a task so the owner can decide from it alone: what situation, what happens now, the exact change proposed,
+why, how it would be done, and what it costs. A decision task names the question it needs answered.
 Epics: hug task set ID --parent EPIC; hug task promote ID N turns item N into
 its own task. hug task ls --epic EPIC shows an epic and its children.
 MCP tools (hug mcp): task_list, task_show, task_new, task_next, task_take,

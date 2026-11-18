@@ -5,7 +5,7 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
-## 2026-11-18: Version 1.8 (tag v1.8 at TAG_COMMIT, CI CI_RUN green)
+## 2026-11-18: Version 1.8 (tag v1.8 at ea6542e, CI 44390659266 green)
 - `sql_saga.era` loses `audit_schema_name` and `audit_table_name` (left from the periods extension, never written).
   The update drops them only when every row is NULL; catalog_format 1.4 -> 1.8, so a plain restore of an older dump
   is refused at the era COPY (it names the dropped column) and the documented old-dump procedure restores it
