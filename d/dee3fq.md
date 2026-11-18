@@ -1,15 +1,20 @@
 ---
 id: dee3fq
 title: "Remove the dead era audit columns; guard history tables' persistence"
-state: todo
+state: "doing"
 type: bug
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: ["clean-code"]
 group: ""
 rank: "zzh"
 created: 2026-11-18
 updated: 2026-11-18
+doing_since: "2026-11-18T16:48"
+stage: "active"
+model: "claude"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ Uses: src/0b_schema.sql:87-88, src/0e_internal_functions.sql:131 (__internal_ddl
 - [ ] Upgrade matrix and restore round trips green, including an old dump restored at its own version
 
 ## Notes
+
+
+## History
+- 2026-11-18T16:48 todo -> doing/active (take)
