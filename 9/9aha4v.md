@@ -34,6 +34,8 @@ References: external_ident, tag_for_unit, unit_notes x legal_unit_id, establishm
 ## Requests
 - 2026-11-18T20:17 request 1 by jorgen:
   This makes no sense to have here. It is long since done in StatBus. We should never make tickets in our system for things in another system
+  resolved 2026-11-18T21:46 by sabertooth:
+    Dropped. No more tasks here for work that belongs to StatBus.
 
 ## Notes
 
@@ -42,3 +44,4 @@ References: external_ident, tag_for_unit, unit_notes x legal_unit_id, establishm
 - 2026-11-18T20:17 request 1 by jorgen
 - 2026-11-18T20:17 request 1 not delivered: no coordinator set (hug task coordinator NAME)
 - 2026-11-18T21:46 todo -> dropped (drop)
+- 2026-11-18T21:46 resolved request 1 by sabertooth
