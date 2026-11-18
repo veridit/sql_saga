@@ -11,9 +11,9 @@ current_user`; the admin wrote both rows, then a regular user edits) show it is 
 
 | # | What the user does | What the writer column says today | Correct |
 |---|---|---|---|
-| 1 | Splits a year through the `for_portion_of` view | carried pieces: admin | admin |
+| 1 | Splits a year through the `for_portion_of` view | carried pieces: writer admin; but the remainder after the split gets a **new time** (the planner supplies the writer from the old row, the time from the column's `DEFAULT`) | admin, old time |
 | 2 | Re-saves unchanged data | nothing is written | nothing is written |
-| 3 | Sets 2025 to the admin's 2024 value | the two pieces coalesce into one row, credited to one of them | two rows, or one row credited to... (question 3) |
+| 3 | Sets 2025 to the admin's 2024 value | data changes, but the row still says admin (the earlier 1.7 probe also saw such pieces coalesce into one row, credited to one writer) | the user; two rows, not one (question 3) |
 | 4 | Direct `UPDATE` on the base table with `SET edit_by = 'admin'` | admin (forged) | the user |
 | 5 | Direct `UPDATE` on the base table, not touching `edit_by` | admin (`DEFAULT` only fills an `INSERT`) | the user |
 | 6 | The changed middle piece of the split in case 1 | **admin** (the view row starts from OLD, so the old writer travels in) | the user |
@@ -102,7 +102,7 @@ Both planners must do this: the PL/pgSQL one (`src/2k_temporal_merge_plan.sql`) 
 
 ## Tests (written first, failing on 1.8)
 
-`sql/161_provenance_columns.sql`, one scenario per row of the table above, plus: registration refuses a column
+`sql/161_provenance_columns.sql` (written; fails on 1.8 exactly in the rows above, re-save already right), one scenario per row, plus: registration refuses a column
 without `DEFAULT` and a column also listed as ephemeral; turning provenance off removes the trigger; a user cannot
 forge the marker (calls the trigger path from SQL, sets every plausible GUC); `check_integrity()` reports a missing
 or altered managed trigger.

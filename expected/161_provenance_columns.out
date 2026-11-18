@@ -1,0 +1,77 @@
+\set ECHO none
+-- registration
+ set_era_provenance_columns 
+----------------------------
+ 
+(1 row)
+
+ era_name | provenance_columns 
+----------+--------------------
+ valid    | {edit_by,edit_at}
+(1 row)
+
+-- start: both pieces by the admin
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B
+(2 rows)
+
+-- 1+6: the user splits 2024 through the view: carried pieces keep admin/1, the changed piece is the user's
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2024-04-01) | pv_161_admin | kept from A
+  1 | mid  | [2024-04-01,2024-07-01) | pv_161_user  | new
+  1 | A    | [2024-07-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B
+(4 rows)
+
+-- 2: a re-save of unchanged data writes nothing (edit_by and edit_at unchanged)
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B
+(2 rows)
+
+-- 3: the user sets 2025+ to the admin's 2024 value: two rows, not one credited to either
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | A    | [2025-01-01,infinity)   | pv_161_user  | new
+(2 rows)
+
+-- 4: a direct UPDATE that tries to set the writer gets the real writer
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B2   | [2025-01-01,infinity)   | pv_161_user  | new
+(2 rows)
+
+-- 5: a direct UPDATE that does not touch the writer still records the user
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B3   | [2025-01-01,infinity)   | pv_161_user  | new
+(2 rows)
+
+-- 7: temporal_merge PATCH by the user: the new piece is the user's, the shrunk carried piece stays admin/1
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2024-10-01) | pv_161_admin | kept from A
+  1 | late | [2024-10-01,2025-01-01) | pv_161_user  | new
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B
+(3 rows)
+
+-- 8: a source that supplies the writer (import on behalf of someone) is overwritten too
+ id | name |       valid_range       |   edit_by    |   edit_at   
+----+------+-------------------------+--------------+-------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B
+  2 | new  | [2024-01-01,infinity)   | pv_161_user  | new
+(3 rows)
+
+-- 9: registration refusals
+ERROR:  sql_saga: provenance column "note" of table "pv_161.lu" has no DEFAULT
+HINT:  sql_saga fills a provenance column from its DEFAULT on every write. Give it one, e.g. ALTER TABLE pv_161.lu ALTER COLUMN note SET DEFAULT ...
+ERROR:  sql_saga: column "edit_by" of table "pv_161.lu" is listed both as ephemeral and as provenance
+HINT:  A provenance column is already excluded from change detection; list it only in provenance_columns.
