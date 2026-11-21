@@ -33,7 +33,7 @@ Design: doc/design/provenance.md (decisions 1-6 of 2026-11-21 recorded there). F
 
 ## Acceptance
 - [x] A written proposal with the probe cases as tests, reviewed by the owner
-- [ ] Owner decision recorded in a note
+- [x] Owner decision recorded in a note
 
 ## Notes
 
