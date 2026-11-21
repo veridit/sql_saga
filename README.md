@@ -1279,7 +1279,8 @@ SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid',
 - `edit_comment` stays a plain ephemeral column: a change gets whatever comment the user left (kept, edited or
   wiped), and untouched pieces keep their own.
 
-A provenance column must also be ephemeral and have a `DEFAULT`. If a `NOT NULL` provenance column's `DEFAULT` gives
+A provenance column must also be ephemeral and have a `DEFAULT` (not a generated column). If the `DEFAULT` is later
+dropped, writes are refused and `check_integrity()` reports it. If a `NOT NULL` provenance column's `DEFAULT` gives
 NULL for the writing role, the write is refused naming the column and the role. The managed trigger is named
 `<era>_provenance`; only the table owner can write these columns directly, by disabling it in a migration's
 transaction (`check_integrity()` reports it if left disabled). The writer runs as the caller, so this records who
