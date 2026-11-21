@@ -1,15 +1,20 @@
 ---
 id: 9msfzx
 title: "Release 1.10: provenance fixes"
-state: todo
+state: "doing"
 type: bug
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzx"
 created: 2026-11-22
 updated: 2026-11-22
+doing_since: "2026-11-22T00:42"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "feature/provenance-columns"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ Situation: found 2026-11-21 by probing the 1.9 trigger (test 161 scenarios 15-17
 - [ ] Annotated tag on a CI-verified master commit
 
 ## Notes
+
+
+## History
+- 2026-11-22T00:42 todo -> doing/active (take)
