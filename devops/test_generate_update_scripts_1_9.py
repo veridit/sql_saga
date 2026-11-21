@@ -11,6 +11,10 @@ import direct_update
 R = gen.RELEASE
 
 ROOT = Path(__file__).resolve().parent.parent
+# The 1.9 generator is specified against the released v1.9 source tree (later releases change src/).
+import released_tree  # noqa: E402
+SRC = Path(released_tree.released_src('v1.9'))
+DEVOPS = Path(released_tree.released_devops('v1.9'))
 SCHEMA_MARK = '$era_provenance_columns_1_9$'
 FORMAT_MARK = '$catalog_format_1_9$'
 OLD_ADD_ERA = 'sql_saga.add_era(%s)' % gen.OLD_ADD_ERA_ARGS
@@ -19,12 +23,12 @@ OLD_API_ADD_ERA = 'sql_saga.__api_add_era(%s)' % gen.OLD_ADD_ERA_ARGS
 
 class Packaging(unittest.TestCase):
     def build(self, src=None, versions=None, devops=None):
-        return gen.build(str(src or ROOT / 'src'), str(versions or ROOT / 'versions'),
-                         str(devops or ROOT / 'devops'), '1.9')
+        return gen.build(str(src or SRC), str(versions or ROOT / 'versions'),
+                         str(devops or DEVOPS), '1.9')
 
     def copy(self, d, name):
         dst = Path(d) / name
-        shutil.copytree(ROOT / name, dst)
+        shutil.copytree({'src': SRC, 'devops': DEVOPS}.get(name, ROOT / name), dst)
         return dst
 
     def test_deterministic_framing_and_native_guards(self):
