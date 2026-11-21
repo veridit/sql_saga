@@ -1270,7 +1270,9 @@ BEGIN
                           WHERE (a.attrelid, a.attname) = (c.oid, renamed.new_name) AND a.attnum > 0 AND NOT a.attisdropped)
         LOOP
             UPDATE sql_saga.era AS e
-            SET ephemeral_columns = pg_catalog.array_replace(e.ephemeral_columns, target.old_name, renamed.new_name)
+            SET ephemeral_columns = pg_catalog.array_replace(e.ephemeral_columns, target.old_name, renamed.new_name),
+                -- 1.9: a provenance column is also an ephemeral column and follows the same rename.
+                provenance_columns = pg_catalog.array_replace(e.provenance_columns, target.old_name, renamed.new_name)
             WHERE (e.table_schema, e.table_name, e.era_name) = (target.table_schema, target.table_name, target.era_name);
             RAISE DEBUG 'sql_saga: era "%" on %.% follows the rename of ephemeral column "%" to "%"',
                 target.era_name, target.table_schema, target.table_name, target.old_name, renamed.new_name;

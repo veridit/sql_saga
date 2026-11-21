@@ -257,7 +257,7 @@ truncate, forged triggers, inheritance and partitions, predicated keys, plan cac
 `140`, `144`-`146`, `150`-`155` caller rights and security (API ownership, immediate caller, user-code rights,
 search_path hijack, history ownership, predicate identity, health caller, view trigger replay, worker entry guard,
 caller context), `149` PostgreSQL parity, `156` regular era named system_time, `157` for_portion_of view delete,
-`158` batched for_portion_of view writes, `159` batched current view inserts, `160` history table persistence). Benchmarks
+`158` batched for_portion_of view writes, `159` batched current view inserts, `160` history table persistence, `161` provenance columns). Benchmarks
 are selected by the word `benchmark` in the test name, not by number.
 
 **Self-Contained Test Template:**

@@ -161,6 +161,19 @@ HINT:  Remove it from provenance_columns first (set_era_provenance_columns).
 
 psql:sql/include/161_provenance_scenarios.sql:198: ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu2" is not an ephemeral column of era "valid"
 HINT:  Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.
+-- 14: a provenance column cannot be dropped, nor the managed trigger; a rename is followed
+psql:sql/include/161_provenance_scenarios.sql:206: ERROR:  cannot drop column "pv_161.lu3.edit_by" because it is a provenance column of period "valid"; remove it with set_era_provenance_columns first
+psql:sql/include/161_provenance_scenarios.sql:209: ERROR:  cannot drop trigger "valid_provenance" on table "pv_161.lu" because it fills the provenance columns of period "valid"; use set_era_provenance_columns
+         ephemeral_columns         |  provenance_columns  
+-----------------------------------+----------------------
+ {written_by,edit_at,edit_comment} | {written_by,edit_at}
+(1 row)
+
+ name | written_by  
+------+-------------
+ B7   | pv_161_user
+(1 row)
+
 ==== PL/pgSQL planner (sql_saga.temporal_merge.use_plpgsql_planner)
 -- registration
  set_era_provenance_columns 
@@ -323,3 +336,16 @@ HINT:  Remove it from provenance_columns first (set_era_provenance_columns).
 
 psql:sql/include/161_provenance_scenarios.sql:198: ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu2" is not an ephemeral column of era "valid"
 HINT:  Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.
+-- 14: a provenance column cannot be dropped, nor the managed trigger; a rename is followed
+psql:sql/include/161_provenance_scenarios.sql:206: ERROR:  cannot drop column "pv_161.lu3.edit_by" because it is a provenance column of period "valid"; remove it with set_era_provenance_columns first
+psql:sql/include/161_provenance_scenarios.sql:209: ERROR:  cannot drop trigger "valid_provenance" on table "pv_161.lu" because it fills the provenance columns of period "valid"; use set_era_provenance_columns
+         ephemeral_columns         |  provenance_columns  
+-----------------------------------+----------------------
+ {written_by,edit_at,edit_comment} | {written_by,edit_at}
+(1 row)
+
+ name | written_by  
+------+-------------
+ B7   | pv_161_user
+(1 row)
+

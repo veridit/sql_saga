@@ -1250,6 +1250,42 @@ SELECT sql_saga.set_era_ephemeral_columns(
 );
 ```
 
+#### Who Changed It and When (Provenance Columns, sql_saga 1.9)
+
+An ephemeral column keeps whatever value it is given, so a writer column like `edit_by_user_id` is only right for a
+brand-new row: a change through a view or `temporal_merge` keeps the previous writer, and anyone can set it. Declare
+writer and time as **provenance columns** and sql_saga fills them from each column's `DEFAULT`, evaluated as the role
+running the write:
+
+```sql
+CREATE TABLE legal_unit (
+  id INTEGER NOT NULL,
+  name VARCHAR NOT NULL,
+  edit_by_user_id INTEGER NOT NULL DEFAULT auth.uid(),
+  edit_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
+  edit_comment TEXT,
+  valid_range daterange NOT NULL
+);
+SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid',
+    ephemeral_columns  => ARRAY['edit_by_user_id', 'edit_at', 'edit_comment'],
+    provenance_columns => ARRAY['edit_by_user_id', 'edit_at']);
+-- on an existing era: set_era_provenance_columns('legal_unit', 'valid', ARRAY[...]); NULL removes it
+```
+
+- A piece whose data is new or changed gets fresh values; a value the writer supplies is replaced.
+- A piece that only moved because its neighbour was split or trimmed keeps its writer and time.
+- Two adjacent pieces with different writers are never merged into one row.
+- A direct `UPDATE` that only moves the period keeps writer and time.
+- `edit_comment` stays a plain ephemeral column: a change gets whatever comment the user left (kept, edited or
+  wiped), and untouched pieces keep their own.
+
+A provenance column must also be ephemeral and have a `DEFAULT`. If a `NOT NULL` provenance column's `DEFAULT` gives
+NULL for the writing role, the write is refused naming the column and the role. The managed trigger is named
+`<era>_provenance`; only the table owner can write these columns directly, by disabling it in a migration's
+transaction (`check_integrity()` reports it if left disabled). The writer runs as the caller, so this records who
+wrote on every normal path but does not stop a writer who deliberately bypasses it. See
+[doc/design/provenance.md](doc/design/provenance.md).
+
 #### Alternative: REST/Human-Friendly Tables with Synchronized Columns
 
 For compatibility with REST APIs like PostgREST, or for human-readable queries, you can add synchronized `valid_from`, `valid_until`, and optional `valid_to` columns. These are automatically kept in sync with the authoritative `valid_range` column via triggers:

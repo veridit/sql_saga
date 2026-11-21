@@ -198,4 +198,23 @@ SELECT sql_saga.drop_era('lu2');
 SELECT sql_saga.add_era('lu2', 'valid_range', 'valid', provenance_columns => ARRAY['edit_by']);
 ROLLBACK TO SAVEPOINT s;
 
+\echo '-- 14: a provenance column cannot be dropped, nor the managed trigger; a rename is followed'
+SAVEPOINT s;
+-- lu's views depend on every column, so the column guard is shown on a table without views.
+CREATE TABLE lu3 (id int NOT NULL, valid_range daterange NOT NULL, edit_by name NOT NULL DEFAULT current_user);
+SELECT sql_saga.add_era('lu3', 'valid_range', ephemeral_columns => ARRAY['edit_by'], provenance_columns => ARRAY['edit_by']) AS ignored \gset
+ALTER TABLE lu3 DROP COLUMN edit_by;
+ROLLBACK TO SAVEPOINT s;
+SAVEPOINT s;
+DROP TRIGGER valid_provenance ON lu;
+ROLLBACK TO SAVEPOINT s;
+SAVEPOINT s;
+ALTER TABLE lu RENAME COLUMN edit_by TO written_by;
+SELECT ephemeral_columns, provenance_columns FROM sql_saga.era WHERE table_name = 'lu';
+SET ROLE pv_161_user;
+UPDATE lu SET name = 'B7' WHERE valid_from = '2025-01-01';
+RESET ROLE;
+SELECT name, written_by FROM lu WHERE valid_from = '2025-01-01';
+ROLLBACK TO SAVEPOINT s;
+
 ROLLBACK;
