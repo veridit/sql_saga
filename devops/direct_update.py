@@ -44,6 +44,46 @@ def routine_key(statement):
 _TABLE_RE = re.compile(r'CREATE\s+TABLE\s+(sql_saga\.[A-Za-z_][A-Za-z0-9_]*)\s*\(', re.I)
 
 
+def replace_routine_sql(old_key, target):
+    """Refuse when the site changed the old routine's EXECUTE privileges, then drop it (its replacement follows).
+
+    Every routine sql_saga ships has the privileges a fresh install gives it: the owner, plus PUBLIC for a public
+    management function. Anything else is a site decision that DROP and CREATE would discard silently, so the update
+    stops and names the statements that restore it on the new signature afterwards (as the 1.2 update did).
+    """
+    tag = re.sub(r'[^a-z0-9]+', '_', old_key.split('(')[0].split('.')[-1])
+    # A public management function is executable by PUBLIC on a fresh install; a private worker is not.
+    public = 'false' if old_key.split('(')[0].split('.')[-1].startswith('__') else 'true'
+    template = '''DO $replace_@TAG@$
+DECLARE
+    old_proc CONSTANT text := '@OLD@';
+    grants text;
+BEGIN
+    IF pg_catalog.to_regprocedure(old_proc) IS NULL THEN
+        RETURN;
+    END IF;
+    SELECT pg_catalog.string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::pg_catalog.regrole::text END
+                                 || CASE WHEN a.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END, ', ' ORDER BY a.grantee)
+    INTO grants
+    FROM pg_catalog.pg_proc AS p
+    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a
+    WHERE p.oid = pg_catalog.to_regprocedure(old_proc)
+      AND a.privilege_type = 'EXECUTE'
+      AND a.grantee OPERATOR(pg_catalog.<>) p.proowner
+      AND NOT (a.grantee = 0 AND NOT a.is_grantable AND @PUBLIC@);
+    IF grants IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: the @TARGET@ update replaces % with a new signature and would lose its EXECUTE privileges for %', old_proc, grants
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Revoke them, update, then grant them again on the new signature.';
+    END IF;
+    EXECUTE 'DROP FUNCTION ' || old_proc;
+END;
+$replace_@TAG@$;
+'''
+    return (template.replace('@TAG@', tag).replace('@OLD@', old_key).replace('@PUBLIC@', public)
+            .replace('@TARGET@', target))
+
+
 def table_key(statement):
     m = _TABLE_RE.match(g._core(statement))
     return m.group(1) if m else None
@@ -78,6 +118,13 @@ class Release:
     sources_without_inner_guards: tuple = ()  # embedded updates with no native guard after their opening prefix
     schema: str = None            # fragment in devops/ with the catalog DDL, loaded after the routines
     changed_tables: tuple = ()    # sql_saga tables whose CREATE TABLE the schema fragment changes
+    # Routines whose signature changes: ((old key, new key), ...). The update refuses when the site changed the old
+    # routine's EXECUTE privileges (dropping it would lose them silently), drops it and creates the new one; the new key
+    # must also be in routine_manifest and new_routines.
+    replaced_routines: tuple = ()
+    # Routines whose COMMENT ON FUNCTION the release adds or changes (routine names, e.g. 'sql_saga.add_era'). The
+    # statements are taken from src/ and emitted after the routines; any other COMMENT change fails the build.
+    commented_routines: tuple = ()
 
     @property
     def native_guard_anchors(self):
@@ -89,10 +136,26 @@ class Release:
         old = g.split_sql(frozen)
         current = g.split_sql(''.join(p.read_text() for p in sorted(Path(src).glob('[0-9][a-z]_*.sql'))))
 
+        old_keys = {o for o, _ in self.replaced_routines}
+
         def remainder(statements):
             return [g._core(s).strip() for s in statements
-                    if routine_key(s) not in self.routine_manifest and table_key(s) not in self.changed_tables]
-        if remainder(old) != [s for s in remainder(current) if s not in self.new_privileges]:
+                    if routine_key(s) not in self.routine_manifest and routine_key(s) not in old_keys
+                    and table_key(s) not in self.changed_tables]
+
+        def mentions_replaced(s):
+            return any(k.split('(')[0] + '(' in s for k in old_keys)
+
+        def comment_of(s):
+            m = re.match(r'COMMENT ON (?:FUNCTION|PROCEDURE) (sql_saga\.[A-Za-z_0-9]+)\b', s)
+            return m.group(1) if m and m.group(1) in self.commented_routines else None
+        comments = [s for s in remainder(current) if comment_of(s)]
+        if sorted({comment_of(s) for s in comments}) != sorted(self.commented_routines):
+            raise GeneratorError('declared %s comments not all found in the source' % self.target)
+        declared = set(self.new_privileges) | set(comments)
+        old_rest = [s for s in remainder(old)
+                    if not (mentions_replaced(s) and s not in remainder(current)) and not comment_of(s)]
+        if old_rest != [s for s in remainder(current) if s not in declared]:
             raise GeneratorError('source changes outside the %s routine manifest' % self.target)
         if sorted(s for s in remainder(current) if s in self.new_privileges) != sorted(self.new_privileges):
             raise GeneratorError('expected exactly the %s privilege statements on new routines' % self.target)
@@ -105,6 +168,14 @@ class Release:
                 raise GeneratorError('changed table unchanged since %s: %s' % (self.previous, table))
 
         chunks = []
+        for old_key, new_key in self.replaced_routines:
+            if new_key not in self.new_routines:
+                raise GeneratorError('replacement routine must be a new routine: ' + new_key)
+            if not [s for s in old if routine_key(s) == old_key]:
+                raise GeneratorError('replaced routine not in %s: %s' % (self.previous, old_key))
+            if [s for s in current if routine_key(s) == old_key]:
+                raise GeneratorError('replaced routine still in the source: ' + old_key)
+            chunks.append(replace_routine_sql(old_key, self.target))
         for key in self.routine_manifest:
             before = [s for s in old if routine_key(s) == key]
             after = [s for s in current if routine_key(s) == key]
@@ -124,6 +195,8 @@ class Release:
                     raise GeneratorError('manifest routine unchanged since %s: %s' % (self.previous, key))
             chunks.append(g.to_create_or_replace(after[0]))
         for statement in self.new_privileges:
+            chunks.append(statement + '\n')
+        for statement in comments:
             chunks.append(statement + '\n')
         return ''.join(chunks)
 

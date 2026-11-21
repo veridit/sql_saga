@@ -85,13 +85,14 @@ CREATE TABLE sql_saga.era (
     sync_temporal_trg_name name,
     sync_temporal_trg_function_name name,
     ephemeral_columns name[] DEFAULT NULL, -- Columns excluded from coalescing comparison (e.g., edit_at, edit_by_user_id)
-    -- provenance_columns: ephemeral columns sql_saga fills from their DEFAULT on changed pieces and keeps on untouched
-    -- ones (1.9, doc/design/provenance.md). Each is also in ephemeral_columns. NULL: none.
-    provenance_columns name[] DEFAULT NULL,
     -- catalog_format: the sql_saga release that introduced the current catalog layout. No default, on purpose:
     -- a dump of an older (or newer) catalog restored into this install fails at the first era row. A release that
     -- changes the catalog layout updates this value and the CHECK in its upgrade script; others leave both alone.
     catalog_format text,
+    -- provenance_columns: ephemeral columns sql_saga fills from their DEFAULT on changed pieces and keeps on untouched
+    -- ones (1.9, doc/design/provenance.md). Each is also in ephemeral_columns. NULL: none. After catalog_format because
+    -- the 1.9 update can only append it (ALTER TABLE ... ADD COLUMN), and a fresh install must have the same layout.
+    provenance_columns name[] DEFAULT NULL,
 
     PRIMARY KEY (table_schema, table_name, era_name),
 
