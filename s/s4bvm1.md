@@ -1,15 +1,20 @@
 ---
 id: s4bvm1
 title: "Build provenance columns (release 1.9)"
-state: todo
+state: "doing"
 type: feature
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzq"
 created: 2026-11-21
 updated: 2026-11-21
+doing_since: "2026-11-21T20:15"
+stage: "active"
+model: "claude"
+branch: "feature/provenance-columns"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ Branch feature/provenance-columns. Catalog: sql_saga.era.provenance_columns name
 - [ ] Benchmarks 100 and 101 compared before and after, numbers recorded
 
 ## Notes
+
+
+## History
+- 2026-11-21T20:15 todo -> doing/active (take)
