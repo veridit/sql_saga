@@ -1146,6 +1146,22 @@ BEGIN
             pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.trigger_name);
     END LOOP;
 
+    /* Each provenance column keeps the DEFAULT it was registered with; without one every write is refused. */
+    FOR r IN
+        SELECT e.table_schema, e.table_name, e.era_name, p.col
+        FROM sql_saga.era AS e
+        CROSS JOIN LATERAL pg_catalog.unnest(e.provenance_columns) AS p(col)
+        JOIN pg_catalog.pg_namespace AS n ON n.nspname = e.table_schema
+        JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, e.table_name)
+        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (c.oid, p.col) AND NOT a.attisdropped
+        WHERE NOT a.atthasdef OR a.attgenerated <> ''
+        ORDER BY e.table_schema, e.table_name, e.era_name, p.col
+    LOOP
+        RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": provenance column % has no DEFAULT; repair with ALTER TABLE % ALTER COLUMN % SET DEFAULT ..., or set_era_provenance_columns',
+            r.era_name, pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.col),
+            pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.col);
+    END LOOP;
+
     /* SYSTEM_TIME invariants have the highest managed-object priority. */
     FOR r IN
         SELECT ste.*, e.range_column_name

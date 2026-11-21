@@ -34,7 +34,7 @@ DECLARE
     v_col name;
     v_default text;
     v_notnull boolean;
-    v_value text;
+    v_value jsonb;
     v_set jsonb := '{}'::jsonb;
 BEGIN
     SELECT e.provenance_columns, e.ephemeral_columns
@@ -71,23 +71,28 @@ BEGIN
     END IF;
 
     FOREACH v_col IN ARRAY v_provenance LOOP
-        SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid), a.attnotnull
+        SELECT CASE WHEN a.attgenerated = '' THEN pg_catalog.pg_get_expr(d.adbin, d.adrelid) END, a.attnotnull
         INTO v_default, v_notnull
         FROM pg_catalog.pg_attribute AS a
         LEFT JOIN pg_catalog.pg_attrdef AS d ON (d.adrelid, d.adnum) = (a.attrelid, a.attnum)
         WHERE (a.attrelid, a.attname) = (TG_RELID, v_col) AND NOT a.attisdropped;
         IF v_default IS NULL THEN
-            v_value := NULL;
-        ELSE
-            EXECUTE pg_catalog.format('SELECT (%s)::text', v_default) INTO v_value;
+            -- Registration requires a DEFAULT; one dropped later must not silently record NULL (or a forged value).
+            RAISE EXCEPTION 'sql_saga: provenance column "%" of table "%" has no DEFAULT',
+                v_col, pg_catalog.format('%s.%s', TG_TABLE_SCHEMA, TG_TABLE_NAME)
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = pg_catalog.format('sql_saga fills a provenance column from its DEFAULT. Give it one again (ALTER TABLE %s ALTER COLUMN %s SET DEFAULT ...), or remove it with set_era_provenance_columns.',
+                                               pg_catalog.format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME), pg_catalog.quote_ident(v_col));
         END IF;
-        IF v_value IS NULL AND v_notnull THEN
+        -- As jsonb of the column's own type: through text, a jsonb DEFAULT would become a JSON string.
+        EXECUTE pg_catalog.format('SELECT pg_catalog.to_jsonb(%s)', v_default) INTO v_value;
+        IF (v_value IS NULL OR v_value = 'null'::jsonb) AND v_notnull THEN
             RAISE EXCEPTION 'sql_saga: provenance column "%" of table "%": its DEFAULT gave NULL for the writing role %',
                 v_col, pg_catalog.format('%s.%s', TG_TABLE_SCHEMA, TG_TABLE_NAME), current_user
                 USING ERRCODE = 'not_null_violation',
                       HINT = 'The DEFAULT must name the writer for every role that writes this table.';
         END IF;
-        v_set := v_set || pg_catalog.jsonb_build_object(v_col, v_value);
+        v_set := v_set || pg_catalog.jsonb_build_object(v_col, coalesce(v_value, 'null'::jsonb));
     END LOOP;
     NEW := pg_catalog.jsonb_populate_record(NEW, v_set);
     RETURN NEW;
@@ -135,6 +140,13 @@ BEGIN
                 v_col, sql_saga.__internal_display_name(table_oid), era_name
                 USING ERRCODE = 'invalid_parameter_value',
                       HINT = 'Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.';
+        END IF;
+        IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                   WHERE (a.attrelid, a.attname) = (table_oid, v_col) AND a.attgenerated <> '') THEN
+            -- pg_attrdef holds generation expressions too, so this comes before the DEFAULT check.
+            RAISE EXCEPTION 'sql_saga: provenance column "%" of table "%" is a generated column', v_col, sql_saga.__internal_display_name(table_oid)
+                USING ERRCODE = 'invalid_parameter_value',
+                      HINT = 'sql_saga fills a provenance column from its DEFAULT; a generated column has an expression instead.';
         END IF;
         IF NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
                        JOIN pg_catalog.pg_attrdef AS d ON (d.adrelid, d.adnum) = (a.attrelid, a.attnum)

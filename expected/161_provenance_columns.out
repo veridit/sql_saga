@@ -174,6 +174,29 @@ psql:sql/include/161_provenance_scenarios.sql:209: ERROR:  cannot drop trigger "
  B7   | pv_161_user
 (1 row)
 
+-- 15: a provenance value keeps its column's type (jsonb object, array, numeric scale, text with quotes)
+        edit_info         | info_kind | edit_tags | tags | edit_num | edit_txt 
+--------------------------+-----------+-----------+------+----------+----------
+ {"n": 1, "by": "writer"} | object    | {a,"b,c"} |    2 |     1.10 | q"u\o
+(1 row)
+
+        edit_info         | info_kind 
+--------------------------+-----------
+ {"n": 1, "by": "writer"} | object
+(1 row)
+
+-- 16: a DEFAULT dropped after registration: writes are refused rather than storing NULL, and check_integrity reports it
+psql:sql/include/161_provenance_scenarios.sql:242: ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu5" has no DEFAULT
+HINT:  sql_saga fills a provenance column from its DEFAULT. Give it one again (ALTER TABLE pv_161.lu5 ALTER COLUMN edit_by SET DEFAULT ...), or remove it with set_era_provenance_columns.
+ rows 
+------
+    0
+(1 row)
+
+psql:sql/include/161_provenance_scenarios.sql:245: ERROR:  sql_saga: integrity violation for era "valid" on table "pv_161.lu5": provenance column edit_by has no DEFAULT; repair with ALTER TABLE pv_161.lu5 ALTER COLUMN edit_by SET DEFAULT ..., or set_era_provenance_columns
+-- 17: a generated column cannot be a provenance column (its expression is not a DEFAULT)
+psql:sql/include/161_provenance_scenarios.sql:252: ERROR:  sql_saga: provenance column "edit_mark" of table "pv_161.lu6" is a generated column
+HINT:  sql_saga fills a provenance column from its DEFAULT; a generated column has an expression instead.
 ==== PL/pgSQL planner (sql_saga.temporal_merge.use_plpgsql_planner)
 -- registration
  set_era_provenance_columns 
@@ -349,3 +372,26 @@ psql:sql/include/161_provenance_scenarios.sql:209: ERROR:  cannot drop trigger "
  B7   | pv_161_user
 (1 row)
 
+-- 15: a provenance value keeps its column's type (jsonb object, array, numeric scale, text with quotes)
+        edit_info         | info_kind | edit_tags | tags | edit_num | edit_txt 
+--------------------------+-----------+-----------+------+----------+----------
+ {"n": 1, "by": "writer"} | object    | {a,"b,c"} |    2 |     1.10 | q"u\o
+(1 row)
+
+        edit_info         | info_kind 
+--------------------------+-----------
+ {"n": 1, "by": "writer"} | object
+(1 row)
+
+-- 16: a DEFAULT dropped after registration: writes are refused rather than storing NULL, and check_integrity reports it
+psql:sql/include/161_provenance_scenarios.sql:242: ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu5" has no DEFAULT
+HINT:  sql_saga fills a provenance column from its DEFAULT. Give it one again (ALTER TABLE pv_161.lu5 ALTER COLUMN edit_by SET DEFAULT ...), or remove it with set_era_provenance_columns.
+ rows 
+------
+    0
+(1 row)
+
+psql:sql/include/161_provenance_scenarios.sql:245: ERROR:  sql_saga: integrity violation for era "valid" on table "pv_161.lu5": provenance column edit_by has no DEFAULT; repair with ALTER TABLE pv_161.lu5 ALTER COLUMN edit_by SET DEFAULT ..., or set_era_provenance_columns
+-- 17: a generated column cannot be a provenance column (its expression is not a DEFAULT)
+psql:sql/include/161_provenance_scenarios.sql:252: ERROR:  sql_saga: provenance column "edit_mark" of table "pv_161.lu6" is a generated column
+HINT:  sql_saga fills a provenance column from its DEFAULT; a generated column has an expression instead.

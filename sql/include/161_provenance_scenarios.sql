@@ -217,4 +217,39 @@ RESET ROLE;
 SELECT name, written_by FROM lu WHERE valid_from = '2025-01-01';
 ROLLBACK TO SAVEPOINT s;
 
+\echo '-- 15: a provenance value keeps its column''s type (jsonb object, array, numeric scale, text with quotes)'
+SAVEPOINT s;
+CREATE TABLE lu4 (id int NOT NULL, payload text, valid_range daterange NOT NULL,
+    edit_info jsonb NOT NULL DEFAULT jsonb_build_object('by', 'writer', 'n', 1),
+    edit_tags text[] NOT NULL DEFAULT ARRAY['a', 'b,c'],
+    edit_num numeric NOT NULL DEFAULT 1.10,
+    edit_txt text NOT NULL DEFAULT 'q"u\o');
+SELECT sql_saga.add_era('lu4', 'valid_range', ephemeral_columns => ARRAY['edit_info', 'edit_tags', 'edit_num', 'edit_txt'],
+                        provenance_columns => ARRAY['edit_info', 'edit_tags', 'edit_num', 'edit_txt']) AS ignored \gset
+INSERT INTO lu4 (id, payload, valid_range, edit_info, edit_tags, edit_num, edit_txt)
+VALUES (1, 'a', '[2024-01-01,infinity)', '"forged"', '{forged}', 9, 'forged');
+SELECT edit_info, jsonb_typeof(edit_info) AS info_kind, edit_tags, cardinality(edit_tags) AS tags, edit_num, edit_txt FROM lu4;
+UPDATE lu4 SET payload = 'b', edit_info = '[]';
+SELECT edit_info, jsonb_typeof(edit_info) AS info_kind FROM lu4;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 16: a DEFAULT dropped after registration: writes are refused rather than storing NULL, and check_integrity reports it'
+SAVEPOINT s;
+CREATE TABLE lu5 (id int NOT NULL, payload text, valid_range daterange NOT NULL, edit_by name DEFAULT current_user);
+SELECT sql_saga.add_era('lu5', 'valid_range', ephemeral_columns => ARRAY['edit_by'], provenance_columns => ARRAY['edit_by']) AS ignored \gset
+ALTER TABLE lu5 ALTER COLUMN edit_by DROP DEFAULT;
+SAVEPOINT w;
+INSERT INTO lu5 (id, payload, valid_range, edit_by) VALUES (1, 'a', '[2024-01-01,infinity)', 'forged');
+ROLLBACK TO SAVEPOINT w;
+SELECT count(*) AS rows FROM lu5;
+SELECT sql_saga.check_integrity();
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 17: a generated column cannot be a provenance column (its expression is not a DEFAULT)'
+SAVEPOINT s;
+CREATE TABLE lu6 (id int NOT NULL, payload text, valid_range daterange NOT NULL,
+    edit_mark text GENERATED ALWAYS AS (payload || '!') STORED);
+SELECT sql_saga.add_era('lu6', 'valid_range', ephemeral_columns => ARRAY['edit_mark'], provenance_columns => ARRAY['edit_mark']);
+ROLLBACK TO SAVEPOINT s;
+
 ROLLBACK;
