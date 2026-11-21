@@ -1,6 +1,7 @@
 # Provenance columns: who changed each piece of history, and when
 
-Status: **proposal, not built**. Hug task f86twg. Needs the owner's answers to the questions at the end before any code.
+Status: **proposal, not built**. Hug task f86twg. Questions 1-5 answered by the owner with StatBus on 2026-11-21
+(see "Decisions"); one question on annotation columns is open.
 
 ## The situation
 
@@ -52,6 +53,11 @@ SELECT sql_saga.set_era_provenance_columns('lu', 'valid', NULL);   -- turn it of
   `catalog_format` bump (1.9), update scripts and the old-dump procedure, like 1.8.
 - Rename and drop of a provenance column follow the era's other column lists (rename following; drop refused while
   registered).
+- **Annotation columns** (`annotation_columns => ARRAY['edit_comment']`, same setter shape): caller-written per
+  write, like a change comment. A `DEFAULT` cannot fill them, and treating them as ephemeral is what leaks today. They
+  follow the same changed/carried split as provenance columns: a carried piece keeps its own value; a changed or new
+  piece gets the value the caller supplied in this write, or NULL, never the old row's. Also excluded from change
+  detection. A column is in at most one of `ephemeral_columns`, `provenance_columns` and `annotation_columns`.
 
 ## How it works
 
@@ -62,7 +68,14 @@ Three parts.
 
 - *written by sql_saga's executor* (see 2): leave the values as written (the old piece's for a carried piece, `DEFAULT` for a changed one);
 - *otherwise*: overwrite every provenance column with its `DEFAULT`, whatever the statement supplied
-  (cases 4 and 5 become correct; forging is impossible);
+  (cases 4 and 5 become correct; forging is impossible). The `DEFAULT` is evaluated as the role running the write;
+  sql_saga never changes role (D0/D1), so the rule does not depend on how an application chooses that role. If a
+  provenance column is `NOT NULL` and its `DEFAULT` gives NULL for that role, the write fails with
+  `provenance column "edit_by_user_id" of "public.legal_unit": its DEFAULT gave NULL for the writing role postgres`
+  instead of the generic not-null error;
+- annotation columns on a direct `UPDATE` that changes data: kept if the value differs from OLD's, otherwise NULL
+  (the same rule as for view writes, below), so an old comment never stays on changed data. On a direct `INSERT`
+  they are what the statement supplied;
 - an `UPDATE` that changes no non-provenance column is a no-op for provenance too (keep OLD values), so a re-save
   stays a re-save (case 2).
 
@@ -98,6 +111,25 @@ the management caller stack already is (`caller_context` in `src/sql_saga.c`).
 Both planners must do this: the PL/pgSQL one (`src/2k_temporal_merge_plan.sql`) and the native one
 (`native/src/sweep.rs`, ephemeral merge and `coalesce_segments`).
 
+## Migrations and backfills
+
+Only the table owner can write provenance values directly, by disabling the managed trigger inside the migration's
+transaction:
+
+```sql
+BEGIN;
+ALTER TABLE public.legal_unit DISABLE TRIGGER valid_provenance;
+UPDATE public.legal_unit SET edit_by_user_id = 42 WHERE ...;
+ALTER TABLE public.legal_unit ENABLE TRIGGER valid_provenance;
+COMMIT;
+```
+
+The trigger is named `<era name>_provenance` (`valid_provenance` for the era `valid`). `ALTER TABLE ... DISABLE
+TRIGGER` requires ownership of the table and takes an `ACCESS EXCLUSIVE` lock, so no other session writes while the
+trigger is off; if anything fails, the transaction rolls the disable back with the rest. If a trigger is left disabled,
+`check_integrity()` reports it with the repair `ALTER TABLE ... ENABLE TRIGGER`, as it does for disabled
+foreign-key triggers.
+
 ## Cost
 
 - One row trigger per write on registered tables (StatBus: a handful of tables). It is a few assignments; to be
@@ -112,14 +144,25 @@ without `DEFAULT` and a column also listed as ephemeral; turning provenance off 
 forge the marker (calls the trigger path from SQL, sets every plausible GUC); `check_integrity()` reports a missing
 or altered managed trigger.
 
-## Questions for the owner
+## Decisions (owner with StatBus, 2026-11-21)
 
-1. **Name.** `provenance_columns` on the era, and `set_era_provenance_columns(...)`. Good?
-2. **Source values.** If an import or `temporal_merge` source supplies `edit_by_user_id` (say, an import on behalf of
-   another user), is it overwritten like a direct `UPDATE` (proposal: yes, always; the column records who actually
-   wrote) or kept?
-3. **Coalescing.** User sets 2025 to exactly the admin's 2024 value. Keep two rows with different writers (proposal),
-   or merge them and credit the merged row to the user who just wrote?
-4. **`edit_at` on carried pieces.** Proposal: carried pieces keep both the old writer and the old time. Agree?
-5. **Direct writes to the base table by StatBus code that sets these columns on purpose** (migrations, backfills):
-   with this design that is impossible except as the table owner with the trigger disabled. Is that acceptable?
+1. **Name:** `provenance_columns` and `set_era_provenance_columns(...)`. Yes.
+2. **Source values:** always overwritten with the column's `DEFAULT`. StatBus makes the `DEFAULT` name the real
+   writer on every write path (today its import worker runs as `postgres`, where `auth.uid()` is NULL; StatBus fixes
+   that before adopting 1.9). sql_saga's rule must not depend on how: it evaluates the `DEFAULT` as the writing role
+   and fails with the message above when a `NOT NULL` column would get NULL.
+3. **Coalescing:** never merge pieces with different provenance. Yes.
+4. **Carried pieces** keep both writer and time. Yes.
+5. **Backfills** only as the table owner with the trigger disabled in the migration's transaction, documented above.
+   Yes.
+6. **`edit_comment`** (raised by StatBus): a carried piece keeps its own comment; a changed piece must not inherit
+   the old row's. Covered by annotation columns.
+
+## Open question
+
+On a write through the `for_portion_of` view, the view's row trigger sees only OLD and NEW (PostgreSQL does not tell
+an `INSTEAD OF` trigger which columns the SET list named, and the base-table trigger sees the executor's own later
+statement). So for a view write "a new comment" means: NEW's comment differs from OLD's. A user who writes the same
+comment again is indistinguishable from one who wrote none. Proposal: a changed piece whose comment equals the old
+one stores NULL, so an old comment never leaks onto a change. Alternative: refuse such a write ("a change must carry
+a new comment"). Which does StatBus want?

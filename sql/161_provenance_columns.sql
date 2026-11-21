@@ -18,7 +18,8 @@ CREATE SEQUENCE edit_seq;
 GRANT USAGE ON SEQUENCE edit_seq TO pv_161_admin, pv_161_user;
 CREATE TABLE lu (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date,
                  edit_by name NOT NULL DEFAULT current_user,
-                 edit_at bigint NOT NULL DEFAULT nextval('pv_161.edit_seq'));
+                 edit_at bigint NOT NULL DEFAULT nextval('pv_161.edit_seq'),
+                 edit_comment text);
 SELECT sql_saga.add_era('lu', 'valid_range', 'valid', valid_from_column_name => 'valid_from',
                         valid_until_column_name => 'valid_until') AS ignored \gset
 SELECT sql_saga.add_unique_key('lu', ARRAY['id'], key_type => 'primary') AS ignored \gset
@@ -27,13 +28,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON lu, lu__for_portion_of_valid TO pv_161_a
 CREATE TABLE started (name text, edit_at bigint);
 CREATE VIEW history AS
 SELECT id, name, valid_range, edit_by,
-       coalesce((SELECT 'kept from ' || s.name FROM started AS s WHERE s.edit_at = lu.edit_at), 'new') AS edit_at
+       coalesce((SELECT 'kept from ' || s.name FROM started AS s WHERE s.edit_at = lu.edit_at), 'new') AS edit_at,
+       edit_comment
 FROM lu ORDER BY id, valid_from;
 
 \echo '-- registration'
 SAVEPOINT reg;
 SELECT sql_saga.set_era_provenance_columns('lu', 'valid', ARRAY['edit_by', 'edit_at']);
-SELECT era_name, provenance_columns FROM sql_saga.era WHERE table_name = 'lu';
+SELECT sql_saga.set_era_annotation_columns('lu', 'valid', ARRAY['edit_comment']);
+SELECT era_name, provenance_columns, annotation_columns FROM sql_saga.era WHERE table_name = 'lu';
 \if :ERROR
 ROLLBACK TO SAVEPOINT reg;
 \else
@@ -42,8 +45,8 @@ RELEASE SAVEPOINT reg;
 
 -- The admin writes the starting history: two pieces.
 SET ROLE pv_161_admin;
-INSERT INTO lu (id, name, valid_from, valid_until) VALUES (1, 'A', '2024-01-01', '2025-01-01'),
-                                                          (1, 'B', '2025-01-01', 'infinity');
+INSERT INTO lu (id, name, valid_from, valid_until, edit_comment) VALUES (1, 'A', '2024-01-01', '2025-01-01', 'admin set A'),
+                                                                        (1, 'B', '2025-01-01', 'infinity', 'admin set B');
 RESET ROLE;
 INSERT INTO started SELECT name, edit_at FROM lu;
 \echo '-- start: both pieces by the admin'
@@ -110,6 +113,42 @@ CALL sql_saga.temporal_merge(target_table => 'pv_161.lu', source_table => 'src2'
                              mode => 'MERGE_ENTITY_PATCH', era_name => 'valid');
 RESET ROLE;
 TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 10: a comment written with a change lands on the changed piece only; carried pieces keep theirs'
+SAVEPOINT s;
+SET ROLE pv_161_user;
+UPDATE lu__for_portion_of_valid SET name = 'mid', edit_comment = 'user fixed mid-2024',
+       valid_from = '2024-04-01', valid_until = '2024-07-01' WHERE id = 1;
+RESET ROLE;
+TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 11: a direct UPDATE of data without a new comment does not keep the old comment'
+SAVEPOINT s;
+SET ROLE pv_161_user;
+UPDATE lu SET name = 'B4' WHERE valid_from = '2025-01-01';
+RESET ROLE;
+TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 12: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named'
+SAVEPOINT s;
+ALTER TABLE lu ALTER COLUMN edit_by SET DEFAULT NULLIF(current_user, 'pv_161_user'::name);
+SET ROLE pv_161_user;
+UPDATE lu SET name = 'B5' WHERE valid_from = '2025-01-01';
+RESET ROLE;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 13: the owner backfills inside one transaction with the managed trigger disabled'
+SAVEPOINT s;
+ALTER TABLE lu DISABLE TRIGGER valid_provenance;
+UPDATE lu SET edit_by = 'pv_161_user' WHERE valid_from = '2025-01-01';
+ALTER TABLE lu ENABLE TRIGGER valid_provenance;
+TABLE history;
+\echo '-- 13b: a provenance trigger left disabled is reported by check_integrity'
+ALTER TABLE lu DISABLE TRIGGER valid_provenance;
+SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT s;
 
 \echo '-- 9: registration refusals'
