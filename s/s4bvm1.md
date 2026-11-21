@@ -41,5 +41,6 @@ Design: doc/design/provenance.md. Branch feature/provenance-columns. Failing tes
 
 Owner 2026-11-21: provenance_columns is a named argument of add_era (principled, at creation) plus set_era_provenance_columns to add/change/remove later, mirroring ephemeral_columns. Requires replacing add_era's signature in the 1.9 update (generator must support a declared signature change; refuse if add_era privileges were customised).
 Build complete on feature/provenance-columns (a4fd156..e7ecc23): catalog + add_era arg + setter, managed trigger, native and PL/pgSQL planners, executor mark, check_integrity, drop protection, rename following, README. Test 161 passes under both planners; fast suite 146/146 on the installed build. Next: release 1.9 packaging.
+Shipped: tag v1.9 (annotated 'sql_saga 1.9') on fb9b351; branch CI 44950393810 and master CI 44953800430 green on that commit. Local: fast 146/146, generator suite 1.4-1.9 + make wiring, upgrade paths 1.0..1.8 -> 1.9 GREEN (0 FAIL), restore 12 cases + old dumps 1.0/1.1/1.2/1.7/1.8. Benchmarks v1.8 vs 1.9 two runs each: temporal_merge PATCH parent 263-291 vs 266 ms, child 274-277 vs 277 ms, seeds equal, DML within 1-3 ms. Record in todo.md (9acbd30). Scratch cleaned.
 ## History
 - 2026-11-21T20:15 todo -> doing/active (take)
