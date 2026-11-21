@@ -52,5 +52,6 @@ New probe facts (test 161 on 1.8): in the view split the carried remainder [2024
 Correction of the previous note. Test 161 (hand-written expected = correct behaviour) fails on 1.8 exactly where the proposal says: registration missing; split: changed piece 'mid' credited to admin, and the carried remainder A [2024-07,2025) keeps writer admin but gets a NEW edit_at (the planner supplies edit_by from the target but the INSERT takes edit_at from its DEFAULT: today carried pieces already lose their time); case 3 user's piece credited to admin; 4 forged writer kept; 5 writer not updated; 7 and 8 new piece credited to admin. Case 2 (re-save) already right.
 
 
+2026-11-21 owner with StatBus: 1-5 yes (2: always overwrite with DEFAULT; StatBus makes DEFAULT name the writer on every path before adopting 1.9, sql_saga's rule must not depend on how). Added: edit_comment as annotation_columns (carried keeps own, changed never inherits); clear refusal when a NOT NULL provenance DEFAULT gives NULL; backfill procedure with trigger valid_provenance. One open question: view change with an unchanged comment -> NULL or refuse.
 ## History
 - 2026-11-18T22:14 todo -> doing/active (take)
