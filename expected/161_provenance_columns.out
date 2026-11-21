@@ -119,3 +119,43 @@ ERROR:  sql_saga: provenance column "name" of table "pv_161.lu" is not an epheme
 HINT:  Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.
 ERROR:  sql_saga: column "edit_by" of table "pv_161.lu" is a provenance column of era "valid" and must stay ephemeral
 HINT:  Remove it from provenance_columns first (set_era_provenance_columns).
+-- 12: removing provenance after the fact drops the managed trigger; a direct UPDATE then keeps a forged writer again
+ set_era_provenance_columns 
+----------------------------
+ 
+(1 row)
+
+ era_name | provenance_columns | triggers 
+----------+--------------------+----------
+ valid    |                    |        0
+(1 row)
+
+ name | edit_by 
+------+---------
+ B6   | someone
+(1 row)
+
+-- 13: provenance given when the era is created, through add_era
+ add_era 
+---------
+ t
+(1 row)
+
+ era_name | provenance_columns | triggers 
+----------+--------------------+----------
+ valid    | {edit_by}          |        1
+(1 row)
+
+ name |   edit_by   
+------+-------------
+ x    | pv_161_user
+(1 row)
+
+-- 13b: add_era refuses a provenance column that is not ephemeral
+ drop_era 
+----------
+ t
+(1 row)
+
+ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu2" is not an ephemeral column of era "valid"
+HINT:  Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.

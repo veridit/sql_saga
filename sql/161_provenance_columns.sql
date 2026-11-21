@@ -173,6 +173,33 @@ SAVEPOINT s;
 SELECT sql_saga.set_era_ephemeral_columns('lu', 'valid', ARRAY['edit_comment']);
 ROLLBACK TO SAVEPOINT s;
 
+\echo '-- 12: removing provenance after the fact drops the managed trigger; a direct UPDATE then keeps a forged writer again'
+SAVEPOINT s;
+SELECT sql_saga.set_era_provenance_columns('lu', 'valid', NULL);
+SELECT era_name, provenance_columns, (SELECT count(*) FROM pg_trigger WHERE tgrelid = 'lu'::regclass AND tgname = 'valid_provenance') AS triggers
+FROM sql_saga.era WHERE table_name = 'lu';
+UPDATE lu SET name = 'B6', edit_by = 'someone' WHERE valid_from = '2025-01-01';
+SELECT name, edit_by FROM lu WHERE valid_from = '2025-01-01';
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 13: provenance given when the era is created, through add_era'
+SAVEPOINT s;
+CREATE TABLE lu2 (id int NOT NULL, name text, valid_range daterange NOT NULL,
+                  edit_by name NOT NULL DEFAULT current_user, edit_comment text);
+SELECT sql_saga.add_era('lu2', 'valid_range', 'valid', ephemeral_columns => ARRAY['edit_by', 'edit_comment'],
+                        provenance_columns => ARRAY['edit_by']);
+SELECT era_name, provenance_columns, (SELECT count(*) FROM pg_trigger WHERE tgrelid = 'lu2'::regclass AND tgname = 'valid_provenance') AS triggers
+FROM sql_saga.era WHERE table_name = 'lu2';
+GRANT INSERT, SELECT ON lu2 TO pv_161_user;
+SET ROLE pv_161_user;
+INSERT INTO lu2 (id, name, valid_range, edit_by) VALUES (1, 'x', '[2024-01-01,infinity)', 'pv_161_admin');
+RESET ROLE;
+SELECT name, edit_by FROM lu2;
+\echo '-- 13b: add_era refuses a provenance column that is not ephemeral'
+SELECT sql_saga.drop_era('lu2');
+SELECT sql_saga.add_era('lu2', 'valid_range', 'valid', provenance_columns => ARRAY['edit_by']);
+ROLLBACK TO SAVEPOINT s;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 \i sql/include/test_teardown.sql

@@ -47,19 +47,30 @@ depend on how an application picks that role.
 
 ## Interface
 
+Like `ephemeral_columns`: a named argument of `add_era` when the era is created, and a setter for an existing era.
+
 ```sql
-SELECT sql_saga.set_era_ephemeral_columns('legal_unit', 'valid', ARRAY['edit_by_user_id', 'edit_at', 'edit_comment']);
+-- when the era is created
+SELECT sql_saga.add_era('legal_unit', 'valid_range', 'valid',
+    ephemeral_columns  => ARRAY['edit_by_user_id', 'edit_at', 'edit_comment'],
+    provenance_columns => ARRAY['edit_by_user_id', 'edit_at']);
+-- on an existing era: replace the list, or remove it
 SELECT sql_saga.set_era_provenance_columns('legal_unit', 'valid', ARRAY['edit_by_user_id', 'edit_at']);
-SELECT sql_saga.set_era_provenance_columns('legal_unit', 'valid', NULL);   -- turn it off
+SELECT sql_saga.set_era_provenance_columns('legal_unit', 'valid', NULL);
 ```
 
-- A provenance column must be listed in the era's `ephemeral_columns` and must have a `DEFAULT`; otherwise
-  registration refuses, naming the column. Removing a column from `ephemeral_columns` while it is a provenance
-  column is refused too.
+- Both share one validation: a provenance column must be listed in the era's `ephemeral_columns` and must have a
+  `DEFAULT`; otherwise the call refuses, naming the column. Removing a column from `ephemeral_columns` while it is a
+  provenance column is refused too.
+- Setting a non-empty list creates the managed trigger; NULL or an empty list removes it; `drop_era` removes it with
+  the era.
 - Stored in `sql_saga.era` as `provenance_columns name[]`: a catalog change, so it ships in release 1.9 with a
   `catalog_format` bump, update scripts and the old-dump procedure, as 1.8 did.
+- `add_era` gains a trailing parameter with `DEFAULT NULL`, so every existing call still works. PostgreSQL cannot add
+  a parameter in place: the 1.9 update drops `add_era` and creates the new signature, as 1.2 did for
+  `add_system_versioning`, and refuses if a site changed `add_era`'s privileges (they would be lost silently). The
+  update generator learns to replace a signature it is told about.
 - Rename follows; dropping a provenance column is refused while it is registered (as for the other era columns).
-- No `add_era` parameter in this subset: one setter, like `set_era_ephemeral_columns`.
 
 ## How it works
 
@@ -70,8 +81,8 @@ SELECT sql_saga.set_era_provenance_columns('legal_unit', 'valid', NULL);   -- tu
   it (cases 1, 3, 6, 7, 8);
 - two adjacent pieces merge only when their data and their provenance values are equal (decision 3).
 
-**One managed trigger, `<era>_provenance`**, `BEFORE INSERT OR UPDATE FOR EACH ROW`, created by
-`set_era_provenance_columns`, makes direct writes follow the same rule:
+**One managed trigger, `<era>_provenance`**, `BEFORE INSERT OR UPDATE FOR EACH ROW`, created when the era gets
+provenance columns (`add_era` or the setter), makes direct writes follow the same rule:
 
 - `UPDATE` whose non-ephemeral data is unchanged (only the period moved, or nothing changed): the provenance columns
   keep OLD's values, whatever the statement set. This also covers the executor's own updates of untouched pieces;
@@ -115,19 +126,21 @@ reported by `check_integrity()` with the repair `ALTER TABLE ... ENABLE TRIGGER`
 - One row trigger per write on registered tables: a few assignments, to be measured with benchmarks 100 and 101.
 - One more `INSERT` statement in `temporal_merge` when a split leaves an untouched remainder.
 - More rows where a user's change makes a piece equal to a neighbour written by someone else (case 3).
-- Planner changes in both implementations; one catalog column; release 1.9.
+- Planner changes in both implementations; one catalog column; `add_era` signature replaced; release 1.9.
 
 ## Tests
 
 `sql/161_provenance_columns.sql`, written first; the expected output is the behaviour above. On 1.8 it fails where
 the table says today's behaviour is wrong. Covered: cases 1 to 8; the comment kept, modified and wiped on a changed
 piece and kept on untouched pieces; a direct `UPDATE` that only moves the period keeps the writer; registration
-refusals (not ephemeral, no `DEFAULT`); a `NOT NULL` provenance `DEFAULT` that gives NULL; the backfill procedure and
+through `add_era` and the setter, and removal; refusals (not ephemeral, no `DEFAULT`, removing a provenance column
+from `ephemeral_columns`); a `NOT NULL` provenance `DEFAULT` that gives NULL; the backfill procedure and
 `check_integrity()` reporting a disabled trigger.
 
 ## Decisions (owner with StatBus, 2026-11-21)
 
-1. Name `provenance_columns`, setter `set_era_provenance_columns`.
+1. Name `provenance_columns`: a named argument of `add_era`, and `set_era_provenance_columns` to add, change or remove
+   it on an existing era, as for `ephemeral_columns`.
 2. A supplied writer is always replaced by the column's `DEFAULT`. StatBus makes its `DEFAULT` name the real writer on
    every write path before adopting 1.9 (its import worker runs as `postgres` today); sql_saga's rule does not depend
    on how.
