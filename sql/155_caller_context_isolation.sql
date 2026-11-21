@@ -68,7 +68,7 @@ $pwn_read$;
 RESET ROLE;
 
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_truncate_as_owner(regclass) TO cx_attacker;
-GRANT EXECUTE ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[]) TO cx_attacker;
+GRANT EXECUTE ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) TO cx_attacker;
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_regular_fk_initial_check(text, text, text, regclass, regclass, name[], name[]) TO cx_attacker;
 
 SET ROLE cx_attacker;

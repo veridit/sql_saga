@@ -8,6 +8,8 @@ GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_apply_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.current_view_apply_trigger() TO PUBLIC;
+-- The provenance row trigger runs as the writer, whose DEFAULTs it evaluates (doc/design/provenance.md).
+GRANT EXECUTE ON FUNCTION sql_saga.provenance_trigger() TO PUBLIC;
 DO $grant_temporal_merge$
 DECLARE
     r record;

@@ -141,6 +141,10 @@ BEGIN
         IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
             CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
         END IF;
+        /* And the provenance trigger (doc/design/provenance.md). */
+        IF NOT is_dropped AND era_row.provenance_columns IS NOT NULL THEN
+            PERFORM sql_saga.__internal_set_era_provenance_columns(table_oid, era_name, NULL);
+        END IF;
 
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p

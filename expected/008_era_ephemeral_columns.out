@@ -126,7 +126,7 @@ SELECT sql_saga.set_era_ephemeral_columns(
     ephemeral_columns => ARRAY['edit_at']::name[]
 );
 ERROR:  Era "nonexistent" not found on table public.ephemeral_test
-CONTEXT:  PL/pgSQL function __api_set_era_ephemeral_columns(regclass,name,name[]) line 49 at RAISE
+CONTEXT:  PL/pgSQL function __api_set_era_ephemeral_columns(regclass,name,name[]) line 63 at RAISE
 ROLLBACK TO test5;
 ROLLBACK;
 \i sql/include/test_teardown.sql

@@ -27,7 +27,7 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_ddl_command_affects_managed_object() 
 
 /* The private SECURITY DEFINER workers behind the public management functions (src/3h_api_trampolines.sql). */
 REVOKE ALL ON FUNCTION sql_saga.__api_add_current_view(regclass, name, name, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_add_for_portion_of_view(regclass, name, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) FROM PUBLIC;
@@ -47,6 +47,8 @@ REVOKE ALL ON FUNCTION sql_saga.__api_drop_unique_key(regclass, name[], name, sq
 REVOKE ALL ON FUNCTION sql_saga.__api_drop_unique_key_by_name(regclass, name, sql_saga.drop_behavior, boolean) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_rebuild_system_versioning_views(regclass, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_set_era_ephemeral_columns(regclass, name, name[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__api_set_era_provenance_columns(regclass, name, name[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_set_era_provenance_columns(regclass, name, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_set_system_time_era_excluded_columns(regclass, name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_sync_all_history_policies() FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__api_sync_history_policies(regclass) FROM PUBLIC;

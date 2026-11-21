@@ -199,6 +199,9 @@ SELECT integrity_g4.valid('complete inventory baseline');
 -- by PUBLIC: __internal_add_system_time_era, __internal_reconcile_system_versioning_family and
 -- __internal_sync_history_policies. Public event entry points are caller-recording trampolines over private
 -- workers; their display, restore and policy-guard helpers remain private as well.
+-- 1.9 (provenance columns, doc/design/provenance.md): add_era gained a trailing provenance_columns name[] (DEFAULT
+-- NULL, so every earlier call form still works), and set_era_provenance_columns is new, a caller-recording trampoline
+-- like set_era_ephemeral_columns.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
@@ -229,7 +232,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__internal_rebuilding_system_versioning_views(table_oid oid)'),
 ('__internal_serialize(table_name regclass)'),
 ('add_current_view(table_oid regclass, era_name name, delete_mode name, current_func_name text)'),
-('add_era(table_oid regclass, range_column_name name, era_name name, synchronize_columns boolean, valid_from_column_name name, valid_until_column_name name, valid_to_column_name name, create_columns boolean, add_defaults boolean, add_bounds_check boolean, range_type regtype, bounds_check_constraint name, ephemeral_columns name[])'),
+('add_era(table_oid regclass, range_column_name name, era_name name, synchronize_columns boolean, valid_from_column_name name, valid_until_column_name name, valid_to_column_name name, create_columns boolean, add_defaults boolean, add_bounds_check boolean, range_type regtype, bounds_check_constraint name, ephemeral_columns name[], provenance_columns name[])'),
 ('add_for_portion_of_view(table_oid regclass, era_name name, ephemeral_columns name[])'),
 ('add_foreign_key(fk_table_oid regclass, fk_column_names name[], pk_table_oid regclass, pk_column_names name[], fk_era_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, create_index boolean)'),
 ('add_regular_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, fk_check_constraint name, fk_helper_function text, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
@@ -259,6 +262,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('native_library_version()'),
 ('rebuild_system_versioning_views(table_oid regclass, without_columns name[])'),
 ('set_era_ephemeral_columns(table_class regclass, era_name name, ephemeral_columns name[])'),
+('set_era_provenance_columns(table_class regclass, era_name name, provenance_columns name[])'),
 ('set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[])'),
 ('sync_all_history_policies()'),
 ('sync_history_policies(table_oid regclass)'),

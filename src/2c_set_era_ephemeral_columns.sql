@@ -48,6 +48,20 @@ BEGIN
         END LOOP;
     END IF;
 
+    /* A provenance column must stay ephemeral (doc/design/provenance.md). */
+    FOR ephemeral_column_name IN
+        SELECT p.name
+        FROM sql_saga.era AS e, pg_catalog.unnest(e.provenance_columns) AS p (name)
+        WHERE (e.table_schema, e.table_name) = (table_schema, table_name)
+          AND e.era_name = __api_set_era_ephemeral_columns.era_name
+          AND p.name <> ALL (coalesce(__api_set_era_ephemeral_columns.ephemeral_columns, '{}'))
+    LOOP
+        RAISE EXCEPTION 'sql_saga: column "%" of table "%" is a provenance column of era "%" and must stay ephemeral',
+            ephemeral_column_name, sql_saga.__internal_display_name(table_class), era_name
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Remove it from provenance_columns first (set_era_provenance_columns).';
+    END LOOP;
+
     UPDATE sql_saga.era AS e
     SET ephemeral_columns = __api_set_era_ephemeral_columns.ephemeral_columns
     WHERE (e.table_schema, e.table_name) = (table_schema, table_name)

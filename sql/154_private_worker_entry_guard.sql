@@ -40,7 +40,7 @@ INSERT INTO eg.t VALUES (1, daterange('2024-01-01', '2025-01-01', '[)'), date '2
 CREATE TABLE eg.sv (id int);
 SELECT sql_saga.add_system_versioning('eg.sv');
 RESET ROLE;
-GRANT EXECUTE ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[]) TO eg_other;
+GRANT EXECUTE ON FUNCTION sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) TO eg_other;
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_regular_fk_initial_check(text, text, text, regclass, regclass, name[], name[]) TO eg_other;
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) TO eg_other;
 GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) TO eg_other;

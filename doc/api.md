@@ -221,6 +221,9 @@ This document is automatically generated from the database schema by the `80_gen
 >   These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not
 >   prevent adjacent periods from being merged. This setting serves as a default for all views
 >   and temporal_merge calls on this era.
+> - provenance_columns: Ephemeral columns that sql_saga fills from their DEFAULT on changed and new pieces, evaluated
+>   as the writing role, and keeps on untouched pieces (e.g., edit_by_user_id, edit_at). Each must also be listed in
+>   ephemeral_columns and have a DEFAULT. Change or remove later with set_era_provenance_columns.
 
 ```sql
 FUNCTION add_era(
@@ -236,7 +239,8 @@ FUNCTION add_era(
     add_bounds_check boolean DEFAULT true,
     range_type regtype DEFAULT NULL::regtype,
     bounds_check_constraint name DEFAULT NULL::name,
-    ephemeral_columns name[] DEFAULT NULL::name[]
+    ephemeral_columns name[] DEFAULT NULL::name[],
+    provenance_columns name[] DEFAULT NULL::name[]
 ) RETURNS boolean
 SECURITY INVOKER
 ```
@@ -271,6 +275,24 @@ FUNCTION set_era_ephemeral_columns(
     table_class regclass,
     era_name name DEFAULT 'valid'::name,
     ephemeral_columns name[] DEFAULT NULL::name[]
+) RETURNS void
+SECURITY INVOKER
+```
+
+### set_era_provenance_columns
+
+> Sets the provenance columns of an era (doc/design/provenance.md): ephemeral columns that sql_saga fills from their DEFAULT on changed and new pieces, evaluated as the writing role, and keeps on untouched pieces. Each must be in the era's ephemeral_columns and have a DEFAULT. Creates the managed trigger "<era>_provenance"; NULL or an empty list removes the columns and the trigger.
+> 
+> Parameters:
+> - table_class: The table OID or name
+> - era_name: The era name (defaults to 'valid')
+> - provenance_columns: Array of column names, or NULL to remove
+
+```sql
+FUNCTION set_era_provenance_columns(
+    table_class regclass,
+    era_name name DEFAULT 'valid'::name,
+    provenance_columns name[] DEFAULT NULL::name[]
 ) RETURNS void
 SECURITY INVOKER
 ```

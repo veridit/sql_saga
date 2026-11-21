@@ -7,6 +7,7 @@ SET client_min_messages = warning;
 -- edit_by and edit_at are provenance columns (ephemeral, filled from their DEFAULT); edit_comment stays a plain
 -- ephemeral column. Each scenario runs in a savepoint; everything is rolled back.
 \set ON_ERROR_STOP off
+\set SHOW_CONTEXT never
 BEGIN;
 CREATE SCHEMA pv_161;
 SET LOCAL search_path = pv_161, public;

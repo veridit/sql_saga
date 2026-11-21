@@ -11,7 +11,8 @@ CREATE OR REPLACE FUNCTION sql_saga.__api_add_era(
     add_bounds_check boolean DEFAULT true,
     range_type regtype DEFAULT NULL,
     bounds_check_constraint name DEFAULT NULL,
-    ephemeral_columns name[] DEFAULT NULL)
+    ephemeral_columns name[] DEFAULT NULL,
+    provenance_columns name[] DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -475,11 +476,15 @@ BEGIN
         END IF;
 
         INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults, ephemeral_columns, catalog_format)
-        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, __api_add_era.ephemeral_columns, '1.8');
+        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, __api_add_era.ephemeral_columns, '1.9');
 
         IF v_create_template_trigger THEN
             CALL sql_saga.add_synchronize_temporal_columns_trigger(table_oid, era_name);
             RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', v_trigger_name, table_oid, v_sync_cols_text;
+        END IF;
+
+        IF coalesce(cardinality(__api_add_era.provenance_columns), 0) > 0 THEN
+            PERFORM sql_saga.__internal_set_era_provenance_columns(table_oid, era_name, __api_add_era.provenance_columns);
         END IF;
     END;
 
@@ -518,4 +523,7 @@ Parameters:
 - ephemeral_columns: Columns excluded from coalescing comparison during temporal_merge operations.
   These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not
   prevent adjacent periods from being merged. This setting serves as a default for all views
-  and temporal_merge calls on this era.';
+  and temporal_merge calls on this era.
+- provenance_columns: Ephemeral columns that sql_saga fills from their DEFAULT on changed and new pieces, evaluated
+  as the writing role, and keeps on untouched pieces (e.g., edit_by_user_id, edit_at). Each must also be listed in
+  ephemeral_columns and have a DEFAULT. Change or remove later with set_era_provenance_columns.';

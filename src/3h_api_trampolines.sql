@@ -37,7 +37,8 @@ CREATE FUNCTION sql_saga.add_era(
     add_bounds_check boolean DEFAULT true,
     range_type regtype DEFAULT NULL::regtype,
     bounds_check_constraint name DEFAULT NULL::name,
-    ephemeral_columns name[] DEFAULT NULL::name[])
+    ephemeral_columns name[] DEFAULT NULL::name[],
+    provenance_columns name[] DEFAULT NULL::name[])
 RETURNS boolean
 LANGUAGE c VOLATILE SECURITY INVOKER
 AS 'sql_saga', 'api_trampoline';
@@ -228,6 +229,14 @@ CREATE FUNCTION sql_saga.set_era_ephemeral_columns(
     table_class regclass,
     era_name name DEFAULT 'valid'::name,
     ephemeral_columns name[] DEFAULT NULL::name[])
+RETURNS void
+LANGUAGE c VOLATILE SECURITY INVOKER
+AS 'sql_saga', 'api_trampoline';
+
+CREATE FUNCTION sql_saga.set_era_provenance_columns(
+    table_class regclass,
+    era_name name DEFAULT 'valid'::name,
+    provenance_columns name[] DEFAULT NULL::name[])
 RETURNS void
 LANGUAGE c VOLATILE SECURITY INVOKER
 AS 'sql_saga', 'api_trampoline';
