@@ -5,6 +5,30 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-21: Version 1.9, provenance columns (hug s4bvm1; tag and CI recorded at release)
+- Eras can name provenance columns (`add_era(..., provenance_columns => ...)`, `set_era_provenance_columns`): ephemeral
+  columns with a DEFAULT that the managed trigger `<era>_provenance` fills, evaluated as the writing role, on every
+  changed or new piece; untouched pieces keep theirs, and pieces with different provenance are not merged. Both
+  planners strip provenance on changed pieces; the executor marks untouched INSERTs. check_integrity, drop
+  protection and rename following cover the trigger and columns. Design doc/design/provenance.md; test 161 runs every
+  scenario under both planners
+- Catalog: `era.provenance_columns name[]` after `catalog_format`; catalog_format 1.8 -> 1.9. PUBLIC set extended by
+  `set_era_provenance_columns` and the new `add_era` signature (test 117)
+- Update scripts: `direct_update.py` gains `replaced_routines` (a signature change drops the old routine after
+  comparing its EXECUTE privileges with those a new function gets there, read from a probe, as 1.2 did; any difference
+  refuses with the reset and reapply statements) and `commented_routines` (comments from src, then the public
+  functions' copy). The 1.1 privilege cases now meet two refusals when default privileges changed (add_system_versioning,
+  then add_era) and follow both hints. Preflight accepts the 1.8 shape and lists the add_era privileges it would refuse
+- Harness fixes found on the way: v1.0's Makefile does not build its native library, so the 1.0 fixtures loaded the
+  candidate's (which reads `provenance_columns`); `upgrade_test.sh` now builds the tag's own. The old-dump
+  comparison sorted rows within each COPY block (heap order differs after the 1.9 catalog UPDATE)
+- Acceptance (local): 146 fast regressions; generator suite 1.4-1.9 and make wiring; upgrade paths 1.0..1.8 -> 1.9
+  GREEN, 0 FAIL; restore round trips 12 cases plus old dumps 1.0, 1.1, 1.2, 1.7, 1.8. Benchmarks 100 and 101, v1.8
+  then 1.9, two runs each (load average 23-28): temporal_merge PATCH 263-291 ms against 266-266 ms (parent) and
+  274-277 against 277-277 ms (child); seeds 102-107 against 102-103 and 119-120 against 116-120 ms; DML steps within
+  1-3 ms except one 1.9 outlier (Child INSERT with index 73 ms in run 1, 45 ms in run 2, 45 ms both v1.8 runs)
+- doc/upgrade.md describes 1.9, the 1.8 guide is frozen as doc/upgrade-1.8.md
+
 ## 2026-11-18: Version 1.8 (tag v1.8 at ea6542e, CI 44390659266 green)
 - `sql_saga.era` loses `audit_schema_name` and `audit_table_name` (left from the periods extension, never written).
   The update drops them only when every row is NULL; catalog_format 1.4 -> 1.8, so a plain restore of an older dump

@@ -5,6 +5,8 @@ DO $preflight$
 DECLARE
     installed_version text;
     policy_list text;
+    probe_acl pg_catalog.aclitem[];
+    probe_owner pg_catalog.oid;
 BEGIN
     SELECT e.extversion INTO installed_version
     FROM pg_catalog.pg_extension AS e
@@ -91,10 +93,20 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.7 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.8' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.current_view_apply_trigger()') IS NULL
+           OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                      WHERE a.attrelid = 'sql_saga.era'::pg_catalog.regclass AND a.attname IN ('audit_table_name', 'provenance_columns') AND NOT a.attisdropped)
+           OR pg_catalog.to_regprocedure('sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])') IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.8 is not the supported v1.8 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.8 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6 or 1.7, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7 or 1.8, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6 or v1.7 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6, v1.7 or v1.8 extension.';
     END IF;
 
     /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */
@@ -169,6 +181,54 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: history tables that are not persistent prevent upgrade:%', E'\n' || policy_list
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Run ALTER TABLE <history table> SET LOGGED for each before updating.';
+    END IF;
+
+    /* EXECUTE privileges on add_era that differ from those its replacement gets: the 1.9 update replaces the
+       signature and refuses them. The replacement gets the default privileges of a function created now, read from a
+       probe that is rolled back, minus PUBLIC for the private worker (the rule of the update script). */
+    BEGIN
+        EXECUTE 'CREATE FUNCTION sql_saga.__sql_saga_preflight_acl_probe() RETURNS void LANGUAGE sql AS ''SELECT''';
+        SELECT p.proacl, p.proowner INTO probe_acl, probe_owner
+        FROM pg_catalog.pg_proc AS p
+        WHERE p.oid = 'sql_saga.__sql_saga_preflight_acl_probe()'::pg_catalog.regprocedure;
+        RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'sql_saga preflight probe rollback';
+    EXCEPTION WHEN raise_exception THEN
+        NULL;
+    END;
+    WITH old_set AS (
+        SELECT p.oid AS proc, p.proname, a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.pg_proc AS p
+        CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a
+        WHERE p.oid IN (pg_catalog.to_regprocedure('sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])'),
+                        pg_catalog.to_regprocedure('sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])'))
+          AND a.privilege_type = 'EXECUTE'
+          AND a.grantee <> p.proowner
+        GROUP BY p.oid, p.proname, a.grantee
+    ), new_set AS (
+        SELECT p.oid AS proc, p.proname, a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.pg_proc AS p
+        CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(probe_acl, pg_catalog.acldefault('f', probe_owner))) AS a
+        WHERE p.oid IN (pg_catalog.to_regprocedure('sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])'),
+                        pg_catalog.to_regprocedure('sql_saga.__api_add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])'))
+          AND a.privilege_type = 'EXECUTE'
+          AND a.grantee <> probe_owner
+          AND (a.grantee <> 0 OR p.proname = 'add_era')
+        GROUP BY p.oid, p.proname, a.grantee
+    )
+    SELECT pg_catalog.string_agg(pg_catalog.format('%s: %s %s', coalesce(o.proc, n.proc)::pg_catalog.regprocedure,
+               CASE WHEN coalesce(o.grantee, n.grantee) = 0 THEN 'PUBLIC' ELSE coalesce(o.grantee, n.grantee)::pg_catalog.regrole::text END,
+               CASE WHEN o.grantee IS NULL THEN 'would gain EXECUTE'
+                    WHEN n.grantee IS NULL THEN 'would lose EXECUTE'
+                    ELSE 'would change grant option' END),
+               E'\n' ORDER BY coalesce(o.proname, n.proname), coalesce(o.grantee, n.grantee))
+    INTO policy_list
+    FROM old_set AS o
+    FULL JOIN new_set AS n ON (n.proc, n.grantee) = (o.proc, o.grantee)
+    WHERE o.grantable IS DISTINCT FROM n.grantable;
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: EXECUTE privileges on add_era that the 1.9 update cannot carry over to the new signature prevent upgrade:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Reset them, update, and apply them to the new signature after the update; the update prints the exact statements (doc/upgrade.md).';
     END IF;
 
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)

@@ -26,7 +26,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.8: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.9: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -59,9 +59,9 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.8}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.9}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -93,6 +93,9 @@ frozen_artifacts() {
     fi
     if version_lt 1.7 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6; do echo "sql_saga--$source--1.7.sql"; done
+    fi
+    if version_lt 1.8 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7; do echo "sql_saga--$source--1.8.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -1616,6 +1619,19 @@ if [ "$OLD_BINARIES" = 1 ]; then
     make -C "$BASELINE_BUILD" PG_CONFIG="$PG_CONFIG" >"$WORK/baseline.build.log" 2>&1 || die "building $BASELINE_TAG (see $WORK/baseline.build.log)"
     OLD_LIB="$BASELINE_BUILD"
     ls "$OLD_LIB"/sql_saga.* >/dev/null 2>&1 || die "no $BASELINE_VERSION C library in $OLD_LIB"
+    # v1.0's Makefile does not build its native planner (installed separately then); build it from the tag as later
+    # Makefiles do, or the fixture would load the candidate's library, which reads the candidate's catalog layout.
+    if [ -f "$BASELINE_BUILD/native/Cargo.toml" ] && ! ls "$BASELINE_BUILD"/native/target/release/*sql_saga_native* >/dev/null 2>&1; then
+        (
+            cd "$BASELINE_BUILD/native" || exit 1
+            if [ "$(uname)" = Darwin ]; then
+                export LIBCLANG_PATH="${LIBCLANG_PATH:-$(dirname "$(xcrun --find clang)")/../lib}"
+                export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:--isysroot $(xcrun --show-sdk-path)}"
+            fi
+            PGRX_PG_CONFIG_PATH=$(command -v "$PG_CONFIG") cargo build --release --lib --locked --no-default-features \
+                --features "pg$("$PG_CONFIG" --version | sed -E 's/^PostgreSQL ([0-9]+).*/\1/')"
+        ) >>"$WORK/baseline.build.log" 2>&1 || die "building the $BASELINE_TAG native library (see $WORK/baseline.build.log)"
+    fi
     if ls "$BASELINE_BUILD"/native/target/release/*sql_saga_native* >/dev/null 2>&1; then
         # Cargo prefixes cdylibs with lib, while PostgreSQL loads sql_saga_native.
         # Stage the runtime name explicitly so old fixtures cannot silently use the global candidate.
@@ -2235,8 +2251,8 @@ ASV_OWNER=$(psql -X -At -d postgres -c 'SELECT current_user::regrole::text' 2>>"
 asv_acl() {  # asv_acl <db> <regprocedure>: effective EXECUTE grantees, sorted, grantor ignored
     q "$1" "SELECT coalesce(string_agg(g, ',' ORDER BY g COLLATE \"C\"), '') FROM (SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || CASE WHEN a.is_grantable THEN '*' ELSE '' END AS g FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = '$2'::regprocedure AND a.privilege_type = 'EXECUTE') AS e"
 }
-asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <expected acl after> <expected dump lines>
-    local label=$1 setup=$2 want_err=$3 want_hint=$4 want_acl=$5 want_dump=$6 db=${PREFIX}_acl_$1 out before err hint
+asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <expected acl after> <expected dump lines> <refusals>
+    local label=$1 setup=$2 want_err=$3 want_hint=$4 want_acl=$5 want_dump=$6 want_refusals=$7 db=${PREFIX}_acl_$1 out before err hint
     new_db "$db" "$EXT_ROOT"
     out=$(printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n%s\n" "$BASELINE_VERSION" "$setup" | sql "$db")
     printf '%s\n' "$out" | grep -q '^ERROR' && die "acl fixture $label: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
@@ -2248,9 +2264,24 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
     check "$label: hint gives the exact way out" "$want_hint" "$hint"
     check "$label: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "$label: refusal is atomic" "$before" "$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
-    # Follow the hint the update actually returned, literally, as one transaction.
-    out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$(printf '%s\n' "$hint" | sed -e 's/^.*Run: //')" | sql "$db")
+    # Follow the hints the update actually returns, literally. Each replaced routine has its own check (1.2:
+    # add_system_versioning, 1.9: add_era), so a site whose default privileges changed is refused once per routine:
+    # run each hint's statements before ALTER EXTENSION, retry, and once the update succeeds run the statements after.
+    local pre post posts='' refusals=1 next_hint=$hint
+    while :; do
+        pre=$(printf '%s\n' "$next_hint" | sed -e 's/^.*Run: //' -e "s/ ALTER EXTENSION sql_saga UPDATE TO '[0-9.]*';.*\$//")
+        post=$(printf '%s\n' "$next_hint" | sed -n -e "s/^.* ALTER EXTENSION sql_saga UPDATE TO '[0-9.]*'; //p")
+        posts="$posts $post"
+        out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$pre" | sql "$db")
+        printf '%s\n' "$out" | grep -q '^ERROR' && break
+        out=$(printf "\\\\set VERBOSITY default\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$db" 2>&1 | sed -e 's/^psql:[^ ]*:[0-9]*: //')
+        printf '%s\n' "$out" | grep -q '^ERROR' || { out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$posts" | sql "$db"); break; }
+        refusals=$((refusals + 1))
+        next_hint=$(printf '%s\n' "$out" | grep -m1 '^HINT:' | sed 's/^HINT:  *//')
+        [ "$refusals" -le 3 ] || break
+    done
     check "$label: following the hint succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "$label: refusals before the update, one per replaced routine with changed privileges" "$want_refusals" "$refusals"
     check "$label: following the hint reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "$label: the customisation is re-applied to the new signature" "$want_acl" "$(asv_acl "$db" "$ASV8")"
     check "$label: the re-applied customisation is a user delta, not an initial privilege" "0" \
@@ -2270,22 +2301,25 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
         "$ASV_ERR" \
         "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
         "$ASV_OWNER" \
-        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
+        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;" 1
     asv_case grant_option \
         "GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "$ASV_ERR" \
         "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "PUBLIC,$ASV_OWNER,${PREFIX}_asv*" \
-        "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;"
+        "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;" 1
     # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
-    # site removed. Refused as well, so the new routine never silently gets broader access.
+    # site removed. Refused as well, so the new routine never silently gets broader access. From 1.9 add_era, which
+    # the update also replaces, would gain the same grants: a second refusal, with its own hint.
+    ASV_DEFAULT_REFUSALS=1
+    version_lt "$NEW_VERSION" 1.9 || ASV_DEFAULT_REFUSALS=2
     asv_case new_default \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
         "$ASV_ERR" \
         "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
         "$ASV_OWNER" \
-        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
+        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;" "$ASV_DEFAULT_REFUSALS"
     # Delegation plus changed defaults (G4 R2.1): A holds EXECUTE WITH GRANT OPTION and granted it to B;
     # default privileges now give A and B plain EXECUTE. Only A differs, but revoking A's grant option
     # cascades to B's delegated grant, so the hint must restore B as well. A's name needs quoting.
@@ -2303,7 +2337,8 @@ ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
         "$ASV_ERR" \
         "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
         "$ASV_A*,PUBLIC,$ASV_OWNER,$ASV_B" \
-        "GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_A WITH GRANT OPTION;|GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_B;"
+        "GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_A WITH GRANT OPTION;|GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_B;" \
+        "$ASV_DEFAULT_REFUSALS"
     # Unmodified hardened installation ({owner=X} from default privileges): no refusal, and the new
     # routine gets what a fresh 1.2 install gets there.
     HARD=${PREFIX}_acl_hardened
@@ -3505,8 +3540,8 @@ fi
 # ---------------------------------------------------------------------------------------------
 # 1.8: sql_saga.era loses the never-written audit_schema_name and audit_table_name (catalog_format 1.8). The update
 # refuses hand-written values in them and an unlogged history table, and changes nothing until both are fixed.
-if ! version_lt "$NEW_VERSION" 1.8 && ! version_lt "$BASELINE_VERSION" 1.1; then
-    section "$BASELINE_VERSION era audit columns and history persistence on the way to 1.8" "expected RED"
+if ! version_lt "$NEW_VERSION" 1.8 && ! version_lt "$BASELINE_VERSION" 1.1 && version_lt "$BASELINE_VERSION" 1.8; then
+    section "$BASELINE_VERSION era audit columns and history persistence on the way to $NEW_VERSION" "expected RED"
     AUDIT_DB=${PREFIX}_audit18
     v13_db "$AUDIT_DB" "CREATE TABLE au (id integer, valid_range daterange);
 SELECT sql_saga.add_era('au', 'valid_range', 'valid');
@@ -3532,13 +3567,56 @@ UPDATE ah SET payload = 'b';"
     check "unlogged history table: extension still $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$AUDIT_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     q "$AUDIT_DB" "ALTER TABLE ah_history SET LOGGED" >/dev/null
     check "after both repairs the update succeeds" "" "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
-    check "audit columns dropped, every era row at catalog_format 1.8" "-|1.8" \
+    check "audit columns dropped, every era row at catalog_format $NEW_VERSION" "-|$NEW_VERSION" \
         "$(q "$AUDIT_DB" "$audit_cols_sql")|$(q "$AUDIT_DB" "SELECT string_agg(DISTINCT catalog_format, ',') FROM sql_saga.era")"
     check "history data preserved" "a|b" "$(q "$AUDIT_DB" "SELECT string_agg(payload, '|' ORDER BY payload) FROM (SELECT payload FROM ah_history UNION ALL SELECT payload FROM ah) AS s")"
     check "after 1.8, SET UNLOGGED on a history table is refused" \
         'ERROR:  history table "public.ah_history" must remain persistent because it is used in SYSTEM VERSIONING for table "public.ah"' \
         "$(q "$AUDIT_DB" "ALTER TABLE ah_history SET UNLOGGED" | grep -m1 '^ERROR')"
     assert_integrity "$AUDIT_DB"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 1.9: sql_saga.era gains provenance_columns (catalog_format 1.9) and add_era a trailing provenance_columns argument.
+# The update replaces add_era's signature, so it refuses EXECUTE privileges it cannot carry over (a revoke from PUBLIC
+# here), names the statements that carry them, and changes nothing; after it, provenance works on existing eras.
+if ! version_lt "$NEW_VERSION" 1.9; then
+    section "$BASELINE_VERSION eras gain provenance columns on the way to 1.9" "expected RED"
+    PROV_DB=${PREFIX}_prov19
+    ADD_ERA_13="sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])"
+    ADD_ERA_14="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[],name[])"
+    v13_db "$PROV_DB" "CREATE FUNCTION pv_who() RETURNS text LANGUAGE sql STABLE AS \$f\$ SELECT current_user::text \$f\$;
+CREATE TABLE pv (id integer, payload text, edit_by text NOT NULL DEFAULT pv_who(), valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('pv', 'valid_range', 'valid', ephemeral_columns => ARRAY['edit_by']::name[]);
+SELECT sql_saga.add_unique_key('pv', ARRAY['id']);
+INSERT INTO pv (id, payload, edit_by, valid_from, valid_until) VALUES (1, 'old', 'before_upgrade', '2024-01-01', 'infinity');
+REVOKE EXECUTE ON FUNCTION $ADD_ERA_13 FROM PUBLIC;"
+    v13_restart "$PROV_DB"
+    prov_cols_sql="SELECT count(*) FROM pg_attribute WHERE attrelid = 'sql_saga.era'::regclass AND attname = 'provenance_columns' AND NOT attisdropped"
+    if [ -f "$PREFLIGHT" ]; then
+        out=$(run_preflight "$PROV_DB")
+        check "revoked add_era: preflight names the privilege the update cannot carry over" "1" \
+            "$(printf '%s\n' "$out" | grep -c "^sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name\[\]): PUBLIC would gain EXECUTE$")"
+    fi
+    check "revoked add_era: update refused, names the function" \
+        "ERROR:  sql_saga: the privileges on $ADD_ERA_13 differ from those its 1.9 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
+        "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "revoked add_era: the hint carries the revoke to the new signature" "1" \
+        "$(sql "$PROV_DB" -c "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^HINT:  ' | grep -cF "Run: GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.9'; REVOKE ALL ON FUNCTION sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC CASCADE;")"
+    check "revoked add_era: extension still $BASELINE_VERSION, no provenance column, no probe left" "$BASELINE_VERSION|0|0" \
+        "$(q "$PROV_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$PROV_DB" "$prov_cols_sql")|$(q "$PROV_DB" "SELECT count(*) FROM pg_proc WHERE proname LIKE '%acl_probe%'")"
+    q "$PROV_DB" "GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC" >/dev/null
+    check "after the grant the update succeeds" "" "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    q "$PROV_DB" "REVOKE ALL ON FUNCTION $ADD_ERA_14 FROM PUBLIC" >/dev/null
+    check "add_era has only the 14-argument signature; every era row at catalog_format 1.9 with no provenance columns" \
+        "$ADD_ERA_14|1.9|" \
+        "$(q "$PROV_DB" "SELECT string_agg(p.oid::regprocedure::text, ',') FROM pg_proc AS p WHERE p.proname = 'add_era'")|$(q "$PROV_DB" "SELECT string_agg(DISTINCT catalog_format, ',') || '|' || coalesce(string_agg(provenance_columns::text, ','), '') FROM sql_saga.era")"
+    check "existing era gains provenance: set_era_provenance_columns creates the trigger" "pv|valid_provenance|{edit_by}" \
+        "$(q "$PROV_DB" "SET client_min_messages = warning; SELECT sql_saga.set_era_provenance_columns('pv', 'valid', ARRAY['edit_by']::name[]); SELECT e.table_name || '|' || t.tgname || '|' || e.provenance_columns::text FROM sql_saga.era AS e JOIN pg_trigger AS t ON t.tgrelid = 'pv'::regclass AND t.tgname = 'valid_provenance'")"
+    check "a changed piece gets the writer's DEFAULT, the untouched piece keeps its provenance" \
+        "1:old:before_upgrade:[2024-01-01,2025-01-01),1:new:$(q "$PROV_DB" "SELECT current_user"):[2025-01-01,infinity)" \
+        "$(q "$PROV_DB" "CREATE TEMP TABLE pv_src (row_id integer, id integer, payload text, edit_by text, valid_from date, valid_until date); INSERT INTO pv_src VALUES (1, 1, 'new', 'forged', '2025-01-01', 'infinity'); CALL sql_saga.temporal_merge(target_table => 'pv'::regclass, source_table => 'pv_src'::regclass, primary_identity_columns => ARRAY['id']); SELECT string_agg(id || ':' || payload || ':' || edit_by || ':' || valid_range::text, ',' ORDER BY valid_range) FROM pv")"
+    assert_integrity "$PROV_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
@@ -3606,6 +3684,19 @@ else
         if ! version_lt "$NEW_VERSION" 1.6 && version_lt "$BASELINE_VERSION" 1.6; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.for_portion_of_apply_trigger()"; fi
         # 1.7 adds the statement-level apply trigger of current views, PUBLIC like the row trigger.
         if ! version_lt "$NEW_VERSION" 1.7 && version_lt "$BASELINE_VERSION" 1.7; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.current_view_apply_trigger()"; fi
+        # 1.9 adds the provenance row trigger (PUBLIC, it runs as the writer) and set_era_provenance_columns (PUBLIC
+        # where the database's default privileges give it, as for every public management function).
+        if ! version_lt "$NEW_VERSION" 1.9; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.provenance_trigger() sql_saga.set_era_provenance_columns(regclass,name,name[])"; fi
+        # 1.9 replaces add_era's 13-argument signature by the 14-argument one (provenance_columns); a pristine
+        # baseline's entries move to the new signature unchanged (the update refuses any other privilege set).
+        if ! version_lt "$NEW_VERSION" 1.9; then
+            ADD_ERA_OLD="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[])"
+            ADD_ERA_NEW="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[],name[])"
+            while IFS= read -r entry; do
+                case "$entry" in "fn $ADD_ERA_OLD|"*) printf 'fn %s|%s\n' "$ADD_ERA_NEW" "${entry#"fn $ADD_ERA_OLD|"}" ;; *) printf '%s\n' "$entry" ;; esac
+            done <"$WORK/acl_entries.expected" >"$WORK/acl_entries.expected.tmp"
+            mv "$WORK/acl_entries.expected.tmp" "$WORK/acl_entries.expected"
+        fi
         # 1.4 (review round 2, R1): four SECURITY DEFINER internals that acted for any caller lose PUBLIC EXECUTE, on
         # every path, as a fresh 1.4 install revokes them (src/3g_private_function_acl.sql).
         if ! version_lt "$NEW_VERSION" 1.4 && version_lt "$BASELINE_VERSION" 1.4; then

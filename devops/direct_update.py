@@ -44,43 +44,101 @@ def routine_key(statement):
 _TABLE_RE = re.compile(r'CREATE\s+TABLE\s+(sql_saga\.[A-Za-z_][A-Za-z0-9_]*)\s*\(', re.I)
 
 
-def replace_routine_sql(old_key, target):
-    """Refuse when the site changed the old routine's EXECUTE privileges, then drop it (its replacement follows).
+def replace_routine_sql(old_key, new_key, target):
+    """Refuse when the old routine's EXECUTE privileges differ from those its replacement gets, then drop it.
 
-    Every routine sql_saga ships has the privileges a fresh install gives it: the owner, plus PUBLIC for a public
-    management function. Anything else is a site decision that DROP and CREATE would discard silently, so the update
-    stops and names the statements that restore it on the new signature afterwards (as the 1.2 update did).
+    DROP and CREATE cannot carry privileges over. The replacement gets what a function created now gets (the
+    database's default privileges, read from a throwaway probe), minus PUBLIC for a private worker, whose PUBLIC
+    EXECUTE the update revokes as a fresh install does. Any other difference is a site decision that would be lost
+    silently (a grant dropped, a revoke undone), so the update stops and prints the statements that carry it over
+    to the new signature (as the 1.2 update did for add_system_versioning).
     """
-    tag = re.sub(r'[^a-z0-9]+', '_', old_key.split('(')[0].split('.')[-1])
-    # A public management function is executable by PUBLIC on a fresh install; a private worker is not.
-    public = 'false' if old_key.split('(')[0].split('.')[-1].startswith('__') else 'true'
-    template = '''DO $replace_@TAG@$
+    name = old_key.split('(')[0].split('.')[-1]
+    tag = re.sub(r'[^a-z0-9]+', '_', name)
+    keep_public = 'false' if name.startswith('__') else 'true'
+    template = """DO $replace_@TAG@$
 DECLARE
     old_proc CONSTANT text := '@OLD@';
-    grants text;
+    new_proc CONSTANT text := '@NEW@';
+    probe CONSTANT text := 'sql_saga.__sql_saga_@VTAG@_upgrade_acl_probe()';
+    probe_acl pg_catalog.aclitem[];
+    probe_owner pg_catalog.oid;
+    differs boolean;
+    old_grantees text;
+    new_grantees text;
+    old_grants text;
+    new_grants text;
+    cascade_word CONSTANT text := 'CAS' || 'CADE';
 BEGIN
     IF pg_catalog.to_regprocedure(old_proc) IS NULL THEN
         RETURN;
     END IF;
-    SELECT pg_catalog.string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::pg_catalog.regrole::text END
-                                 || CASE WHEN a.is_grantable THEN ' WITH GRANT OPTION' ELSE '' END, ', ' ORDER BY a.grantee)
-    INTO grants
+    IF pg_catalog.to_regprocedure(probe) IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: function % already exists; the @TARGET@ update needs that name for a temporary probe', probe
+            USING ERRCODE = 'duplicate_function',
+                  HINT = 'Drop or rename that function, then retry the update.';
+    END IF;
+    EXECUTE 'CREATE FUNCTION ' || probe || ' RETURNS void LANGUAGE sql AS ''SELECT''';
+    SELECT p.proacl, p.proowner INTO probe_acl, probe_owner
     FROM pg_catalog.pg_proc AS p
-    CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a
-    WHERE p.oid = pg_catalog.to_regprocedure(old_proc)
-      AND a.privilege_type = 'EXECUTE'
-      AND a.grantee OPERATOR(pg_catalog.<>) p.proowner
-      AND NOT (a.grantee = 0 AND NOT a.is_grantable AND @PUBLIC@);
-    IF grants IS NOT NULL THEN
-        RAISE EXCEPTION 'sql_saga: the @TARGET@ update replaces % with a new signature and would lose its EXECUTE privileges for %', old_proc, grants
+    WHERE p.oid = pg_catalog.to_regprocedure(probe);
+    EXECUTE 'DROP FUNCTION ' || probe;
+
+    WITH old_set AS (
+        SELECT a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.pg_proc AS p
+        CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a
+        WHERE p.oid = pg_catalog.to_regprocedure(old_proc)
+          AND a.privilege_type = 'EXECUTE'
+          AND a.grantee OPERATOR(pg_catalog.<>) p.proowner
+        GROUP BY a.grantee
+    ), new_set AS (
+        SELECT a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.aclexplode(coalesce(probe_acl, pg_catalog.acldefault('f', probe_owner))) AS a
+        WHERE a.privilege_type = 'EXECUTE'
+          AND a.grantee OPERATOR(pg_catalog.<>) probe_owner
+          AND (a.grantee OPERATOR(pg_catalog.<>) 0 OR @KEEP_PUBLIC@)
+        GROUP BY a.grantee
+    ), both_sets AS (
+        SELECT 'old' AS side, o.grantee, o.grantable FROM old_set AS o
+        UNION ALL
+        SELECT 'new', n.grantee, n.grantable FROM new_set AS n
+    ), named AS (
+        SELECT b.side, b.grantable, b.grantee = 0 AS is_public,
+               CASE WHEN b.grantee = 0 THEN 'PUBLIC' ELSE b.grantee::pg_catalog.regrole::text END AS who
+        FROM both_sets AS b
+    )
+    SELECT
+        EXISTS (SELECT FROM old_set AS o FULL JOIN new_set AS n ON n.grantee = o.grantee
+                WHERE o.grantable IS DISTINCT FROM n.grantable),
+        pg_catalog.string_agg(nm.who, ', ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'old'),
+        pg_catalog.string_agg(nm.who, ', ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'new'),
+        pg_catalog.string_agg(pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO %s%s;', new_proc, nm.who,
+                                                CASE WHEN nm.grantable THEN ' WITH GRANT OPTION' ELSE '' END),
+                              ' ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'old'),
+        pg_catalog.string_agg(pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO %s%s;', old_proc, nm.who,
+                                                CASE WHEN nm.grantable THEN ' WITH GRANT OPTION' ELSE '' END),
+                              ' ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'new')
+    INTO differs, old_grantees, new_grantees, old_grants, new_grants
+    FROM named AS nm;
+
+    IF differs THEN
+        RAISE EXCEPTION 'sql_saga: the privileges on % differ from those its @TARGET@ replacement gets; the update replaces this function, and cannot carry changed privileges over', old_proc
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Revoke them, update, then grant them again on the new signature.';
+                  HINT = pg_catalog.concat_ws(' ',
+                      'Reset them, update, and apply them to the new signature after the update. Run:',
+                      CASE WHEN old_grantees IS NOT NULL THEN pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM %s %s;', old_proc, old_grantees, cascade_word) END,
+                      new_grants,
+                      'ALTER EXTENSION sql_saga UPDATE TO ''@TARGET@'';',
+                      CASE WHEN new_grantees IS NOT NULL THEN pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM %s %s;', new_proc, new_grantees, cascade_word) END,
+                      old_grants);
     END IF;
     EXECUTE 'DROP FUNCTION ' || old_proc;
 END;
 $replace_@TAG@$;
-'''
-    return (template.replace('@TAG@', tag).replace('@OLD@', old_key).replace('@PUBLIC@', public)
+"""
+    return (template.replace('@TAG@', tag).replace('@OLD@', old_key).replace('@NEW@', new_key)
+            .replace('@KEEP_PUBLIC@', keep_public).replace('@VTAG@', target.replace('.', '_'))
             .replace('@TARGET@', target))
 
 
@@ -175,7 +233,7 @@ class Release:
                 raise GeneratorError('replaced routine not in %s: %s' % (self.previous, old_key))
             if [s for s in current if routine_key(s) == old_key]:
                 raise GeneratorError('replaced routine still in the source: ' + old_key)
-            chunks.append(replace_routine_sql(old_key, self.target))
+            chunks.append(replace_routine_sql(old_key, new_key, self.target))
         for key in self.routine_manifest:
             before = [s for s in old if routine_key(s) == key]
             after = [s for s in current if routine_key(s) == key]
@@ -193,11 +251,19 @@ class Release:
                     raise GeneratorError('manifest routine signature changed: ' + key)
                 if g._core(before[0]).strip() == g._core(after[0]).strip():
                     raise GeneratorError('manifest routine unchanged since %s: %s' % (self.previous, key))
-            chunks.append(g.to_create_or_replace(after[0]))
+            routine = g.to_create_or_replace(after[0])
+            chunks.append(routine if routine.endswith('\n') else routine + '\n')
         for statement in self.new_privileges:
             chunks.append(statement + '\n')
         for statement in comments:
             chunks.append(statement + '\n')
+        # A public function's comment is its worker's, copied by src/3h's idempotent block: rerun it when a worker's
+        # comment is new or changed, or the public function keeps the old text (or none).
+        if any(r.startswith('sql_saga.__api_') for r in self.commented_routines):
+            copy = [s for s in current if '$copy_api_comments$' in g._core(s)]
+            if len(copy) != 1:
+                raise GeneratorError('the copy_api_comments block must exist exactly once')
+            chunks.append(g._core(copy[0]).strip() + '\n')
         return ''.join(chunks)
 
     def embedded(self, text, require_anchors=True):

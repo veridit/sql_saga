@@ -48,12 +48,17 @@ class Packaging(unittest.TestCase):
             drop = text.index("old_proc CONSTANT text := '%s';" % OLD_API_ADD_ERA)
             create = text.rindex('CREATE OR REPLACE FUNCTION sql_saga.__api_add_era(')
             self.assertLess(drop, create, name)
-            self.assertIn('would lose its EXECUTE privileges', text, name)
-            # The public function is checked for privileges beyond PUBLIC; the private worker for any privilege.
-            public_block = text[text.index("old_proc CONSTANT text := '%s';" % OLD_ADD_ERA):]
-            self.assertIn('AND NOT a.is_grantable AND true)', public_block[:2000], name)
-            worker_block = text[drop:]
-            self.assertIn('AND NOT a.is_grantable AND false)', worker_block[:2000], name)
+            self.assertIn('cannot carry changed privileges over', text, name)
+            # The public function is replaced before its worker, which it calls by name.
+            public_block = text[text.index("old_proc CONSTANT text := '%s';" % OLD_ADD_ERA):drop]
+            self.assertNotIn('CASCADE', text[text.index("old_proc CONSTANT text := '%s';" % OLD_ADD_ERA):create], name)
+            # The new set is a probe's default privileges; PUBLIC is kept for the public function only.
+            self.assertIn("new_proc CONSTANT text := 'sql_saga.add_era(%s)';" % gen.NEW_ADD_ERA_ARGS, public_block, name)
+            self.assertIn("probe CONSTANT text := 'sql_saga.__sql_saga_1_9_upgrade_acl_probe()';", public_block, name)
+            self.assertIn('AND (a.grantee OPERATOR(pg_catalog.<>) 0 OR true)', public_block, name)
+            worker_block = text[drop:create]
+            self.assertIn('AND (a.grantee OPERATOR(pg_catalog.<>) 0 OR false)', worker_block, name)
+            self.assertIn("'ALTER EXTENSION sql_saga UPDATE TO ''1.9'';'", worker_block, name)
 
     def test_new_routines_privileges_and_comments(self):
         for name, text in self.build().items():
@@ -64,6 +69,10 @@ class Packaging(unittest.TestCase):
                 self.assertEqual(text.count(statement), 1, name)
             self.assertEqual(text.count('COMMENT ON FUNCTION sql_saga.provenance_trigger() IS'), 1, name)
             self.assertEqual(text.count('COMMENT ON FUNCTION sql_saga.__api_set_era_provenance_columns IS'), 1, name)
+            # The public functions take their workers' new comments: the copy block runs after those comments.
+            self.assertLess(text.rindex('COMMENT ON FUNCTION sql_saga.__api_set_era_provenance_columns IS'),
+                            text.rindex('DO $copy_api_comments$'), name)
+            self.assertLess(text.rindex('DO $copy_api_comments$'), text.index(SCHEMA_MARK), name)
 
     def test_schema_fragment_once_after_the_routines(self):
         for name, text in self.build().items():
