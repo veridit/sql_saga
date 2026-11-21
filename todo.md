@@ -5,7 +5,7 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
-## 2026-11-21: Version 1.9, provenance columns (hug s4bvm1; tag and CI recorded at release)
+## 2026-11-21: Version 1.9, provenance columns (tag v1.9 at fb9b351, CI 44953800430 green; hug s4bvm1)
 - Eras can name provenance columns (`add_era(..., provenance_columns => ...)`, `set_era_provenance_columns`): ephemeral
   columns with a DEFAULT that the managed trigger `<era>_provenance` fills, evaluated as the writing role, on every
   changed or new piece; untouched pieces keep theirs, and pieces with different provenance are not merged. Both
