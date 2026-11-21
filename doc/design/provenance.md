@@ -1,6 +1,6 @@
 # Provenance columns: who changed each piece of history, and when
 
-Status: **implemented in 1.9** (hug f86twg design, s4bvm1 build; upgrade notes in `doc/upgrade.md`). Owner and StatBus decisions of 2026-11-21 are recorded at the end.
+Status: **implemented in 1.9**, trigger corrected in 1.10 (typed DEFAULT values, a dropped DEFAULT, generated columns; hug f86twg design, s4bvm1 build, 9msfzx; upgrade notes in `doc/upgrade.md`). Owner and StatBus decisions of 2026-11-21 are recorded at the end.
 This is the smallest subset that gives StatBus correct writer and time columns; what it leaves out is listed under
 "Not in this subset".
 

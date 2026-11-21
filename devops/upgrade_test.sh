@@ -26,7 +26,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.9: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.10: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -59,9 +59,9 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.9}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.10}
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -96,6 +96,9 @@ frozen_artifacts() {
     fi
     if version_lt 1.8 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7; do echo "sql_saga--$source--1.8.sql"; done
+    fi
+    if version_lt 1.9 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8; do echo "sql_saga--$source--1.9.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -3580,8 +3583,8 @@ fi
 # 1.9: sql_saga.era gains provenance_columns (catalog_format 1.9) and add_era a trailing provenance_columns argument.
 # The update replaces add_era's signature, so it refuses EXECUTE privileges it cannot carry over (a revoke from PUBLIC
 # here), names the statements that carry them, and changes nothing; after it, provenance works on existing eras.
-if ! version_lt "$NEW_VERSION" 1.9; then
-    section "$BASELINE_VERSION eras gain provenance columns on the way to 1.9" "expected RED"
+if ! version_lt "$NEW_VERSION" 1.9 && version_lt "$BASELINE_VERSION" 1.9; then
+    section "$BASELINE_VERSION eras gain provenance columns on the way to $NEW_VERSION" "expected RED"
     PROV_DB=${PREFIX}_prov19
     ADD_ERA_13="sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[])"
     ADD_ERA_14="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[],name[])"
@@ -3617,6 +3620,35 @@ REVOKE EXECUTE ON FUNCTION $ADD_ERA_13 FROM PUBLIC;"
         "1:old:before_upgrade:[2024-01-01,2025-01-01),1:new:$(q "$PROV_DB" "SELECT current_user"):[2025-01-01,infinity)" \
         "$(q "$PROV_DB" "CREATE TEMP TABLE pv_src (row_id integer, id integer, payload text, edit_by text, valid_from date, valid_until date); INSERT INTO pv_src VALUES (1, 1, 'new', 'forged', '2025-01-01', 'infinity'); CALL sql_saga.temporal_merge(target_table => 'pv'::regclass, source_table => 'pv_src'::regclass, primary_identity_columns => ARRAY['id']); SELECT string_agg(id || ':' || payload || ':' || edit_by || ':' || valid_range::text, ',' ORDER BY valid_range) FROM pv")"
     assert_integrity "$PROV_DB"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 1.10: the provenance trigger keeps each DEFAULT's type (1.9 stored a jsonb DEFAULT as a JSON string) and refuses a
+# write when a provenance column lost its DEFAULT (1.9 stored NULL); check_integrity reports that column, and a
+# generated column is refused at registration. Shown on a 1.9 era carried through the update.
+if ! version_lt "$NEW_VERSION" 1.10 && [ "$BASELINE_VERSION" = 1.9 ]; then
+    section "1.9 provenance trigger corrected on the way to $NEW_VERSION" "expected RED"
+    PROV10_DB=${PREFIX}_prov110
+    v13_db "$PROV10_DB" "CREATE TABLE pj (id integer, payload text, valid_range daterange, valid_from date, valid_until date,
+    edit_info jsonb NOT NULL DEFAULT jsonb_build_object('by', 'writer'), edit_note text DEFAULT 'kept');
+SELECT sql_saga.add_era('pj', 'valid_range', ephemeral_columns => ARRAY['edit_info', 'edit_note']::name[],
+                        provenance_columns => ARRAY['edit_info', 'edit_note']::name[]);
+INSERT INTO pj (id, payload, valid_from, valid_until) VALUES (1, 'before', '2024-01-01', 'infinity');"
+    check "1.9 stores the jsonb provenance DEFAULT as a JSON string" "string" "$(q "$PROV10_DB" "SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 1")"
+    v13_restart "$PROV10_DB"
+    check "update succeeds" "" "$(q "$PROV10_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "after the update a write stores the jsonb DEFAULT as an object" "object" \
+        "$(q "$PROV10_DB" "INSERT INTO pj (id, payload, valid_from, valid_until) VALUES (2, 'after', '2024-01-01', 'infinity'); SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 2")"
+    check "the update does not rewrite existing rows" "string" "$(q "$PROV10_DB" "SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 1")"
+    q "$PROV10_DB" "ALTER TABLE pj ALTER COLUMN edit_note DROP DEFAULT" >/dev/null
+    check "a provenance column that lost its DEFAULT refuses the write" \
+        'ERROR:  sql_saga: provenance column "edit_note" of table "public.pj" has no DEFAULT' \
+        "$(q "$PROV10_DB" "INSERT INTO pj (id, payload, valid_from, valid_until) VALUES (3, 'x', '2024-01-01', 'infinity')" | grep -m1 '^ERROR')"
+    check "check_integrity names it" \
+        'ERROR:  sql_saga: integrity violation for era "valid" on table "public.pj": provenance column edit_note has no DEFAULT; repair with ALTER TABLE public.pj ALTER COLUMN edit_note SET DEFAULT ..., or set_era_provenance_columns' \
+        "$(q "$PROV10_DB" "SELECT sql_saga.check_integrity()" | grep -m1 '^ERROR')"
+    q "$PROV10_DB" "ALTER TABLE pj ALTER COLUMN edit_note SET DEFAULT 'kept'" >/dev/null
+    assert_integrity "$PROV10_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
@@ -3686,10 +3718,10 @@ else
         if ! version_lt "$NEW_VERSION" 1.7 && version_lt "$BASELINE_VERSION" 1.7; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.current_view_apply_trigger()"; fi
         # 1.9 adds the provenance row trigger (PUBLIC, it runs as the writer) and set_era_provenance_columns (PUBLIC
         # where the database's default privileges give it, as for every public management function).
-        if ! version_lt "$NEW_VERSION" 1.9; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.provenance_trigger() sql_saga.set_era_provenance_columns(regclass,name,name[])"; fi
+        if ! version_lt "$NEW_VERSION" 1.9 && version_lt "$BASELINE_VERSION" 1.9; then NEW_ROUTINES="$NEW_ROUTINES sql_saga.provenance_trigger() sql_saga.set_era_provenance_columns(regclass,name,name[])"; fi
         # 1.9 replaces add_era's 13-argument signature by the 14-argument one (provenance_columns); a pristine
         # baseline's entries move to the new signature unchanged (the update refuses any other privilege set).
-        if ! version_lt "$NEW_VERSION" 1.9; then
+        if ! version_lt "$NEW_VERSION" 1.9 && version_lt "$BASELINE_VERSION" 1.9; then
             ADD_ERA_OLD="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[])"
             ADD_ERA_NEW="sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[],name[])"
             while IFS= read -r entry; do

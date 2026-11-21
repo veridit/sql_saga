@@ -1,11 +1,11 @@
 # Restoring dumps: `pg_restore --clean` and dumps of older releases
 
-Status: implemented in 1.2 (`--clean`) and 1.3 (old dumps), current in 1.9. The decision record is in
+Status: implemented in 1.2 (`--clean`) and 1.3 (old dumps), current in 1.10. The decision record is in
 `doc/decision-log.md`, "Recognize the Teardown of `pg_restore --clean` in the Drop Protection", including the 1.4
 amendment. User procedures: README.md (restore sections) and `doc/upgrade.md`. Tests: 029,
 `devops/restore_roundtrip.sh` (variants `clean`, `clean_single_txn`, `clean_same`, `clean_psql`,
 `clean_psql_without_opt_in`, old-dump cases `old_dump_10`, `old_dump_11`, `old_dump_12`,
-`old_dump_17`, `old_dump_18`).
+`old_dump_17`, `old_dump_18`, `old_dump_19`).
 
 ## `pg_restore --clean` into a database that already holds sql_saga families
 
