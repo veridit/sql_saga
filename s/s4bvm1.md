@@ -34,7 +34,7 @@ Design: doc/design/provenance.md. Branch feature/provenance-columns. Failing tes
 ## Acceptance
 - [x] make test TESTS='001_install 161_provenance_columns' passes with the hand-written expected output
 - [x] Full fast suite, upgrade matrix 1.0..1.8 -> 1.9 and restore round trips green
-- [ ] Benchmarks 100 and 101 compared before and after, numbers recorded
+- [x] Benchmarks 100 and 101 compared before and after, numbers recorded
 
 ## Notes
 
