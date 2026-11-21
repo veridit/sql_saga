@@ -40,5 +40,6 @@ Design: doc/design/provenance.md. Branch feature/provenance-columns. Failing tes
 
 
 Owner 2026-11-21: provenance_columns is a named argument of add_era (principled, at creation) plus set_era_provenance_columns to add/change/remove later, mirroring ephemeral_columns. Requires replacing add_era's signature in the 1.9 update (generator must support a declared signature change; refuse if add_era privileges were customised).
+Build complete on feature/provenance-columns (a4fd156..e7ecc23): catalog + add_era arg + setter, managed trigger, native and PL/pgSQL planners, executor mark, check_integrity, drop protection, rename following, README. Test 161 passes under both planners; fast suite 146/146 on the installed build. Next: release 1.9 packaging.
 ## History
 - 2026-11-21T20:15 todo -> doing/active (take)
