@@ -1,7 +1,7 @@
 ---
 id: f86twg
 title: "Provenance columns: sql_saga stamps changed pieces, keeps carried ones"
-state: "doing"
+state: "done"
 type: spike
 priority: "medium"
 assignee: ["sabertooth"]
@@ -10,11 +10,10 @@ group: ""
 rank: "c"
 created: 2026-11-18
 updated: 2026-11-18
-doing_since: "2026-11-18T22:14"
-stage: "active"
 model: "claude"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-21T20:15"
 ---
 
 ## Goal
@@ -54,5 +53,7 @@ Correction of the previous note. Test 161 (hand-written expected = correct behav
 
 2026-11-21 owner with StatBus: 1-5 yes (2: always overwrite with DEFAULT; StatBus makes DEFAULT name the writer on every path before adopting 1.9, sql_saga's rule must not depend on how). Added: edit_comment as annotation_columns (carried keeps own, changed never inherits); clear refusal when a NOT NULL provenance DEFAULT gives NULL; backfill procedure with trigger valid_provenance. One open question: view change with an unchanged comment -> NULL or refuse.
 2026-11-21 19:15 owner: implement the smallest subset. Design rewritten (doc/design/provenance.md): provenance = ephemeral + filled from DEFAULT; edit_comment stays ephemeral (keep/modify/wipe already right on 1.8); annotation_columns withdrawn. Test 161 rewritten, hand-written expected output, differs from 1.8 only in designed changes. Not in subset: deliberate forgery via the executor's transaction-local marker.
+Reflection (open, 2026-11-21, sabertooth): Design settled with owner and StatBus 2026-11-21: doc/design/provenance.md (smallest subset), failing test 161 on feature/provenance-columns.
 ## History
 - 2026-11-18T22:14 todo -> doing/active (take)
+- 2026-11-21T20:15 doing/active -> done (done); was doing_since: 2026-11-18T22:14
