@@ -39,5 +39,6 @@ Branch feature/provenance-columns. Catalog: sql_saga.era.provenance_columns name
 ## Notes
 
 
+Owner 2026-11-21: provenance_columns is a named argument of add_era (principled, at creation) plus set_era_provenance_columns to add/change/remove later, mirroring ephemeral_columns. Requires replacing add_era's signature in the 1.9 update (generator must support a declared signature change; refuse if add_era privileges were customised).
 ## History
 - 2026-11-21T20:15 todo -> doing/active (take)
