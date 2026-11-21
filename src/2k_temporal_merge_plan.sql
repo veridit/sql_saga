@@ -79,6 +79,8 @@ DECLARE
     v_multirange_type regtype;
     v_range_subtype regtype;
     v_range_subtype_category char(1);
+    -- Provenance columns of the era (doc/design/provenance.md): stripped from changed pieces, compared when coalescing.
+    v_provenance_columns text[];
     v_valid_from_col name;
     v_valid_until_col name;
     v_valid_to_col name;
@@ -130,8 +132,10 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = target_table;
 
-    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type, e.multirange_type, e.range_subtype, e.range_subtype_category
-    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_multirange_type, v_range_subtype, v_range_subtype_category
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type, e.multirange_type, e.range_subtype, e.range_subtype_category,
+           COALESCE(e.provenance_columns::text[], '{}')
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_multirange_type, v_range_subtype, v_range_subtype_category,
+         v_provenance_columns
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
@@ -380,11 +384,12 @@ BEGIN
     -- between sessions: a shared cache of executable SQL lets one role make another role run SQL
     -- of its choosing (cache poisoning).
     -- The cache key includes source_table OID for within-session uniqueness.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         target_table::oid,
         source_table::oid,
         identity_columns,
         v_ephemeral_columns,
+        v_provenance_columns,
         mode,
         era_name,
         row_id_column,
@@ -2399,7 +2404,7 @@ BEGIN
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     %2$s as data_payload,
                     md5((jsonb_strip_nulls(%2$s))::text) as data_hash,
-                    CASE 
+                    CASE %4$s
                         WHEN s_data_payload IS NULL THEN t_ephemeral_payload
                         ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
                     END as ephemeral_payload,
@@ -2411,10 +2416,19 @@ BEGIN
             $SQL$,
                 v_lookup_cols_sans_valid_from_prefix, /* %1$s */
                 v_final_data_payload_expr,            /* %2$s */
-                p_log_trace                           /* %3$L */
+                p_log_trace,                          /* %3$L */
+                -- Provenance columns (doc/design/provenance.md): a new piece, or one whose data differs from the piece
+                -- it replaces, carries no provenance value, so the managed trigger fills it from the DEFAULT; an
+                -- untouched piece keeps the target's. Generated only for an era that has them.
+                CASE WHEN cardinality(v_provenance_columns) > 0 THEN format(
+                    $$WHEN s_data_payload IS NOT NULL
+                         AND (t_data_payload IS NULL OR jsonb_strip_nulls(%1$s) IS DISTINCT FROM jsonb_strip_nulls(t_data_payload))
+                        THEN (COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)) - %2$L::text[]$$,
+                    v_final_data_payload_expr, v_provenance_columns)
+                ELSE '' END                           /* %4$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
-    
+
             -- CTE 17: island_group
             v_sql := $SQL$
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -2427,7 +2441,7 @@ BEGIN
                         CASE
                             WHEN prev_valid_until IS NULL
                             OR prev_valid_until <> valid_from
-                            OR (prev_data_hash IS DISTINCT FROM data_hash)
+                            OR (prev_data_hash IS DISTINCT FROM data_hash)%1$s
                             THEN 1
                             ELSE 0
                         END as is_island_start
@@ -2435,7 +2449,7 @@ BEGIN
                         SELECT
                             *,
                             LAG(valid_until) OVER w as prev_valid_until,
-                            LAG(data_hash) OVER w as prev_data_hash,
+                            LAG(data_hash) OVER w as prev_data_hash,%2$s
                             LAG(data_payload) OVER w as prev_data_payload
                         FROM resolved_atomic_segments ras
                         WHERE ras.data_payload IS NOT NULL
@@ -2443,6 +2457,17 @@ BEGIN
                     ) s1
                 ) s2
             $SQL$;
+            -- Pieces with different provenance never coalesce (doc/design/provenance.md, decision 3); only for an era
+            -- that has provenance columns, so other plans are unchanged.
+            v_sql := format(v_sql,
+                CASE WHEN cardinality(v_provenance_columns) > 0
+                     THEN E'\n                            OR (prev_provenance IS DISTINCT FROM provenance)' ELSE '' END,
+                CASE WHEN cardinality(v_provenance_columns) > 0
+                     THEN format($$
+                            LAG(jsonb_strip_nulls(jsonb_build_object() || COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[])), '{}'::jsonb))) OVER w as prev_provenance,
+                            jsonb_strip_nulls(jsonb_build_object() || COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[])), '{}'::jsonb)) as provenance,$$,
+                                 v_provenance_columns)
+                     ELSE '' END);
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 17.5: coalesced_final_segments

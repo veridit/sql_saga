@@ -16,7 +16,9 @@ use pgrx::prelude::*;
 /// Hash the catalog definitions the cached templates depend on:
 /// - source: live column names, order, type OID and typmod;
 /// - target: qualified name, live column names, order, type OID, typmod, NOT NULL,
-///   default expression, identity and generated kind, and the primary key columns.
+///   default expression, identity and generated kind, and the primary key columns;
+/// - the provenance columns of the target's eras (doc/design/provenance.md), which decide what the planner
+///   strips from changed pieces and what it compares when coalescing.
 ///
 /// Each field is a separate JSON array element and the whole value is serialized as JSON, so
 /// a name containing delimiter characters can never spell another column list.
@@ -40,7 +42,13 @@ pub fn schema_fingerprint(source_oid: u32, target_oid: u32) -> u64 {
               LEFT JOIN pg_catalog.pg_attrdef AS d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
               WHERE a.attrelid = {tgt}::oid AND a.attnum > 0 AND NOT a.attisdropped), \
            (SELECT pg_catalog.to_jsonb(i.indkey::int2[]) FROM pg_catalog.pg_index AS i \
-              WHERE i.indrelid = {tgt}::oid AND i.indisprimary) \
+              WHERE i.indrelid = {tgt}::oid AND i.indisprimary), \
+           (SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(e.era_name, e.provenance_columns) \
+                        ORDER BY e.era_name), '[]'::jsonb) \
+              FROM sql_saga.era AS e \
+              JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name \
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.table_schema \
+              WHERE c.oid = {tgt}::oid) \
          )::text",
         src = source_oid,
         tgt = target_oid,
