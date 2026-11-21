@@ -2,10 +2,10 @@
 \set QUIET 1
 SET client_min_messages = warning;
 \i sql/include/test_setup.sql
--- Provenance columns (doc/design/provenance.md, hug f86twg). Written before the feature: on 1.8 the
--- registration fails and every scenario shows today's wrong writer. The expected output states the
--- proposal's answers to the owner's questions 2-4 (source values overwritten; no coalescing across writers;
--- carried pieces keep writer and time). Each scenario runs in its own savepoint; all is rolled back.
+-- Provenance columns (doc/design/provenance.md, hug f86twg). Written before the feature: the expected output is
+-- the designed behaviour; on 1.8 it fails where that document says today's behaviour is wrong.
+-- edit_by and edit_at are provenance columns (ephemeral, filled from their DEFAULT); edit_comment stays a plain
+-- ephemeral column. Each scenario runs in a savepoint; everything is rolled back.
 \set ON_ERROR_STOP off
 BEGIN;
 CREATE SCHEMA pv_161;
@@ -13,7 +13,7 @@ SET LOCAL search_path = pv_161, public;
 DO $$BEGIN CREATE ROLE pv_161_admin; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 DO $$BEGIN CREATE ROLE pv_161_user; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 GRANT USAGE ON SCHEMA pv_161 TO pv_161_admin, pv_161_user;
--- edit_at counts from a sequence, so it is never reused; history shows whether a row kept its start value.
+-- edit_at counts from a sequence, never reused, so the history view can show whether a row kept its start value.
 CREATE SEQUENCE edit_seq;
 GRANT USAGE ON SEQUENCE edit_seq TO pv_161_admin, pv_161_user;
 CREATE TABLE lu (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date,
@@ -21,7 +21,8 @@ CREATE TABLE lu (id int NOT NULL, name text, valid_range daterange NOT NULL, val
                  edit_at bigint NOT NULL DEFAULT nextval('pv_161.edit_seq'),
                  edit_comment text);
 SELECT sql_saga.add_era('lu', 'valid_range', 'valid', valid_from_column_name => 'valid_from',
-                        valid_until_column_name => 'valid_until') AS ignored \gset
+                        valid_until_column_name => 'valid_until',
+                        ephemeral_columns => ARRAY['edit_by', 'edit_at', 'edit_comment']) AS ignored \gset
 SELECT sql_saga.add_unique_key('lu', ARRAY['id'], key_type => 'primary') AS ignored \gset
 SELECT sql_saga.add_for_portion_of_view('lu') AS ignored \gset
 GRANT SELECT, INSERT, UPDATE, DELETE ON lu, lu__for_portion_of_valid TO pv_161_admin, pv_161_user;
@@ -35,8 +36,7 @@ FROM lu ORDER BY id, valid_from;
 \echo '-- registration'
 SAVEPOINT reg;
 SELECT sql_saga.set_era_provenance_columns('lu', 'valid', ARRAY['edit_by', 'edit_at']);
-SELECT sql_saga.set_era_annotation_columns('lu', 'valid', ARRAY['edit_comment']);
-SELECT era_name, provenance_columns, annotation_columns FROM sql_saga.era WHERE table_name = 'lu';
+SELECT era_name, ephemeral_columns, provenance_columns FROM sql_saga.era WHERE table_name = 'lu';
 \if :ERROR
 ROLLBACK TO SAVEPOINT reg;
 \else
@@ -52,7 +52,7 @@ INSERT INTO started SELECT name, edit_at FROM lu;
 \echo '-- start: both pieces by the admin'
 TABLE history;
 
-\echo '-- 1+6: the user splits 2024 through the view: carried pieces keep admin/1, the changed piece is the user''s'
+\echo '-- 1+6: the user splits 2024 through the view, comment untouched: untouched pieces keep writer, time and comment; the changed piece is the user''s and keeps the comment the user left'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 UPDATE lu__for_portion_of_valid SET name = 'mid', valid_from = '2024-04-01', valid_until = '2024-07-01' WHERE id = 1;
@@ -60,7 +60,25 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 2: a re-save of unchanged data writes nothing (edit_by and edit_at unchanged)'
+\echo '-- 1b: the same split with the comment modified'
+SAVEPOINT s;
+SET ROLE pv_161_user;
+UPDATE lu__for_portion_of_valid SET name = 'mid', edit_comment = 'user fixed mid-2024',
+       valid_from = '2024-04-01', valid_until = '2024-07-01' WHERE id = 1;
+RESET ROLE;
+TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 1c: the same split with the comment wiped'
+SAVEPOINT s;
+SET ROLE pv_161_user;
+UPDATE lu__for_portion_of_valid SET name = 'mid', edit_comment = NULL,
+       valid_from = '2024-04-01', valid_until = '2024-07-01' WHERE id = 1;
+RESET ROLE;
+TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 2: a re-save of unchanged data writes nothing'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 UPDATE lu__for_portion_of_valid SET name = 'A', valid_from = '2024-01-01', valid_until = '2025-01-01' WHERE id = 1;
@@ -69,7 +87,7 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 3: the user sets 2025+ to the admin''s 2024 value: two rows, not one credited to either'
+\echo '-- 3: the user sets 2025+ to the admin''s 2024 value: two rows, the new one credited to the user'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 UPDATE lu__for_portion_of_valid SET name = 'A', valid_from = '2025-01-01', valid_until = 'infinity' WHERE id = 1;
@@ -77,7 +95,7 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 4: a direct UPDATE that tries to set the writer gets the real writer'
+\echo '-- 4: a direct UPDATE that sets the writer gets the real writer'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 UPDATE lu SET name = 'B2', edit_by = 'pv_161_admin', edit_at = 0 WHERE valid_from = '2025-01-01';
@@ -85,7 +103,7 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 5: a direct UPDATE that does not touch the writer still records the user'
+\echo '-- 5: a direct UPDATE that does not touch the writer still records the user (the comment is the user''s to keep)'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 UPDATE lu SET name = 'B3' WHERE valid_from = '2025-01-01';
@@ -93,7 +111,15 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 7: temporal_merge PATCH by the user: the new piece is the user''s, the shrunk carried piece stays admin/1'
+\echo '-- 5b: a direct UPDATE that only moves the period keeps writer and time, whatever it sets'
+SAVEPOINT s;
+SET ROLE pv_161_user;
+UPDATE lu SET valid_until = '2030-01-01', edit_by = 'pv_161_user' WHERE valid_from = '2025-01-01';
+RESET ROLE;
+TABLE history;
+ROLLBACK TO SAVEPOINT s;
+
+\echo '-- 7: temporal_merge PATCH by the user: the new piece is the user''s, the shrunk untouched piece stays the admin''s'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 CREATE TEMP TABLE src (row_id int, id int, name text, valid_from date, valid_until date);
@@ -104,7 +130,7 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 8: a source that supplies the writer (import on behalf of someone) is overwritten too'
+\echo '-- 8: a source that supplies the writer is overruled by the DEFAULT'
 SAVEPOINT s;
 SET ROLE pv_161_user;
 CREATE TEMP TABLE src2 (row_id int, id int, name text, valid_from date, valid_until date, edit_by name, edit_at bigint);
@@ -115,24 +141,7 @@ RESET ROLE;
 TABLE history;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 10: a comment written with a change lands on the changed piece only; carried pieces keep theirs'
-SAVEPOINT s;
-SET ROLE pv_161_user;
-UPDATE lu__for_portion_of_valid SET name = 'mid', edit_comment = 'user fixed mid-2024',
-       valid_from = '2024-04-01', valid_until = '2024-07-01' WHERE id = 1;
-RESET ROLE;
-TABLE history;
-ROLLBACK TO SAVEPOINT s;
-
-\echo '-- 11: a direct UPDATE of data without a new comment does not keep the old comment'
-SAVEPOINT s;
-SET ROLE pv_161_user;
-UPDATE lu SET name = 'B4' WHERE valid_from = '2025-01-01';
-RESET ROLE;
-TABLE history;
-ROLLBACK TO SAVEPOINT s;
-
-\echo '-- 12: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named'
+\echo '-- 9: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named'
 SAVEPOINT s;
 ALTER TABLE lu ALTER COLUMN edit_by SET DEFAULT NULLIF(current_user, 'pv_161_user'::name);
 SET ROLE pv_161_user;
@@ -140,25 +149,28 @@ UPDATE lu SET name = 'B5' WHERE valid_from = '2025-01-01';
 RESET ROLE;
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 13: the owner backfills inside one transaction with the managed trigger disabled'
+\echo '-- 10: the owner backfills inside one transaction with the managed trigger disabled'
 SAVEPOINT s;
 ALTER TABLE lu DISABLE TRIGGER valid_provenance;
 UPDATE lu SET edit_by = 'pv_161_user' WHERE valid_from = '2025-01-01';
 ALTER TABLE lu ENABLE TRIGGER valid_provenance;
 TABLE history;
-\echo '-- 13b: a provenance trigger left disabled is reported by check_integrity'
+\echo '-- 10b: a provenance trigger left disabled is reported by check_integrity'
 ALTER TABLE lu DISABLE TRIGGER valid_provenance;
 SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT s;
 
-\echo '-- 9: registration refusals'
+\echo '-- 11: registration refusals: no DEFAULT; not an ephemeral column; removing a provenance column from ephemeral'
 SAVEPOINT s;
 ALTER TABLE lu ADD COLUMN note text;
-SELECT sql_saga.set_era_provenance_columns('lu', 'valid', ARRAY['note']);
+SELECT sql_saga.set_era_ephemeral_columns('lu', 'valid', ARRAY['edit_by', 'edit_at', 'edit_comment', 'note']);
+SELECT sql_saga.set_era_provenance_columns('lu', 'valid', ARRAY['edit_by', 'edit_at', 'note']);
 ROLLBACK TO SAVEPOINT s;
 SAVEPOINT s;
-SELECT sql_saga.add_era('lu', 'valid_range', 'valid2', ephemeral_columns => ARRAY['edit_by'],
-                        provenance_columns => ARRAY['edit_by']);
+SELECT sql_saga.set_era_provenance_columns('lu', 'valid', ARRAY['edit_by', 'name']);
+ROLLBACK TO SAVEPOINT s;
+SAVEPOINT s;
+SELECT sql_saga.set_era_ephemeral_columns('lu', 'valid', ARRAY['edit_comment']);
 ROLLBACK TO SAVEPOINT s;
 
 ROLLBACK;

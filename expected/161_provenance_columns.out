@@ -5,14 +5,9 @@
  
 (1 row)
 
- set_era_annotation_columns 
-----------------------------
- 
-(1 row)
-
- era_name | provenance_columns | annotation_columns 
-----------+--------------------+--------------------
- valid    | {edit_by,edit_at}  | {edit_comment}
+ era_name |       ephemeral_columns        | provenance_columns 
+----------+--------------------------------+--------------------
+ valid    | {edit_by,edit_at,edit_comment} | {edit_by,edit_at}
 (1 row)
 
 -- start: both pieces by the admin
@@ -22,60 +17,16 @@
   1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
 (2 rows)
 
--- 1+6: the user splits 2024 through the view: carried pieces keep admin/1, the changed piece is the user's
+-- 1+6: the user splits 2024 through the view, comment untouched: untouched pieces keep writer, time and comment; the changed piece is the user's and keeps the comment the user left
  id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
 ----+------+-------------------------+--------------+-------------+--------------
   1 | A    | [2024-01-01,2024-04-01) | pv_161_admin | kept from A | admin set A
-  1 | mid  | [2024-04-01,2024-07-01) | pv_161_user  | new         | 
+  1 | mid  | [2024-04-01,2024-07-01) | pv_161_user  | new         | admin set A
   1 | A    | [2024-07-01,2025-01-01) | pv_161_admin | kept from A | admin set A
   1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
 (4 rows)
 
--- 2: a re-save of unchanged data writes nothing (edit_by and edit_at unchanged)
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
-(2 rows)
-
--- 3: the user sets 2025+ to the admin's 2024 value: two rows, not one credited to either
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | A    | [2025-01-01,infinity)   | pv_161_user  | new         | 
-(2 rows)
-
--- 4: a direct UPDATE that tries to set the writer gets the real writer
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | B2   | [2025-01-01,infinity)   | pv_161_user  | new         | 
-(2 rows)
-
--- 5: a direct UPDATE that does not touch the writer still records the user
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | B3   | [2025-01-01,infinity)   | pv_161_user  | new         | 
-(2 rows)
-
--- 7: temporal_merge PATCH by the user: the new piece is the user's, the shrunk carried piece stays admin/1
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2024-10-01) | pv_161_admin | kept from A | admin set A
-  1 | late | [2024-10-01,2025-01-01) | pv_161_user  | new         | 
-  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
-(3 rows)
-
--- 8: a source that supplies the writer (import on behalf of someone) is overwritten too
- id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
-----+------+-------------------------+--------------+-------------+--------------
-  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
-  2 | new  | [2024-01-01,infinity)   | pv_161_user  | new         | 
-(3 rows)
-
--- 10: a comment written with a change lands on the changed piece only; carried pieces keep theirs
+-- 1b: the same split with the comment modified
  id | name |       valid_range       |   edit_by    |   edit_at   |    edit_comment     
 ----+------+-------------------------+--------------+-------------+---------------------
   1 | A    | [2024-01-01,2024-04-01) | pv_161_admin | kept from A | admin set A
@@ -84,27 +35,87 @@
   1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
 (4 rows)
 
--- 11: a direct UPDATE of data without a new comment does not keep the old comment
+-- 1c: the same split with the comment wiped
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2024-04-01) | pv_161_admin | kept from A | admin set A
+  1 | mid  | [2024-04-01,2024-07-01) | pv_161_user  | new         | 
+  1 | A    | [2024-07-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
+(4 rows)
+
+-- 2: a re-save of unchanged data writes nothing
  id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
 ----+------+-------------------------+--------------+-------------+--------------
   1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
-  1 | B4   | [2025-01-01,infinity)   | pv_161_user  | new         | 
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
 (2 rows)
 
--- 12: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named
-ERROR:  sql_saga: provenance column "edit_by" of "pv_161.lu": its DEFAULT gave NULL for the writing role pv_161_user
+-- 3: the user sets 2025+ to the admin's 2024 value: two rows, the new one credited to the user
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | A    | [2025-01-01,infinity)   | pv_161_user  | new         | admin set B
+(2 rows)
+
+-- 4: a direct UPDATE that sets the writer gets the real writer
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | B2   | [2025-01-01,infinity)   | pv_161_user  | new         | admin set B
+(2 rows)
+
+-- 5: a direct UPDATE that does not touch the writer still records the user (the comment is the user's to keep)
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | B3   | [2025-01-01,infinity)   | pv_161_user  | new         | admin set B
+(2 rows)
+
+-- 5b: a direct UPDATE that only moves the period keeps writer and time, whatever it sets
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | B    | [2025-01-01,2030-01-01) | pv_161_admin | kept from B | admin set B
+(2 rows)
+
+-- 7: temporal_merge PATCH by the user: the new piece is the user's, the shrunk untouched piece stays the admin's
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2024-10-01) | pv_161_admin | kept from A | admin set A
+  1 | late | [2024-10-01,2025-01-01) | pv_161_user  | new         | admin set A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
+(3 rows)
+
+-- 8: a source that supplies the writer is overruled by the DEFAULT
+ id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
+----+------+-------------------------+--------------+-------------+--------------
+  1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
+  1 | B    | [2025-01-01,infinity)   | pv_161_admin | kept from B | admin set B
+  2 | new  | [2024-01-01,infinity)   | pv_161_user  | new         | 
+(3 rows)
+
+-- 9: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named
+ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu": its DEFAULT gave NULL for the writing role pv_161_user
 HINT:  The DEFAULT must name the writer for every role that writes this table.
--- 13: the owner backfills inside one transaction with the managed trigger disabled
+-- 10: the owner backfills inside one transaction with the managed trigger disabled
  id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
 ----+------+-------------------------+--------------+-------------+--------------
   1 | A    | [2024-01-01,2025-01-01) | pv_161_admin | kept from A | admin set A
   1 | B    | [2025-01-01,infinity)   | pv_161_user  | kept from B | admin set B
 (2 rows)
 
--- 13b: a provenance trigger left disabled is reported by check_integrity
+-- 10b: a provenance trigger left disabled is reported by check_integrity
 ERROR:  sql_saga: integrity violation for era "valid" on table "pv_161.lu": provenance trigger valid_provenance is disabled; repair with ALTER TABLE pv_161.lu ENABLE TRIGGER valid_provenance
--- 9: registration refusals
+-- 11: registration refusals: no DEFAULT; not an ephemeral column; removing a provenance column from ephemeral
+ set_era_ephemeral_columns 
+---------------------------
+ 
+(1 row)
+
 ERROR:  sql_saga: provenance column "note" of table "pv_161.lu" has no DEFAULT
-HINT:  sql_saga fills a provenance column from its DEFAULT on every write. Give it one, e.g. ALTER TABLE pv_161.lu ALTER COLUMN note SET DEFAULT ...
-ERROR:  sql_saga: column "edit_by" of table "pv_161.lu" is listed both as ephemeral and as provenance
-HINT:  A provenance column is already excluded from change detection; list it in one list only.
+HINT:  sql_saga fills a provenance column from its DEFAULT. Give it one, e.g. ALTER TABLE pv_161.lu ALTER COLUMN note SET DEFAULT ...
+ERROR:  sql_saga: provenance column "name" of table "pv_161.lu" is not an ephemeral column of era "valid"
+HINT:  Add it to ephemeral_columns first (set_era_ephemeral_columns): writer and time must not count as a change of data.
+ERROR:  sql_saga: column "edit_by" of table "pv_161.lu" is a provenance column of era "valid" and must stay ephemeral
+HINT:  Remove it from provenance_columns first (set_era_provenance_columns).
