@@ -804,6 +804,27 @@ fn resolve_payloads(
 
         let target_data = covering_target.map(|t| t.data_payload.clone());
 
+        // Provenance columns (doc/design/provenance.md): a new piece, or one whose data differs from the piece it
+        // replaces, carries no provenance value, so the column's DEFAULT fills it (the managed trigger evaluates it
+        // as the writing role). An untouched piece keeps the target's values.
+        let ephemeral_payload = if ctx.era.provenance_columns.is_empty() {
+            ephemeral_payload
+        } else {
+            let data_changed = match (&data_payload, &target_data) {
+                (Some(d), Some(t)) => !maps_equal_ignoring_nulls(d, t),
+                (Some(_), None) => true,
+                _ => false,
+            };
+            ephemeral_payload.map(|mut eph| {
+                if data_changed {
+                    for col in &ctx.era.provenance_columns {
+                        eph.remove(col);
+                    }
+                }
+                eph
+            })
+        };
+
         // Skip segments with no source or target coverage
         if data_payload.is_none() && covering_target.is_none() {
             continue;
@@ -982,6 +1003,8 @@ fn coalesce_segments(
                 && c.valid_until == seg.valid_from
                 && c.data_hash.is_some()
                 && c.data_hash == seg.data_hash
+                // Never merge pieces with different provenance (doc/design/provenance.md, decision 3).
+                && same_provenance(&c.ephemeral_payload, &seg.ephemeral_payload, &_ctx.era.provenance_columns)
         });
 
         if can_merge {
@@ -1490,6 +1513,19 @@ fn classify_single_diff(d: &DiffRow, update_rank: Option<usize>, is_numeric: boo
             (PlanAction::Error, None)
         }
     }
+}
+
+/// True when two pieces agree on every provenance column (absent and null count as equal: both get the DEFAULT).
+fn same_provenance(
+    a: &Option<serde_json::Map<String, serde_json::Value>>,
+    b: &Option<serde_json::Map<String, serde_json::Value>>,
+    provenance_columns: &[String],
+) -> bool {
+    provenance_columns.iter().all(|col| {
+        let va = a.as_ref().and_then(|m| m.get(col)).filter(|v| !v.is_null());
+        let vb = b.as_ref().and_then(|m| m.get(col)).filter(|v| !v.is_null());
+        va == vb
+    })
 }
 
 /// Merge data_payload and ephemeral_payload into a single map.

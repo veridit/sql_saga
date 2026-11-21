@@ -45,7 +45,8 @@ pub fn introspect_all(
                 e.multirange_type::text,
                 e.range_subtype::text,
                 e.range_subtype_category::text,
-                COALESCE(e.ephemeral_columns::text[], '{{}}'::text[])
+                COALESCE(e.ephemeral_columns::text[], '{{}}'::text[]),
+                COALESCE(e.provenance_columns::text[], '{{}}'::text[])
             FROM sql_saga.era AS e
             JOIN pg_class c ON c.relname = e.table_name
             JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
@@ -91,6 +92,10 @@ pub fn introspect_all(
             .get::<Vec<String>>(9)
             .map_err(|e| format!("{e}"))?
             .unwrap_or_default();
+        let provenance_cols: Vec<String> = era_row
+            .get::<Vec<String>>(10)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
 
         let era = EraMetadata {
             range_col,
@@ -102,6 +107,7 @@ pub fn introspect_all(
             range_subtype,
             range_subtype_category: subtype_cat_str.chars().next().unwrap_or(' '),
             ephemeral_columns: ephemeral_cols,
+            provenance_columns: provenance_cols,
         };
 
         // 2. PK columns (filtered by temporal cols derived from era)

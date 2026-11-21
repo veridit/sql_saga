@@ -98,6 +98,7 @@
 -- 9: a provenance DEFAULT that gives NULL for the writing role is refused with the column and role named
 ERROR:  sql_saga: provenance column "edit_by" of table "pv_161.lu": its DEFAULT gave NULL for the writing role pv_161_user
 HINT:  The DEFAULT must name the writer for every role that writes this table.
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- 10: the owner backfills inside one transaction with the managed trigger disabled
  id | name |       valid_range       |   edit_by    |   edit_at   | edit_comment 
 ----+------+-------------------------+--------------+-------------+--------------

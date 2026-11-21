@@ -286,6 +286,8 @@ pub struct EraMetadata {
     pub range_subtype: String,
     pub range_subtype_category: char,
     pub ephemeral_columns: Vec<String>,
+    /// Ephemeral columns filled from their DEFAULT on changed pieces (doc/design/provenance.md).
+    pub provenance_columns: Vec<String>,
 }
 
 // ── Source row (read from source table via SPI) ──

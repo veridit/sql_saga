@@ -15,11 +15,15 @@ DO $$BEGIN CREATE ROLE pv_161_admin; EXCEPTION WHEN duplicate_object THEN NULL; 
 DO $$BEGIN CREATE ROLE pv_161_user; EXCEPTION WHEN duplicate_object THEN NULL; END$$;
 GRANT USAGE ON SCHEMA pv_161 TO pv_161_admin, pv_161_user;
 -- edit_at counts from a sequence, never reused, so the history view can show whether a row kept its start value.
+-- Wrapped in a function: sql_saga treats a bare nextval() DEFAULT as a generated key and never copies it; a real
+-- edit_at is a timestamp DEFAULT such as statement_timestamp().
 CREATE SEQUENCE edit_seq;
 GRANT USAGE ON SEQUENCE edit_seq TO pv_161_admin, pv_161_user;
+CREATE FUNCTION next_edit() RETURNS bigint LANGUAGE sql AS $$ SELECT nextval('pv_161.edit_seq') $$;
+GRANT EXECUTE ON FUNCTION next_edit() TO pv_161_admin, pv_161_user;
 CREATE TABLE lu (id int NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date,
                  edit_by name NOT NULL DEFAULT current_user,
-                 edit_at bigint NOT NULL DEFAULT nextval('pv_161.edit_seq'),
+                 edit_at bigint NOT NULL DEFAULT pv_161.next_edit(),
                  edit_comment text);
 SELECT sql_saga.add_era('lu', 'valid_range', 'valid', valid_from_column_name => 'valid_from',
                         valid_until_column_name => 'valid_until',

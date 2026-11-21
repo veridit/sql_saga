@@ -64,7 +64,10 @@ BEGIN
             RETURN NEW;
         END IF;
     ELSIF coalesce(pg_catalog.current_setting('sql_saga.provenance_carry', true), '') = TG_RELID::text THEN
-        RETURN NEW;
+        -- An INSERT by temporal_merge: the planner gave an untouched piece its old values and a changed or new piece
+        -- none, so keep what is there and fill only what is missing.
+        SELECT coalesce(pg_catalog.array_agg(p.col), '{}') INTO v_provenance
+        FROM pg_catalog.unnest(v_provenance) AS p(col) WHERE v_new -> p.col IS NULL OR v_new -> p.col = 'null'::jsonb;
     END IF;
 
     FOREACH v_col IN ARRAY v_provenance LOOP

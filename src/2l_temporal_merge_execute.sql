@@ -927,6 +927,10 @@ BEGIN
                     RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING INSERTS ---', v_log_id;
                 END IF;
                 -- 3. Execute INSERT operations and capture generated IDs
+                -- Provenance columns (doc/design/provenance.md): the planner gave each untouched piece its old values and
+                -- each changed or new piece none; this transaction-local mark tells the managed trigger to keep the given
+                -- values and fill only the missing ones from their DEFAULT. Cleared right after the INSERTs.
+                PERFORM pg_catalog.set_config('sql_saga.provenance_carry', temporal_merge_execute.target_table::oid::text, true);
                 IF v_all_cols_ident IS NOT NULL THEN
                      DECLARE
                         v_entity_id_update_jsonb_build TEXT;
@@ -1128,6 +1132,7 @@ BEGIN
                         EXECUTE v_sql;
                      END;
                 END IF;
+                PERFORM pg_catalog.set_config('sql_saga.provenance_carry', '', true);
 
                 IF v_log_step_timing THEN
                     v_t_done := clock_timestamp();
@@ -1187,6 +1192,7 @@ BEGIN
                 END IF;
             EXCEPTION
                 WHEN OTHERS THEN
+                    PERFORM pg_catalog.set_config('sql_saga.provenance_carry', '', true);
                     -- If an error occurs, ensure constraints and search_path are reset before re-raising.
                     IF v_old_search_path IS NOT NULL THEN
                         IF v_deferrable_constraints IS NOT NULL THEN

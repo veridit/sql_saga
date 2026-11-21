@@ -1124,6 +1124,28 @@ BEGIN
         END IF;
     END LOOP;
 
+    /* Provenance columns (1.9, doc/design/provenance.md): the managed trigger exists and is enabled. */
+    FOR r IN
+        SELECT e.table_schema, e.table_name, e.era_name, t.tgenabled,
+               pg_catalog.format('%s_provenance', e.era_name) AS trigger_name
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_namespace AS n ON n.nspname = e.table_schema
+        JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, e.table_name)
+        LEFT JOIN pg_catalog.pg_trigger AS t
+               ON (t.tgrelid, t.tgname) = (c.oid, pg_catalog.format('%s_provenance', e.era_name))
+              AND t.tgfoid = 'sql_saga.provenance_trigger()'::pg_catalog.regprocedure
+        WHERE e.provenance_columns IS NOT NULL AND (t.oid IS NULL OR t.tgenabled = 'D')
+        ORDER BY e.table_schema, e.table_name, e.era_name
+    LOOP
+        IF r.tgenabled IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": provenance trigger % is missing; repair with set_era_provenance_columns',
+                r.era_name, pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.trigger_name);
+        END IF;
+        RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": provenance trigger % is disabled; repair with ALTER TABLE % ENABLE TRIGGER %',
+            r.era_name, pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.trigger_name),
+            pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.trigger_name);
+    END LOOP;
+
     /* SYSTEM_TIME invariants have the highest managed-object priority. */
     FOR r IN
         SELECT ste.*, e.range_column_name
