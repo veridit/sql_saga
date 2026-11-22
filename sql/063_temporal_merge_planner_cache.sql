@@ -82,7 +82,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- The schema is hardcoded here, which is fine for this specific test.
                 -- We add a space to not match "target_rows".
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target %' THEN
@@ -164,7 +165,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- We add a space to not match temp tables.
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk_not_null %' THEN
                     has_seq_scan := true;
@@ -252,7 +254,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- We add a space to not match temp tables or other target tables.
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk %' THEN
                     has_seq_scan := true;
