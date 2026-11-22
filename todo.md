@@ -5,6 +5,26 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Version 1.11, temporal_merge typed data payload (hug 7t5hd7, nw3qmt; tag and CI recorded at release)
+- Since v1.0, the two planners put different JSON in the plan and the executor read it through `->>` and a text cast:
+  the PL/pgSQL planner failed on every array or composite column and on a jsonb holding a JSON string ("malformed
+  array literal"); the native (default) planner rounded numeric through f64 (12345678901234567890.1234... stored as
+  12345678901234567000, 1.10 as 1.1) and stored a jsonb value of a new entity's later slice as a JSON string
+- Fix: the native reader carries numeric exactly and json/jsonb as themselves; the executor (src/2l and
+  native/src/executor_cache.rs) reads arrays, composites, json and jsonb (and domains over them) with their type via
+  jsonb_populate_record, and keeps the fast text cast for scalars (exact for both planners' scalar forms, checked
+  under DateStyle SQL/DMY, IntervalStyle sql_standard and an offset time zone). A first version decoded every column
+  through jsonb_populate_record and cost about 2-4% on temporal_merge; reverted to per-type
+- Test 162 (failing first) runs one scenario under both planners with identical output; native unit tests for the
+  reader (CI). Release gate: from every baseline, an array and a 20-digit numeric after the update; on the v1.10
+  binaries the same steps give 12345678901234567000 and "malformed array literal"
+- Not in 1.11: the PL/pgSQL planner strips nulls nested inside a jsonb value (hug y37p3x)
+- Acceptance (local): 147 fast regressions; generator suite 1.4-1.11 and wiring; upgrade paths 1.0..1.10 -> 1.11 GREEN,
+  0 FAIL; restore 12 cases plus old dumps 1.0/1.1/1.2/1.7/1.8/1.9/1.10. Benchmarks, 3 runs each (load 15-28):
+  temporal_merge PATCH parent 264-266 ms against 262-265 (v1.10), child 275-278 against 274-277; seeds and DML equal
+  within noise
+- Release checklist in doc/upgrade.md records the 1.9-1.11 lessons; doc/upgrade-1.10.md frozen
+
 ## 2026-11-22: Version 1.10, provenance trigger corrections (tag v1.10 at 39da88a, CI 44971023328 green; hug 9msfzx)
 - Probing the 1.9 trigger beyond test 161 found three defects in released 1.9, fixed with hand-written failing
   scenarios first (161: 15-17, both planners): a jsonb provenance DEFAULT was stored as a JSON string (the DEFAULT
