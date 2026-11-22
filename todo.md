@@ -5,7 +5,7 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
-## 2026-11-22: Version 1.10, provenance trigger corrections (hug 9msfzx; tag and CI recorded at release)
+## 2026-11-22: Version 1.10, provenance trigger corrections (tag v1.10 at 39da88a, CI 44971023328 green; hug 9msfzx)
 - Probing the 1.9 trigger beyond test 161 found three defects in released 1.9, fixed with hand-written failing
   scenarios first (161: 15-17, both planners): a jsonb provenance DEFAULT was stored as a JSON string (the DEFAULT
   was evaluated as text; now `to_jsonb(DEFAULT)` keeps the type); a provenance column whose DEFAULT was dropped after
