@@ -1,15 +1,20 @@
 ---
 id: nw3qmt
 title: "Native planner loses numeric precision"
-state: todo
+state: "doing"
 type: bug
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzy"
 created: 2026-11-22
 updated: 2026-11-22
+doing_since: "2026-11-22T03:18"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "feature/provenance-columns"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ Situation: native/src/reader.rs parse_typed_value parses numeric/decimal/money/r
 - [ ] Fast suite green; make test-native green in CI
 
 ## Notes
+
+
+## History
+- 2026-11-22T03:18 todo -> doing/active (take)
