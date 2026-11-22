@@ -1314,6 +1314,10 @@ SELECT sql_saga.add_era(
 
 **Note:** Synchronized columns add a small performance overhead due to trigger execution. For bulk data loading, the range-only approach is recommended.
 
+The era's columns, its checks (`NOT isempty(valid_range)` and `valid_from < valid_until`) and its synchronization
+trigger belong to the era. From 1.13 a `DROP COLUMN`, `DROP CONSTRAINT` or `DROP TRIGGER` that would remove one of
+them, directly or by `CASCADE`, is refused; remove them with `sql_saga.drop_era()`.
+
 To ensure performant foreign key checks, `add_foreign_key` automatically creates an optimal index (GIST for temporal tables, B-tree for regular tables) on the foreign key columns. This can be disabled via the `create_index` parameter. The index is automatically removed when the foreign key is dropped.
 
 #### Deactivate

@@ -16,7 +16,9 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
   the range type, so DROP TYPE ... CASCADE still names the type). drop_synchronize_temporal_columns_trigger clears the
   trigger name before its DROP TRIGGER (metadata first). Attribution joins schema, table and name.
 - Tests written first and RED on 1.12: 094 (s9, s9_boundary, s9_sync_trigger, s9_range_column), 038 (5 era rows,
-  incl. function cascade and range-only era). Upgrade gate: on the v1.12 binaries all four drops succeed.
+  incl. function cascade and range-only era). Upgrade gate RED check: with the frozen v1.12 install script (the 1.13
+  library, which has no native change) all four drops succeed; the matrix's v1.12 path, built from tag 676370d, passes
+  the gate after the update.
 - Review (tmp/journal.md): sanctioned paths probed and unchanged (drop_era RESTRICT/CASCADE/cleanup, sync drop/re-add,
   DROP TABLE, DROP SCHEMA CASCADE, renames, pg_restore --clean via 029). Out of scope: DISABLE TRIGGER (filed a5sdk3:
   check_integrity does not report a disabled sync trigger), session_replication_role=replica.
