@@ -750,8 +750,8 @@ fn build_column_list_cte_query(
                     format_type(cdc.atttypid, -1),
                     CASE
                         WHEN cdc.attname = ANY({nn_def_arr}::text[])
-                        THEN format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%3$I, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname, {target_oid}::oid::regclass::text)
-                        ELSE format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%2$I', cdc.attname, cdc.attname, {target_oid}::oid::regclass::text)
+                        THEN format('COALESCE(%s, t.%I)', CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cdc.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, p.data->%L))).%I', {target_oid}::oid::regclass::text, cdc.attname, cdc.attname, cdc.attname) ELSE format('(p.data->>%L)::%s', cdc.attname, format_type(cdc.atttypid, -1)) END, cdc.attname)
+                        ELSE CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cdc.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, p.data->%L))).%I', {target_oid}::oid::regclass::text, cdc.attname, cdc.attname, cdc.attname) ELSE format('(p.data->>%L)::%s', cdc.attname, format_type(cdc.atttypid, -1)) END
                     END
                 ),
             ', ') FROM common_data_cols cdc),
@@ -775,14 +775,12 @@ fn build_column_list_cte_query(
             (SELECT string_agg(
                 CASE
                     WHEN cfi.attnotnull AND cfi.atthasdef THEN
-                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
-                            cfi.attname,
-                            cfi.attname,
-                            pg_get_expr(ad.adbin, ad.adrelid),
-                            {target_oid}::oid::regclass::text
+                        format('COALESCE(%s, %s)',
+                            CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cfi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', {target_oid}::oid::regclass::text, cfi.attname, cfi.attname, cfi.attname) ELSE format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)) END,
+                            pg_get_expr(ad.adbin, ad.adrelid)
                         )
                     ELSE
-                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cfi.attname, cfi.attname, {target_oid}::oid::regclass::text)
+                        CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cfi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', {target_oid}::oid::regclass::text, cfi.attname, cfi.attname, cfi.attname) ELSE format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)) END
                 END,
                 ', ' ORDER BY cfi.attnum
              )
@@ -794,14 +792,12 @@ fn build_column_list_cte_query(
             (SELECT string_agg(
                 CASE
                     WHEN cffi.attnotnull AND cffi.atthasdef THEN
-                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
-                            cffi.attname,
-                            cffi.attname,
-                            pg_get_expr(ad.adbin, ad.adrelid),
-                            {target_oid}::oid::regclass::text
+                        format('COALESCE(%s, %s)',
+                            CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cffi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', {target_oid}::oid::regclass::text, cffi.attname, cffi.attname, cffi.attname) ELSE format('(s.full_data->>%L)::%s', cffi.attname, format_type(cffi.atttypid, -1)) END,
+                            pg_get_expr(ad.adbin, ad.adrelid)
                         )
                     ELSE
-                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cffi.attname, cffi.attname, {target_oid}::oid::regclass::text)
+                        CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cffi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', {target_oid}::oid::regclass::text, cffi.attname, cffi.attname, cffi.attname) ELSE format('(s.full_data->>%L)::%s', cffi.attname, format_type(cffi.atttypid, -1)) END
                 END,
                 ', ' ORDER BY cffi.attnum
              )
