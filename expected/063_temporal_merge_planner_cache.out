@@ -153,7 +153,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- The schema is hardcoded here, which is fine for this specific test.
                 -- We add a space to not match "target_rows".
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target %' THEN
@@ -178,8 +179,8 @@ NOTICE:  Explaining:
                         source_table.row_id /* v_causal_select_expr */ as causal_id,
                         source_table.id,  -- v_non_temporal_lookup_cols_select_list_prefix
                         source_table.valid_from as valid_from, source_table.valid_until as valid_until, /* v_source_temporal_cols_expr */
-                        jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) /* v_source_data_payload_expr */ AS data_payload,
-                        jsonb_strip_nulls(jsonb_build_object()) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object('value', source_table.value), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object('value', source_table.value)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object('value', source_table.value)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) END) /* v_source_data_payload_expr */ AS data_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object(), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object()) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object()) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object()) END) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
                         jsonb_build_object('id', source_table.id) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
                         source_table.id IS NULL /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
                         (true) /* v_lookup_cols_are_null_expr */ as lookup_columns_unavailable,
@@ -195,7 +196,13 @@ NOTICE:  Explaining:
                 FROM source_data;
             
 NOTICE:  Seq Scan on source1 source_table (actual rows=1.00 loops=1)
-NOTICE:    Buffers: shared hit=1
+NOTICE:    Buffers: shared (masked)
+NOTICE:    InitPlan 2
+NOTICE:      ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
 NOTICE:  ---
@@ -278,7 +285,7 @@ NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=1.00 loo
 NOTICE:                      Filter: lookup_columns_unavailable
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=41, local read=5
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -303,16 +310,16 @@ NOTICE:  Explaining:
                     ) AS t  /* v_target_rows_filter */
             
 NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1.00 loops=1)
-NOTICE:    Buffers: shared hit=3, local hit=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:    ->  Unique (actual rows=1.00 loops=1)
-NOTICE:          Buffers: shared hit=3, local hit=1
+NOTICE:          Buffers: shared (masked)
 NOTICE:          ->  Incremental Sort (actual rows=1.00 loops=1)
 NOTICE:                Sort Key: inner_t.id, inner_t.valid_from
 NOTICE:                Presorted Key: inner_t.id
 NOTICE:                Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
-NOTICE:                Buffers: shared hit=3, local hit=1
+NOTICE:                Buffers: shared (masked)
 NOTICE:                ->  Nested Loop (actual rows=1.00 loops=1)
-NOTICE:                      Buffers: shared hit=3, local hit=1
+NOTICE:                      Buffers: shared (masked)
 NOTICE:                      ->  Unique (actual rows=1.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:                            ->  Sort (actual rows=1.00 loops=1)
@@ -325,7 +332,7 @@ NOTICE:                                        Buffers: local hit=1
 NOTICE:                      ->  Index Scan using target_pkey on target inner_t (actual rows=1.00 loops=1)
 NOTICE:                            Index Cond: (id = si.id)
 NOTICE:                            Index Searches: 1
-NOTICE:                            Buffers: shared hit=3
+NOTICE:                            Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (id);
 NOTICE:  ---
@@ -353,7 +360,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -375,7 +382,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=38
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -398,7 +405,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=10
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -423,7 +430,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_new_flag ON COMMIT DROP AS
@@ -433,7 +440,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=36
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_nk_json ON COMMIT DROP AS
@@ -449,7 +456,7 @@ NOTICE:            Sort Method: quicksort  Memory: 25kB
 NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=38
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
 NOTICE:  ---
@@ -509,7 +516,7 @@ NOTICE:                        One-Time Filter: s1.is_new_entity
 NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=64, local hit=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -531,7 +538,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
@@ -554,7 +561,7 @@ NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1.0
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (id);
 NOTICE:  ---
@@ -590,7 +597,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50, local read=2
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -605,7 +612,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=26
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -656,7 +663,7 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=24
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_with_unified_ids ON COMMIT DROP AS
@@ -678,7 +685,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=32
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points ON COMMIT DROP AS
@@ -695,7 +702,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=26
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
@@ -721,7 +728,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:                ->  Seq Scan on time_points (actual rows=4.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=26
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
 NOTICE:  ---
@@ -759,8 +766,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -816,6 +823,12 @@ NOTICE:                        ->  Hash (actual rows=0.50 loops=2)
 NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.50 loops=2)
 NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                        SubPlan 2
+NOTICE:                          ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
+NOTICE:                        SubPlan 3
+NOTICE:                          ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
 NOTICE:          ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
@@ -824,7 +837,7 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=64, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
 NOTICE:  ---
@@ -857,8 +870,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -897,12 +910,18 @@ NOTICE:                        ->  WorkTable Scan on running_payload r (never ex
 NOTICE:                        ->  Hash (never executed)
 NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
 NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                        SubPlan 2
+NOTICE:                          ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
+NOTICE:                        SubPlan 3
+NOTICE:                          ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
 NOTICE:          ->  Sort (never executed)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                ->  CTE Scan on running_payload (never executed)
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=3
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE new_segments_no_target;
 NOTICE:  ---
@@ -936,7 +955,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
 NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=129
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
@@ -1017,7 +1036,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=80
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -1028,7 +1047,7 @@ NOTICE:  Explaining:
                     s_data_payload, t_data_payload,
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb) as data_payload,
-                    md5((jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)))::text) as data_hash,
+                    md5((CASE WHEN pg_catalog.jsonb_path_exists(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'strict $.*.**{1 to last} ? (@ == null)') THEN (COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) END)::text) as data_hash,
                     CASE 
                         WHEN s_data_payload IS NULL THEN t_ephemeral_payload
                         ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
@@ -1041,8 +1060,11 @@ NOTICE:  Explaining:
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=66
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -1089,7 +1111,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=54
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -1135,7 +1157,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=66
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -1170,7 +1192,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -1202,7 +1224,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on diff d (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan_with_op ON COMMIT DROP AS
@@ -1316,7 +1338,7 @@ NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 1
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -1349,7 +1371,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 WITH RECURSIVE ordered_plan AS (
@@ -1506,7 +1528,7 @@ NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 8kB
 NOTICE:                            ->  CTE Scan on moves_with_batch mb (actual rows=0.00 loops=1)
 NOTICE:                                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared (masked)
 \echo '--- OK: Verified that EXPLAIN plan is optimal. ---'
 --- OK: Verified that EXPLAIN plan is optimal. ---
 ROLLBACK TO SAVEPOINT s1;
@@ -1620,7 +1642,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- We add a space to not match temp tables.
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk_not_null %' THEN
                     has_seq_scan := true;
@@ -1644,8 +1667,8 @@ NOTICE:  Explaining:
                         source_table.row_id /* v_causal_select_expr */ as causal_id,
                         source_table.lu_id, source_table.type,  -- v_non_temporal_lookup_cols_select_list_prefix
                         source_table.valid_from as valid_from, source_table.valid_until as valid_until, /* v_source_temporal_cols_expr */
-                        jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) /* v_source_data_payload_expr */ AS data_payload,
-                        jsonb_strip_nulls(jsonb_build_object()) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object('value', source_table.value), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object('value', source_table.value)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object('value', source_table.value)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) END) /* v_source_data_payload_expr */ AS data_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object(), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object()) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object()) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object()) END) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
                         jsonb_build_object('type', source_table.type, 'lu_id', source_table.lu_id) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
                         source_table.type IS NULL AND source_table.lu_id IS NULL /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
                         (true) /* v_lookup_cols_are_null_expr */ as lookup_columns_unavailable,
@@ -1661,7 +1684,13 @@ NOTICE:  Explaining:
                 FROM source_data;
             
 NOTICE:  Seq Scan on source_nk_not_null source_table (actual rows=1.00 loops=1)
-NOTICE:    Buffers: shared hit=1
+NOTICE:    Buffers: shared (masked)
+NOTICE:    InitPlan 2
+NOTICE:      ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
 NOTICE:  ---
@@ -1744,7 +1773,7 @@ NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=1.00 loo
 NOTICE:                      Filter: lookup_columns_unavailable
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44, local read=5
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -1769,16 +1798,16 @@ NOTICE:  Explaining:
                     ) AS t  /* v_target_rows_filter */
             
 NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1.00 loops=1)
-NOTICE:    Buffers: shared hit=3, local hit=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:    ->  Unique (actual rows=1.00 loops=1)
-NOTICE:          Buffers: shared hit=3, local hit=1
+NOTICE:          Buffers: shared (masked)
 NOTICE:          ->  Incremental Sort (actual rows=1.00 loops=1)
 NOTICE:                Sort Key: inner_t.type, inner_t.lu_id, inner_t.valid_from
 NOTICE:                Presorted Key: inner_t.type, inner_t.lu_id
 NOTICE:                Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
-NOTICE:                Buffers: shared hit=3, local hit=1
+NOTICE:                Buffers: shared (masked)
 NOTICE:                ->  Nested Loop (actual rows=1.00 loops=1)
-NOTICE:                      Buffers: shared hit=3, local hit=1
+NOTICE:                      Buffers: shared (masked)
 NOTICE:                      ->  Unique (actual rows=1.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:                            ->  Sort (actual rows=1.00 loops=1)
@@ -1791,7 +1820,7 @@ NOTICE:                                        Buffers: local hit=1
 NOTICE:                      ->  Index Scan using target_nk_not_null_pkey on target_nk_not_null inner_t (actual rows=1.00 loops=1)
 NOTICE:                            Index Cond: ((type = si.type) AND (lu_id = si.lu_id))
 NOTICE:                            Index Searches: 1
-NOTICE:                            Buffers: shared hit=3
+NOTICE:                            Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (lu_id, type);
 NOTICE:  ---
@@ -1819,7 +1848,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=49, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -1841,7 +1870,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -1864,7 +1893,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=10
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -1889,7 +1918,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_new_flag ON COMMIT DROP AS
@@ -1899,7 +1928,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=38
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_nk_json ON COMMIT DROP AS
@@ -1915,7 +1944,7 @@ NOTICE:            Sort Method: quicksort  Memory: 25kB
 NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
 NOTICE:  ---
@@ -1975,7 +2004,7 @@ NOTICE:                        One-Time Filter: s1.is_new_entity
 NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=67, local hit=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -1997,7 +2026,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
@@ -2020,7 +2049,7 @@ NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1.0
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (lu_id, type);
 NOTICE:  ---
@@ -2056,7 +2085,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=53, local read=2
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -2071,7 +2100,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -2122,7 +2151,7 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=26
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_with_unified_ids ON COMMIT DROP AS
@@ -2144,7 +2173,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=34
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points ON COMMIT DROP AS
@@ -2161,7 +2190,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
@@ -2187,7 +2216,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:                ->  Seq Scan on time_points (actual rows=4.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
 NOTICE:  ---
@@ -2225,8 +2254,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -2282,6 +2311,12 @@ NOTICE:                        ->  Hash (actual rows=0.50 loops=2)
 NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.50 loops=2)
 NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                        SubPlan 2
+NOTICE:                          ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
+NOTICE:                        SubPlan 3
+NOTICE:                          ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
 NOTICE:          ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
@@ -2290,7 +2325,7 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=67, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
 NOTICE:  ---
@@ -2323,8 +2358,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -2363,12 +2398,18 @@ NOTICE:                        ->  WorkTable Scan on running_payload r (never ex
 NOTICE:                        ->  Hash (never executed)
 NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
 NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                        SubPlan 2
+NOTICE:                          ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
+NOTICE:                        SubPlan 3
+NOTICE:                          ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
 NOTICE:          ->  Sort (never executed)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                ->  CTE Scan on running_payload (never executed)
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=3
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE new_segments_no_target;
 NOTICE:  ---
@@ -2402,7 +2443,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
 NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=134
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
@@ -2483,7 +2524,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=83
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -2494,7 +2535,7 @@ NOTICE:  Explaining:
                     s_data_payload, t_data_payload,
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb) as data_payload,
-                    md5((jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)))::text) as data_hash,
+                    md5((CASE WHEN pg_catalog.jsonb_path_exists(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'strict $.*.**{1 to last} ? (@ == null)') THEN (COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) END)::text) as data_hash,
                     CASE 
                         WHEN s_data_payload IS NULL THEN t_ephemeral_payload
                         ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
@@ -2507,8 +2548,11 @@ NOTICE:  Explaining:
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=68
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -2555,7 +2599,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -2601,7 +2645,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=68
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -2636,7 +2680,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -2668,7 +2712,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on diff d (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan_with_op ON COMMIT DROP AS
@@ -2782,7 +2826,7 @@ NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 1
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -2815,7 +2859,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 WITH RECURSIVE ordered_plan AS (
@@ -2972,7 +3016,7 @@ NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 8kB
 NOTICE:                            ->  CTE Scan on moves_with_batch mb (actual rows=0.00 loops=1)
 NOTICE:                                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 \echo '--- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---'
 --- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---
 ROLLBACK TO SAVEPOINT s2;
@@ -3107,7 +3151,8 @@ BEGIN
             has_seq_scan := false;
             FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
             LOOP
-                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- Planning-time buffer counts depend on catalog cache state, not on the plan: masked (they made this test flaky).
+                RAISE NOTICE '%', regexp_replace(rec."QUERY PLAN", '^(\s*Buffers: )shared hit=.*$', '\1shared (masked)');
                 -- We add a space to not match temp tables or other target tables.
                 IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk %' THEN
                     has_seq_scan := true;
@@ -3131,8 +3176,8 @@ NOTICE:  Explaining:
                         source_table.row_id /* v_causal_select_expr */ as causal_id,
                         source_table.es_id, source_table.lu_id, source_table.type,  -- v_non_temporal_lookup_cols_select_list_prefix
                         source_table.valid_from as valid_from, source_table.valid_until as valid_until, /* v_source_temporal_cols_expr */
-                        jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) /* v_source_data_payload_expr */ AS data_payload,
-                        jsonb_strip_nulls(jsonb_build_object()) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object('value', source_table.value), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object('value', source_table.value)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object('value', source_table.value)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) END) /* v_source_data_payload_expr */ AS data_payload,
+                        (CASE WHEN pg_catalog.jsonb_path_exists(jsonb_build_object(), 'strict $.*.**{1 to last} ? (@ == null)') THEN (jsonb_build_object()) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(jsonb_build_object()) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(jsonb_build_object()) END) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
                         jsonb_build_object('type', source_table.type, 'lu_id', source_table.lu_id, 'es_id', source_table.es_id) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
                         source_table.type IS NULL AND source_table.lu_id IS NULL AND source_table.es_id IS NULL /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
                         (true) /* v_lookup_cols_are_null_expr */ as lookup_columns_unavailable,
@@ -3148,7 +3193,13 @@ NOTICE:  Explaining:
                 FROM source_data;
             
 NOTICE:  Seq Scan on source_nk source_table (actual rows=2.00 loops=1)
-NOTICE:    Buffers: shared hit=1
+NOTICE:    Buffers: shared (masked)
+NOTICE:    InitPlan 2
+NOTICE:      ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
 NOTICE:  ---
@@ -3231,7 +3282,7 @@ NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=2.00 loo
 NOTICE:                      Filter: lookup_columns_unavailable
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=47, local read=5
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -3271,23 +3322,23 @@ NOTICE:  Explaining:
                     ) AS t  /* v_target_rows_filter */
             
 NOTICE:  Subquery Scan on unnamed_subquery (actual rows=2.00 loops=1)
-NOTICE:    Buffers: shared hit=6, local hit=2
+NOTICE:    Buffers: shared (masked)
 NOTICE:    ->  Unique (actual rows=2.00 loops=1)
-NOTICE:          Buffers: shared hit=6, local hit=2
+NOTICE:          Buffers: shared (masked)
 NOTICE:          ->  Unique (actual rows=2.00 loops=1)
-NOTICE:                Buffers: shared hit=6, local hit=2
+NOTICE:                Buffers: shared (masked)
 NOTICE:                ->  Sort (actual rows=2.00 loops=1)
 NOTICE:                      Sort Key: "*SELECT* 1".type, "*SELECT* 1".lu_id, "*SELECT* 1".es_id, "*SELECT* 1".valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
-NOTICE:                      Buffers: shared hit=6, local hit=2
+NOTICE:                      Buffers: shared (masked)
 NOTICE:                      ->  Result (actual rows=2.00 loops=1)
-NOTICE:                            Buffers: shared hit=6, local hit=2
+NOTICE:                            Buffers: shared (masked)
 NOTICE:                            ->  Append (actual rows=2.00 loops=1)
-NOTICE:                                  Buffers: shared hit=6, local hit=2
+NOTICE:                                  Buffers: shared (masked)
 NOTICE:                                  ->  Subquery Scan on "*SELECT* 1" (actual rows=1.00 loops=1)
-NOTICE:                                        Buffers: shared hit=3, local hit=1
+NOTICE:                                        Buffers: shared (masked)
 NOTICE:                                        ->  Nested Loop (actual rows=1.00 loops=1)
-NOTICE:                                              Buffers: shared hit=3, local hit=1
+NOTICE:                                              Buffers: shared (masked)
 NOTICE:                                              ->  HashAggregate (actual rows=1.00 loops=1)
 NOTICE:                                                    Group Key: si.type, si.lu_id
 NOTICE:                                                    Batches: 1  Memory Usage: 32kB
@@ -3299,11 +3350,11 @@ NOTICE:                                                          Buffers: local 
 NOTICE:                                              ->  Index Scan using target_nk_type_lu_id_idx on target_nk inner_t (actual rows=1.00 loops=1)
 NOTICE:                                                    Index Cond: ((type = si.type) AND (lu_id = si.lu_id) AND (lu_id IS NOT NULL))
 NOTICE:                                                    Index Searches: 1
-NOTICE:                                                    Buffers: shared hit=3
+NOTICE:                                                    Buffers: shared (masked)
 NOTICE:                                  ->  Subquery Scan on "*SELECT* 2" (actual rows=1.00 loops=1)
-NOTICE:                                        Buffers: shared hit=3, local hit=1
+NOTICE:                                        Buffers: shared (masked)
 NOTICE:                                        ->  Nested Loop (actual rows=1.00 loops=1)
-NOTICE:                                              Buffers: shared hit=3, local hit=1
+NOTICE:                                              Buffers: shared (masked)
 NOTICE:                                              ->  HashAggregate (actual rows=1.00 loops=1)
 NOTICE:                                                    Group Key: si_1.type, si_1.es_id
 NOTICE:                                                    Batches: 1  Memory Usage: 32kB
@@ -3315,9 +3366,9 @@ NOTICE:                                                          Buffers: local 
 NOTICE:                                              ->  Index Scan using target_nk_type_es_id_idx on target_nk inner_t_1 (actual rows=1.00 loops=1)
 NOTICE:                                                    Index Cond: ((type = si_1.type) AND (es_id = si_1.es_id) AND (es_id IS NOT NULL))
 NOTICE:                                                    Index Searches: 1
-NOTICE:                                                    Buffers: shared hit=3
+NOTICE:                                                    Buffers: shared (masked)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=2, local hit=15 read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (es_id, lu_id, type);
 NOTICE:  ---
@@ -3346,7 +3397,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=54, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -3368,7 +3419,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -3391,7 +3442,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=10
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -3416,7 +3467,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_new_flag ON COMMIT DROP AS
@@ -3426,7 +3477,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_nk_json ON COMMIT DROP AS
@@ -3442,7 +3493,7 @@ NOTICE:            Sort Method: quicksort  Memory: 25kB
 NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
 NOTICE:  ---
@@ -3502,7 +3553,7 @@ NOTICE:                        One-Time Filter: s1.is_new_entity
 NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70, local hit=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -3524,7 +3575,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
@@ -3547,7 +3598,7 @@ NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=2.0
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (es_id, lu_id, type);
 NOTICE:  ---
@@ -3583,7 +3634,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56, local read=2
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -3598,7 +3649,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=4.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=30
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -3649,7 +3700,7 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=8.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_with_unified_ids ON COMMIT DROP AS
@@ -3671,7 +3722,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on time_points_unified tpu (actual rows=8.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=36
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points ON COMMIT DROP AS
@@ -3688,7 +3739,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=8.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=30
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
@@ -3714,7 +3765,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:                ->  Seq Scan on time_points (actual rows=8.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=30
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
 NOTICE:  ---
@@ -3752,8 +3803,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -3817,6 +3868,12 @@ NOTICE:                                    ->  Hash (actual rows=0.40 loops=5)
 NOTICE:                                          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:                                          ->  CTE Scan on ordered_sources s (actual rows=0.40 loops=5)
 NOTICE:                                                Storage: Memory  Maximum Storage: 17kB
+NOTICE:                                    SubPlan 2
+NOTICE:                                      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                            Filter: (v = 'null'::jsonb)
+NOTICE:                                    SubPlan 3
+NOTICE:                                      ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                            Filter: (v = 'null'::jsonb)
 NOTICE:                      ->  Sort (actual rows=0.33 loops=6)
 NOTICE:                            Sort Key: running_payload.rn DESC
 NOTICE:                            Sort Method: quicksort  Memory: 25kB
@@ -3825,7 +3882,7 @@ NOTICE:                            ->  CTE Scan on running_payload (actual rows=
 NOTICE:                                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                  Buffers: local hit=6
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70, local read=1
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
 NOTICE:  ---
@@ -3858,8 +3915,8 @@ NOTICE:  Explaining:
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -3898,12 +3955,18 @@ NOTICE:                        ->  WorkTable Scan on running_payload r (never ex
 NOTICE:                        ->  Hash (never executed)
 NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
 NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                        SubPlan 2
+NOTICE:                          ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
+NOTICE:                        SubPlan 3
+NOTICE:                          ->  Function Scan on jsonb_each sn_1 (never executed)
+NOTICE:                                Filter: (v = 'null'::jsonb)
 NOTICE:          ->  Sort (never executed)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                ->  CTE Scan on running_payload (never executed)
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=3
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE new_segments_no_target;
 NOTICE:  ---
@@ -3937,7 +4000,7 @@ NOTICE:                Buffers: local hit=1
 NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
 NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=139
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
@@ -4018,7 +4081,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=86
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -4029,7 +4092,7 @@ NOTICE:  Explaining:
                     s_data_payload, t_data_payload,
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb) as data_payload,
-                    md5((jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)))::text) as data_hash,
+                    md5((CASE WHEN pg_catalog.jsonb_path_exists(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'strict $.*.**{1 to last} ? (@ == null)') THEN (COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)) END)::text) as data_hash,
                     CASE 
                         WHEN s_data_payload IS NULL THEN t_ephemeral_payload
                         ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
@@ -4042,8 +4105,11 @@ NOTICE:  Explaining:
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=6.00 loops=1)
 NOTICE:    Buffers: local hit=1
+NOTICE:    SubPlan 1
+NOTICE:      ->  Function Scan on jsonb_each sn (never executed)
+NOTICE:            Filter: (v = 'null'::jsonb)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -4090,7 +4156,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=58
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -4136,7 +4202,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=6)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -4171,7 +4237,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -4203,7 +4269,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on diff d (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan_with_op ON COMMIT DROP AS
@@ -4317,7 +4383,7 @@ NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 2
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=54
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -4350,7 +4416,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
 NOTICE:  Explaining: 
                 WITH RECURSIVE ordered_plan AS (
@@ -4507,7 +4573,7 @@ NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 8kB
 NOTICE:                            ->  CTE Scan on moves_with_batch mb (actual rows=0.00 loops=1)
 NOTICE:                                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44
+NOTICE:    Buffers: shared (masked)
 \echo '--- OK: Verified that EXPLAIN plan for natural key is optimal. ---'
 --- OK: Verified that EXPLAIN plan for natural key is optimal. ---
 ROLLBACK TO SAVEPOINT s3;

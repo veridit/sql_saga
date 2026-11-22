@@ -1250,8 +1250,8 @@ BEGIN
             -- First, determine payload semantics based on the mode name.
             IF mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
                 -- PATCH modes: Strip NULLs from source payload. NULL values in source are ignored.
-                v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
-                v_source_ephemeral_payload_expr := format('jsonb_strip_nulls(%s)', v_source_ephemeral_cols_jsonb_build);
+                v_source_data_payload_expr := format($sn$(CASE WHEN pg_catalog.jsonb_path_exists(%1$s, 'strict $.*.**{1 to last} ? (@ == null)') THEN (%1$s) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(%1$s) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(%1$s) END)$sn$, v_source_data_cols_jsonb_build);
+                v_source_ephemeral_payload_expr := format($sn$(CASE WHEN pg_catalog.jsonb_path_exists(%1$s, 'strict $.*.**{1 to last} ? (@ == null)') THEN (%1$s) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(%1$s) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(%1$s) END)$sn$, v_source_ephemeral_cols_jsonb_build);
             ELSIF mode = 'DELETE_FOR_PORTION_OF' THEN
                 v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
                 v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
@@ -1604,8 +1604,8 @@ BEGIN
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -1634,8 +1634,8 @@ BEGIN
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -1664,8 +1664,8 @@ BEGIN
                                 UNION ALL
                                 SELECT
                                     s.rn, s.source_row_id,
-                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
-                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    r.data_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.data_payload) END),
+                                    r.ephemeral_payload || (CASE WHEN pg_catalog.jsonb_path_exists(s.ephemeral_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (s.ephemeral_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(s.ephemeral_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(s.ephemeral_payload) END),
                                     s.valid_from, s.valid_until, s.causal_id,
                                     r.contributing_row_ids || s.source_row_id::BIGINT
                                 FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
@@ -2403,7 +2403,7 @@ BEGIN
                     s_data_payload, t_data_payload,
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     %2$s as data_payload,
-                    md5((jsonb_strip_nulls(%2$s))::text) as data_hash,
+                    md5((CASE WHEN pg_catalog.jsonb_path_exists(%2$s, 'strict $.*.**{1 to last} ? (@ == null)') THEN (%2$s) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(%2$s) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(%2$s) END)::text) as data_hash,
                     CASE %4$s
                         WHEN s_data_payload IS NULL THEN t_ephemeral_payload
                         ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
@@ -2422,7 +2422,7 @@ BEGIN
                 -- untouched piece keeps the target's. Generated only for an era that has them.
                 CASE WHEN cardinality(v_provenance_columns) > 0 THEN format(
                     $$WHEN s_data_payload IS NOT NULL
-                         AND (t_data_payload IS NULL OR jsonb_strip_nulls(%1$s) IS DISTINCT FROM jsonb_strip_nulls(t_data_payload))
+                         AND (t_data_payload IS NULL OR (CASE WHEN pg_catalog.jsonb_path_exists(%1$s, 'strict $.*.**{1 to last} ? (@ == null)') THEN (%1$s) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(%1$s) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(%1$s) END) IS DISTINCT FROM (CASE WHEN pg_catalog.jsonb_path_exists(t_data_payload, 'strict $.*.**{1 to last} ? (@ == null)') THEN (t_data_payload) - ARRAY(SELECT sn.k FROM pg_catalog.jsonb_each(t_data_payload) AS sn(k, v) WHERE sn.v = 'null'::jsonb) ELSE pg_catalog.jsonb_strip_nulls(t_data_payload) END))
                         THEN (COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)) - %2$L::text[]$$,
                     v_final_data_payload_expr, v_provenance_columns)
                 ELSE '' END                           /* %4$s */
@@ -2464,8 +2464,8 @@ BEGIN
                      THEN E'\n                            OR (prev_provenance IS DISTINCT FROM provenance)' ELSE '' END,
                 CASE WHEN cardinality(v_provenance_columns) > 0
                      THEN format($$
-                            LAG(jsonb_strip_nulls(jsonb_build_object() || COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[])), '{}'::jsonb))) OVER w as prev_provenance,
-                            jsonb_strip_nulls(jsonb_build_object() || COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[])), '{}'::jsonb)) as provenance,$$,
+                            LAG(COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[]) AND v <> 'null'::jsonb), '{}'::jsonb)) OVER w as prev_provenance,
+                            COALESCE((SELECT jsonb_object_agg(k, v) FROM jsonb_each(ras.ephemeral_payload) AS e(k, v) WHERE k = ANY (%1$L::text[]) AND v <> 'null'::jsonb), '{}'::jsonb) as provenance,$$,
                                  v_provenance_columns)
                      ELSE '' END);
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
