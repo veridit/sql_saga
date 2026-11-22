@@ -5,6 +5,21 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Version 1.12, PL/pgSQL planner keeps nested jsonb nulls (hug y37p3x; tag and CI recorded at release)
+- Since v1.0 the PL/pgSQL planner stripped payloads with jsonb_strip_nulls, which also removes nulls nested inside a
+  jsonb column's value: MERGE_ENTITY_PATCH stored [1, {"k": null}] as [1, {}], and adjacent pieces that differed only by
+  such a null were merged. The native (default) planner was right. Now only top-level null keys are removed, at all
+  ten payload sites in src/2k; jsonb_strip_nulls stays as the fast path when jsonpath finds no deeper null
+  (200000 payloads: 118 ms against 49 ms for jsonb_strip_nulls, 420 ms for an unconditional key filter)
+- Test 162 gained both cases (failing first), identical under both planners. Release gate from every baseline: PATCH
+  of [1, {"k": null}] under the PL/pgSQL planner; on the v1.11 binaries the same steps store [1, {}]
+- Test 063 was flaky on planning-time buffer counts (3 of 8 runs failed on released v1.11); those lines are masked,
+  8 of 8 pass
+- Acceptance (local): 147 fast regressions; generator suite 1.4-1.12 and wiring; upgrade paths 1.0..1.11 -> 1.12 GREEN,
+  0 FAIL; restore 20/20 incl. old dumps 1.0..1.11. Benchmark 101 under the PL/pgSQL planner (load 11-28): PATCH parent
+  831-880 ms against 838-890 (v1.11), child 868-1000 against 867-1000; native planner unchanged (267/274-282 ms)
+- doc/upgrade.md describes 1.12, the 1.11 guide is frozen as doc/upgrade-1.11.md
+
 ## 2026-11-22: Version 1.11, temporal_merge typed data payload (tag v1.11 at 61343fa, CI 44983601001 green; hug 7t5hd7, nw3qmt)
 - Since v1.0, the two planners put different JSON in the plan and the executor read it through `->>` and a text cast:
   the PL/pgSQL planner failed on every array or composite column and on a jsonb holding a JSON string ("malformed
