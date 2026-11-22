@@ -1,15 +1,20 @@
 ---
 id: 7yz6xb
 title: "Document the complex and expected-failure test cases"
-state: todo
+state: "doing"
 type: docs
 priority: "low"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zh"
 created: 2026-11-16
 updated: 2026-11-16
+doing_since: "2026-11-22T21:35"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "feature/provenance-columns"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -30,3 +35,7 @@ Candidates: tests using SAVEPOINT expect_error patterns and the adversarial test
 - [ ] Each listed test starts with a short statement of what it proves
 
 ## Notes
+
+
+## History
+- 2026-11-22T21:35 todo -> doing/active (take)
