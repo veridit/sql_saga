@@ -120,10 +120,18 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.10 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.11' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.provenance_trigger()') IS NULL
+           OR pg_catalog.strpos(pg_catalog.pg_get_functiondef('sql_saga.temporal_merge_execute(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean)'::pg_catalog.regprocedure), 'jsonb_populate_record(NULL::%s') = 0 THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.11 is not the supported v1.11 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.11 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 or 1.10, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10 or 1.11, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6, v1.7, v1.8, v1.9 or v1.10 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6, v1.7, v1.8, v1.9, v1.10 or v1.11 extension.';
     END IF;
 
     /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */

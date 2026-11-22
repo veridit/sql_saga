@@ -12,16 +12,19 @@ import released_tree
 R = gen.RELEASE
 
 ROOT = Path(__file__).resolve().parent.parent
+# The 1.11 generator is specified against the released v1.11 source tree (later releases change src/).
+SRC = Path(released_tree.released_src('v1.11'))
+DEVOPS = Path(released_tree.released_devops('v1.11'))
 
 
 class Packaging(unittest.TestCase):
     def build(self, src=None, versions=None, devops=None):
-        return gen.build(str(src or ROOT / 'src'), str(versions or ROOT / 'versions'),
-                         str(devops or ROOT / 'devops'), '1.11')
+        return gen.build(str(src or SRC), str(versions or ROOT / 'versions'),
+                         str(devops or DEVOPS), '1.11')
 
     def copy(self, d, name):
         dst = Path(d) / name
-        shutil.copytree(ROOT / name, dst)
+        shutil.copytree({'src': SRC, 'devops': DEVOPS}.get(name, ROOT / name), dst)
         return dst
 
     def test_deterministic_framing_and_native_guards(self):

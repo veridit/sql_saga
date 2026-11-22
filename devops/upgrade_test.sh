@@ -26,7 +26,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.11: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.12: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -59,12 +59,12 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.11}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.12}
 # The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
-catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -105,6 +105,9 @@ frozen_artifacts() {
     fi
     if version_lt 1.10 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9; do echo "sql_saga--$source--1.10.sql"; done
+    fi
+    if version_lt 1.11 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10; do echo "sql_saga--$source--1.11.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -3678,6 +3681,25 @@ SELECT string_agg(tags::text || ':' || amount::text, ',' ORDER BY valid_range) F
     check "PL/pgSQL planner: the same" "$want_typed" \
         "$(printf 'BEGIN;\nSET LOCAL sql_saga.temporal_merge.use_plpgsql_planner = on;\n%s\nROLLBACK;\n' "$typed_merge" | sql "$TYPED_DB" | grep -m1 -E '^ERROR|^\{a\}')"
     assert_integrity "$TYPED_DB"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 1.12: the PL/pgSQL planner keeps nulls nested inside a jsonb value (jsonb_strip_nulls removed them under PATCH).
+if ! version_lt "$NEW_VERSION" 1.12; then
+    section "$BASELINE_VERSION nested jsonb nulls kept by the PL/pgSQL planner after the update to $NEW_VERSION" "expected RED"
+    NULLS_DB=${PREFIX}_nulls112
+    v13_db "$NULLS_DB" "CREATE TABLE jn (id integer NOT NULL, doc jsonb, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('jn', 'valid_range');
+SELECT sql_saga.add_unique_key('jn', ARRAY['id']);"
+    v13_restart "$NULLS_DB"
+    check "update succeeds" "" "$(q "$NULLS_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "PATCH under the PL/pgSQL planner keeps [1, {\"k\": null}]" '[1, {"k": null}]' \
+        "$(printf '%s\n' "SET sql_saga.temporal_merge.use_plpgsql_planner = on;
+CREATE TEMP TABLE jn_src (row_id integer, id integer, doc jsonb, valid_from date, valid_until date);
+INSERT INTO jn_src VALUES (1, 1, '[1, {\"k\": null}]', '2024-01-01', 'infinity');
+CALL sql_saga.temporal_merge(target_table => 'jn'::regclass, source_table => 'jn_src'::regclass, primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH');
+SELECT doc::text FROM jn;" | sql "$NULLS_DB" | grep -m1 -E '^ERROR|^\[')"
+    assert_integrity "$NULLS_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"

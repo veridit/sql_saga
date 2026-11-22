@@ -1,0 +1,1375 @@
+\echo Use "ALTER EXTENSION sql_saga UPDATE TO '1.11'" to load this file. \quit
+CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
+DO $native_guard_1_11$
+BEGIN
+    IF sql_saga.native_library_version() <> '1.11' THEN
+        RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.11', sql_saga.native_library_version()
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Install the sql_saga 1.11 native library and restart PostgreSQL before retrying ALTER EXTENSION.';
+    END IF;
+END;
+$native_guard_1_11$;
+SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('sql_saga 1.11 upgrade'));
+
+-- Executor for temporal_merge. This procedure contains the DML logic.
+CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_execute(
+    target_table regclass,
+    source_table regclass,
+    identity_columns TEXT[] DEFAULT NULL,
+    mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
+    era_name name DEFAULT 'valid',
+    row_id_column name DEFAULT 'row_id',
+    founding_id_column name DEFAULT NULL,
+    update_source_with_identity BOOLEAN DEFAULT false,
+    lookup_columns TEXT[] DEFAULT NULL,
+    delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
+    update_source_with_feedback BOOLEAN DEFAULT false,
+    feedback_status_column name DEFAULT NULL,
+    feedback_status_key name DEFAULT NULL,
+    feedback_error_column name DEFAULT NULL,
+    feedback_error_key name DEFAULT NULL,
+    ephemeral_columns TEXT[] DEFAULT NULL,
+    delay_constraints BOOLEAN DEFAULT true
+)
+LANGUAGE plpgsql AS $temporal_merge_execute$
+DECLARE
+    v_lookup_columns TEXT[];
+    v_target_table_ident TEXT := temporal_merge_execute.target_table::TEXT;
+    v_update_set_clause TEXT;
+    v_all_cols_ident TEXT;
+    v_all_cols_select TEXT;
+    v_entity_key_join_clause TEXT;
+    v_entity_key_select_list TEXT;
+    v_target_schema_name name;
+    v_target_table_name_only name;
+    v_valid_from_col name;
+    v_valid_until_col name;
+    v_valid_to_col name;
+    v_range_col name;
+    v_range_constructor name;
+    v_has_gist_index boolean;
+    v_has_target_gist_index boolean;
+    v_has_lookup_btree_index boolean;
+    v_log_index_checks boolean;
+    v_log_trace boolean;
+    v_log_sql boolean;
+    v_log_feedback boolean;
+    v_log_vars boolean;
+    v_log_execute boolean;
+    v_expected_idx_expr_with_bounds text;
+    v_expected_idx_expr_default text;
+    v_idx_rec record;
+    v_source_rel_oid oid;
+    v_source_rel_name_for_hint regclass;
+    v_range_subtype regtype;
+    v_valid_from_col_type regtype;
+    v_valid_until_col_type regtype;
+    v_insert_defaulted_columns TEXT[];
+    v_founding_defaulted_columns TEXT[];
+    v_all_cols_from_jsonb TEXT;
+    v_founding_all_cols_ident TEXT;
+    v_founding_all_cols_from_jsonb TEXT;
+    v_pk_cols name[];
+    v_feedback_set_clause TEXT;
+    v_sql TEXT;
+    v_causal_col name;
+    v_log_id TEXT;
+    v_summary_line TEXT;
+    v_not_null_defaulted_cols TEXT[];
+    v_update_statement_seqs INT[];
+    v_update_statement_seq INT;
+    v_source_col_names TEXT[];
+    v_cache sql_saga.temporal_merge_executor_cache;
+    v_use_native_executor boolean;
+    v_log_step_timing boolean;
+    v_t0 timestamptz;
+    v_t1 timestamptz;
+    v_t2 timestamptz;
+    v_t3 timestamptz;
+    v_t_delete timestamptz;
+    v_t_update timestamptz;
+    v_t_insert timestamptz;
+    v_t_done timestamptz;
+    v_partition_join_clauses TEXT[];
+    v_partition_plan_filters TEXT[];
+    v_partition_select_lists TEXT[];
+    v_partition_count INT;
+    v_part INT;
+BEGIN
+    v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
+    v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
+    v_log_index_checks := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_index_checks', true), ''), 'false')::boolean;
+    v_log_feedback := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_feedback', true), ''), 'false')::boolean;
+    v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
+    v_log_execute := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_execute', true), ''), 'false')::boolean;
+    v_log_step_timing := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_step_timing', true), ''), 'false')::boolean;
+    v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
+    IF v_log_step_timing THEN v_t0 := clock_timestamp(); END IF;
+
+    -- Identity and lookup columns are assumed to have been discovered and validated by the main temporal_merge procedure.
+    v_lookup_columns := COALESCE(temporal_merge_execute.lookup_columns, temporal_merge_execute.identity_columns);
+    v_causal_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
+
+    -- Use the native executor cache if the shared library is available.
+    v_use_native_executor := to_regproc('sql_saga.temporal_merge_executor_introspect') IS NOT NULL;
+
+    IF v_use_native_executor THEN
+        -- Single function call replaces ~570 lines of introspection + CTE logic.
+        -- On cache hit, returns immediately with zero SPI calls.
+        SELECT * INTO v_cache FROM sql_saga.temporal_merge_executor_introspect(
+            target_table => temporal_merge_execute.target_table::oid,
+            source_table => temporal_merge_execute.source_table::oid,
+            identity_columns => temporal_merge_execute.identity_columns,
+            lookup_columns => v_lookup_columns,
+            era_name => temporal_merge_execute.era_name,
+            ephemeral_columns => temporal_merge_execute.ephemeral_columns,
+            founding_id_column => temporal_merge_execute.founding_id_column,
+            row_id_column => temporal_merge_execute.row_id_column
+        );
+
+        -- Unpack cached values into local variables
+        v_range_col := v_cache.range_col;
+        v_range_constructor := v_cache.range_constructor;
+        v_range_subtype := v_cache.range_subtype::regtype;
+        v_valid_from_col := v_cache.valid_from_col;
+        v_valid_until_col := v_cache.valid_until_col;
+        v_valid_to_col := v_cache.valid_to_col;
+        v_valid_from_col_type := v_cache.valid_from_col_type::regtype;
+        v_valid_until_col_type := v_cache.valid_until_col_type::regtype;
+        v_pk_cols := v_cache.pk_cols::name[];
+        v_not_null_defaulted_cols := v_cache.not_null_defaulted_cols;
+        v_insert_defaulted_columns := v_cache.insert_defaulted_columns;
+        v_founding_defaulted_columns := v_cache.founding_defaulted_columns;
+        v_source_col_names := v_cache.source_col_names;
+        v_update_set_clause := v_cache.update_set_clause;
+        v_all_cols_ident := v_cache.all_cols_ident;
+        v_all_cols_select := v_cache.all_cols_select;
+        v_all_cols_from_jsonb := v_cache.all_cols_from_jsonb;
+        v_founding_all_cols_ident := v_cache.founding_all_cols_ident;
+        v_founding_all_cols_from_jsonb := v_cache.founding_all_cols_from_jsonb;
+        v_entity_key_join_clause := v_cache.entity_key_join_clause;
+        v_entity_key_select_list := v_cache.entity_key_select_list;
+        v_partition_join_clauses := v_cache.partition_join_clauses;
+        v_partition_plan_filters := v_cache.partition_plan_filters;
+        v_partition_select_lists := v_cache.partition_select_lists;
+
+        -- Still need schema name for constraint deferral later
+        SELECT n.nspname INTO v_target_schema_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = temporal_merge_execute.target_table;
+
+    ELSE
+        -- Fallback: PL/pgSQL introspection (original code path)
+
+    -- Introspect source columns to determine which columns are actually provided.
+    -- This allows us to handle partial source views correctly, especially for defaulted columns.
+    SELECT COALESCE(array_agg(attname::text), '{}')
+    INTO v_source_col_names
+    FROM pg_attribute
+    WHERE attrelid = temporal_merge_execute.source_table
+      AND attnum > 0
+      AND NOT attisdropped;
+
+    -- Introspect columns that are NOT NULL and have a DEFAULT. For these columns,
+    -- an incoming NULL in UPSERT mode should preserve the existing value rather
+    -- than cause a NOT NULL violation.
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_not_null_defaulted_cols
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = temporal_merge_execute.target_table
+      AND a.attnum > 0 AND NOT a.attisdropped AND a.atthasdef AND a.attnotnull;
+
+    -- Introspect era information to get the correct column names
+    SELECT n.nspname, c.relname
+    INTO v_target_schema_name, v_target_table_name_only
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = temporal_merge_execute.target_table;
+
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type::name, e.range_subtype
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_range_subtype
+    FROM sql_saga.era e
+    WHERE e.table_schema = v_target_schema_name
+      AND e.table_name = v_target_table_name_only
+      AND e.era_name = temporal_merge_execute.era_name;
+
+    IF v_range_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, sql_saga.__internal_display_name(temporal_merge_execute.target_table);
+    END IF;
+
+    -- Introspect the primary key columns, excluding temporal columns.
+    -- They will be excluded from UPDATE SET clauses.
+    -- Must happen after temporal columns are discovered.
+    SELECT COALESCE(array_agg(a.attname ORDER BY array_position(c.conkey, a.attnum)), '{}'::name[])
+    INTO v_pk_cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = temporal_merge_execute.target_table
+      AND c.contype = 'p'
+      AND a.attname NOT IN (v_range_col, v_valid_from_col, v_valid_until_col);
+
+    END IF; -- v_use_native_executor (introspection phase 1)
+
+    v_summary_line := format(
+        'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, lookup_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
+        temporal_merge_execute.target_table,
+        temporal_merge_execute.mode,
+        temporal_merge_execute.delete_mode,
+        temporal_merge_execute.identity_columns,
+        temporal_merge_execute.lookup_columns,
+        temporal_merge_execute.ephemeral_columns,
+        temporal_merge_execute.founding_id_column,
+        temporal_merge_execute.row_id_column
+    );
+
+    -- To ensure idempotency and avoid permission errors in complex transactions
+    -- with role changes, we drop and recreate the feedback table for each call.
+    IF to_regclass('pg_temp.temporal_merge_feedback') IS NOT NULL THEN
+        DROP TABLE pg_temp.temporal_merge_feedback;
+    END IF;
+    CREATE TEMP TABLE temporal_merge_feedback (LIKE sql_saga.temporal_merge_feedback) ON COMMIT DROP;
+
+    -- Create a unified, session-local cache for index checks to avoid redundant lookups.
+    IF to_regclass('pg_temp.temporal_merge_index_cache') IS NULL THEN
+        CREATE TEMP TABLE temporal_merge_index_cache (
+            rel_oid oid NOT NULL,
+            lookup_columns text[], -- NULL for GIST checks. NOT NULL for BTREE checks.
+            has_index boolean NOT NULL,
+            hint_rel_name regclass, -- NULL for BTREE checks. NOT NULL for GIST checks.
+
+            -- Enforce that this is either a GIST check or a BTREE check.
+            CHECK (
+                (lookup_columns IS NULL AND hint_rel_name IS NOT NULL) -- GIST
+                OR
+                (lookup_columns IS NOT NULL AND hint_rel_name IS NULL) -- BTREE
+            )
+        ) ON COMMIT DROP;
+
+        -- Unique index for GIST checks
+        CREATE UNIQUE INDEX ON temporal_merge_index_cache (rel_oid) WHERE lookup_columns IS NULL;
+        -- Unique index for BTREE checks
+        CREATE UNIQUE INDEX ON temporal_merge_index_cache (rel_oid, lookup_columns) WHERE lookup_columns IS NOT NULL;
+    END IF;
+
+    IF v_log_step_timing THEN v_t1 := clock_timestamp(); END IF;
+
+    -- Prepare expected normalized index expressions and logging flag for index checks
+    IF v_valid_from_col IS NOT NULL AND v_valid_until_col IS NOT NULL THEN
+        v_expected_idx_expr_with_bounds := format('%s(%s,%s,''[)'')', v_range_constructor, v_valid_from_col, v_valid_until_col);
+        v_expected_idx_expr_default := format('%s(%s,%s)', v_range_constructor, v_valid_from_col, v_valid_until_col);
+    ELSE
+        v_expected_idx_expr_with_bounds := NULL;
+        v_expected_idx_expr_default := NULL;
+    END IF;
+
+    -- Check cache for original source relation OID. This provides a fast path for repeated calls with the same view.
+    SELECT has_index, hint_rel_name
+    INTO v_has_gist_index, v_source_rel_name_for_hint
+    FROM pg_temp.temporal_merge_index_cache AS tmc
+    WHERE rel_oid = temporal_merge_execute.source_table AND tmc.lookup_columns IS NULL;
+
+    IF NOT FOUND THEN
+        -- On cache miss, resolve the relation if it's a view, perform the check, and populate the cache.
+        DECLARE
+            v_source_relkind char;
+            v_is_view boolean;
+        BEGIN
+            SELECT c.relkind INTO v_source_relkind
+            FROM pg_class c WHERE c.oid = temporal_merge_execute.source_table;
+            v_is_view := (v_source_relkind = 'v');
+
+            IF v_is_view THEN
+                -- It's a view, find the underlying table. Assumes a simple view with one base table.
+                SELECT d.refobjid INTO v_source_rel_oid
+                FROM pg_rewrite r
+                JOIN pg_depend d ON r.oid = d.objid
+                JOIN pg_class c_dep ON c_dep.oid = d.refobjid
+                WHERE r.ev_class = temporal_merge_execute.source_table
+                  AND d.refclassid = 'pg_class'::regclass
+                  AND r.rulename = '_RETURN'
+                  AND c_dep.relkind IN ('r', 'p', 'f') -- regular, partitioned, foreign
+                LIMIT 1;
+
+                v_source_rel_name_for_hint := v_source_rel_oid;
+            ELSE
+                v_source_rel_oid := source_table;
+                v_source_rel_name_for_hint := source_table;
+            END IF;
+
+            -- If we couldn't resolve a base table for a complex view, we cannot check for an index.
+            -- To avoid repeated expensive checks for this source, we assume an index exists and cache that assumption.
+            IF v_source_rel_oid IS NULL THEN
+                RAISE WARNING 'Could not determine the base table for source relation "%" (it may be a complex view). Skipping GIST index performance check.', sql_saga.__internal_display_name(temporal_merge_execute.source_table);
+                v_has_gist_index := true;
+                v_source_rel_name_for_hint := temporal_merge_execute.source_table; -- Fallback
+            ELSE
+                -- We have a resolvable base table. Check cache for it.
+                SELECT has_index
+                INTO v_has_gist_index
+                FROM pg_temp.temporal_merge_index_cache AS tmc
+                WHERE rel_oid = v_source_rel_oid AND tmc.lookup_columns IS NULL;
+
+                IF NOT FOUND THEN
+                    -- Still a cache miss, so perform the actual check on the base table.
+                    SELECT EXISTS (
+                        -- Check for an index on the range column itself
+                        SELECT 1
+                        FROM pg_index ix
+                        JOIN pg_class i ON i.oid = ix.indexrelid
+                        JOIN pg_am am ON am.oid = i.relam
+                        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+                        WHERE ix.indrelid = v_source_rel_oid
+                          AND am.amname = 'gist'
+                          AND ix.indkey IS NOT NULL AND array_length(ix.indkey, 1) = 1
+                          AND a.attname = v_range_col
+                        UNION ALL
+                        -- Check for an expression-based index on from/until columns (legacy/synchronized)
+                        SELECT 1
+                        FROM pg_index ix
+                        JOIN pg_class i ON i.oid = ix.indexrelid
+                        JOIN pg_am am ON am.oid = i.relam
+                        WHERE ix.indrelid = v_source_rel_oid
+                          AND am.amname = 'gist'
+                          AND ix.indexprs IS NOT NULL
+                          AND v_expected_idx_expr_with_bounds IS NOT NULL
+                          AND (
+                              regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_with_bounds
+                              OR regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_default
+                          )
+                    )
+                    INTO v_has_gist_index;
+
+                    IF v_log_index_checks THEN
+                        RAISE NOTICE 'Index check (SOURCE %) expected: "%", or "%"', v_source_rel_name_for_hint, v_expected_idx_expr_with_bounds, v_expected_idx_expr_default;
+                        FOR v_idx_rec IN
+                            SELECT i.relname AS index_name,
+                                   pg_get_indexdef(i.oid) AS indexdef,
+                                   regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') AS normalized_expr
+                            FROM pg_index ix
+                            JOIN pg_class i ON i.oid = ix.indexrelid
+                            JOIN pg_am am ON am.oid = i.relam
+                            WHERE ix.indrelid = v_source_rel_oid
+                              AND am.amname = 'gist'
+                        LOOP
+                            RAISE NOTICE 'GiST index: %, normalized expr: %', v_idx_rec.indexdef, v_idx_rec.normalized_expr;
+                        END LOOP;
+                        RAISE NOTICE 'Detected has_gist_index(SOURCE): %', v_has_gist_index;
+                    END IF;
+
+                    -- Populate cache for the base table.
+                    INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+                    VALUES (v_source_rel_oid, NULL, v_has_gist_index, v_source_rel_name_for_hint);
+                END IF;
+            END IF;
+
+            -- Now, populate the cache for the original source relation OID (which could be the view).
+            -- This is the key optimization for subsequent calls with the same view.
+            -- We only need to do this if the original source was different from the resolved one (i.e., it was a view).
+            IF temporal_merge_execute.source_table <> v_source_rel_oid THEN
+                INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+                VALUES (temporal_merge_execute.source_table, NULL, v_has_gist_index, v_source_rel_name_for_hint);
+            END IF;
+        END;
+    END IF;
+
+    IF NOT v_has_gist_index AND v_source_rel_name_for_hint IS NOT NULL THEN
+        DECLARE
+            v_source_row_count REAL;
+        BEGIN
+            -- Use the resolved base table OID for the row count check, as views often have reltuples=0.
+            SELECT c.reltuples INTO v_source_row_count FROM pg_class c WHERE c.oid = v_source_rel_name_for_hint::oid;
+            IF v_source_row_count >= 512 THEN
+                RAISE WARNING 'Performance warning: The source relation % lacks a GIST index on its temporal columns.', temporal_merge_execute.source_table
+                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%I);',
+                    v_source_rel_name_for_hint,
+                    v_range_col
+                );
+            END IF;
+        END;
+    END IF;
+
+    -- Check for GiST index on target table's temporal range.
+    -- We have already validated that the target table is a sql_saga era (see the earlier SELECT from sql_saga.era),
+    -- and loaded v_valid_from_col, v_valid_until_col and v_range_constructor accordingly. Therefore it is both
+    -- correct and sufficient to check for a GiST index on the expression
+    --   range_constructor(valid_from, valid_until, '[)')
+    -- for performance. Checking for a primary key is orthogonal and does not affect range search performance here.
+    SELECT EXISTS (
+        -- Check for an index on the range column itself
+        SELECT 1
+        FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+        WHERE ix.indrelid = v_target_table_ident::regclass
+          AND am.amname = 'gist'
+          AND ix.indkey IS NOT NULL AND array_length(ix.indkey, 1) = 1
+          AND a.attname = v_range_col
+        UNION ALL
+        -- Check for an expression-based index on from/until columns (legacy/synchronized)
+        SELECT 1
+        FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        WHERE ix.indrelid = v_target_table_ident::regclass
+          AND am.amname = 'gist'
+          AND ix.indexprs IS NOT NULL
+          AND v_expected_idx_expr_with_bounds IS NOT NULL
+          AND (
+              regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_with_bounds
+              OR regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_default
+          )
+    )
+    INTO v_has_target_gist_index;
+
+    IF v_log_index_checks THEN
+        RAISE NOTICE 'Index check (TARGET %) expected: "%", or "%"', temporal_merge_execute.target_table, v_expected_idx_expr_with_bounds, v_expected_idx_expr_default;
+        FOR v_idx_rec IN
+            SELECT i.relname AS index_name,
+                   pg_get_indexdef(i.oid) AS indexdef,
+                   regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') AS normalized_expr
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_am am ON am.oid = i.relam
+            WHERE ix.indrelid = v_target_table_ident::regclass
+              AND am.amname = 'gist'
+        LOOP
+            RAISE NOTICE 'GiST index: %, normalized expr: %', v_idx_rec.indexdef, v_idx_rec.normalized_expr;
+        END LOOP;
+        RAISE NOTICE 'Detected has_gist_index(TARGET): %', v_has_target_gist_index;
+    END IF;
+
+    IF NOT v_has_target_gist_index THEN
+        DECLARE
+            v_target_row_count REAL;
+        BEGIN
+            SELECT c.reltuples INTO v_target_row_count FROM pg_class c WHERE c.oid = temporal_merge_execute.target_table;
+            IF v_target_row_count >= 512 THEN
+                RAISE WARNING 'Performance warning: The target relation % lacks a GIST index on its temporal columns.', temporal_merge_execute.target_table
+                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%I);',
+                    v_target_table_ident,
+                    v_range_col
+                );
+            END IF;
+        END;
+    END IF;
+
+    -- Check for performance-critical BTREE index on target table's lookup columns.
+    -- This check is cached per transaction to avoid redundant lookups.
+    SELECT has_index
+    INTO v_has_lookup_btree_index
+    FROM pg_temp.temporal_merge_index_cache AS tmc
+    WHERE rel_oid = temporal_merge_execute.target_table
+      AND tmc.lookup_columns = v_lookup_columns;
+
+    IF NOT FOUND THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_am am ON am.oid = i.relam
+            WHERE ix.indrelid = v_target_table_ident::regclass
+              AND am.amname = 'btree'
+              AND array_length(ix.indkey, 1) >= cardinality(v_lookup_columns)
+              AND (
+                  SELECT array_agg(a.attname ORDER BY k.ord)
+                  FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+                  JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                  WHERE k.ord <= cardinality(v_lookup_columns)
+              )::name[] = v_lookup_columns::name[]
+        )
+        INTO v_has_lookup_btree_index;
+
+        INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+        VALUES (temporal_merge_execute.target_table, v_lookup_columns, v_has_lookup_btree_index, NULL);
+    END IF;
+
+    IF NOT v_has_lookup_btree_index THEN
+        DECLARE
+            v_target_row_count REAL;
+        BEGIN
+            SELECT c.reltuples INTO v_target_row_count FROM pg_class c WHERE c.oid = temporal_merge_execute.target_table;
+            IF v_target_row_count >= 512 THEN
+                RAISE NOTICE 'Performance hint: Consider adding a BTREE index on the target relation''s lookup columns (%) to accelerate entity filtering.', v_lookup_columns
+                USING HINT = format(
+                    'CREATE INDEX ON %s (%s);',
+                    v_target_table_ident,
+                    (SELECT string_agg(format('%I', col), ', ') FROM unnest(v_lookup_columns) AS col)
+                );
+            END IF;
+        END;
+    END IF;
+
+    IF v_log_step_timing THEN v_t2 := clock_timestamp(); END IF;
+
+    IF NOT v_use_native_executor THEN
+    -- Fallback: PL/pgSQL introspection for defaulted columns, column types, entity keys, and CTE
+
+    -- Auto-detect columns that should be excluded from INSERT statements.
+    -- We only exclude columns that cannot accept values (GENERATED ALWAYS).
+    -- Columns with DEFAULTs (atthasdef) and IDENTITY BY DEFAULT (attidentity='d') are INCLUDED
+    -- so that we can preserve values from history (payload).
+    -- For these columns, we use COALESCE(payload, default) in the INSERT generation to handle missing values.
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_insert_defaulted_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = temporal_merge_execute.target_table
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+      AND (a.attidentity = 'a' OR a.attgenerated <> '');
+
+    -- For founding INSERTs of new entities:
+    -- - Exclude IDENTITY BY DEFAULT ('d') so the database generates new IDs (sequences).
+    -- - Exclude GENERATED ALWAYS ('a') and GENERATED columns.
+    -- - INCLUDE columns with standard DEFAULTs (atthasdef) so we can COALESCE(payload, default).
+    --   This allows explicit values from source (if provided) or falls back to default.
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_founding_defaulted_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = temporal_merge_execute.target_table
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+      AND (a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
+
+    -- Also exclude synchronized columns, as the trigger will populate them.
+    IF v_valid_from_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_from_col;
+    END IF;
+    IF v_valid_until_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_until_col;
+    END IF;
+    IF v_valid_to_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_to_col;
+    END IF;
+    IF v_range_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_range_col;
+    END IF;
+
+    IF v_valid_from_col IS NOT NULL THEN
+        SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_from_col;
+    ELSE
+        -- For range-only tables, use the range subtype for casting
+        v_valid_from_col_type := v_range_subtype;
+    END IF;
+    IF v_valid_until_col IS NOT NULL THEN
+        SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_until_col;
+    ELSE
+        -- For range-only tables, use the range subtype for casting
+        v_valid_until_col_type := v_range_subtype;
+    END IF;
+
+    -- Dynamically construct join clause for composite entity key.
+    -- PERFORMANCE OPTIMIZATION: Pre-extract JSONB keys in the subquery SELECT list
+    -- so PostgreSQL can use them directly in Hash/Merge join conditions.
+    -- Without this, JSONB extraction in the WHERE clause forces a cross-join
+    -- with post-filtering, causing O(N*M) comparisons instead of O(N+M).
+    --
+    -- For NOT NULL columns: use = for Hash/Merge join performance.
+    -- For nullable columns (XOR pattern like legal_unit_id/establishment_id):
+    -- use COALESCE sentinel to enable NULL=NULL matching while preserving Hash Join.
+    -- IS NOT DISTINCT FROM was tested on PG18 and caused performance issues.
+    SELECT
+        string_agg(
+            format(
+                '(entity_keys->>%1$L)::%2$s AS %3$I',
+                col,
+                format_type(a.atttypid, -1),
+                col || '_ek'  -- Suffix to avoid collision with other plan columns
+            ),
+            ', ' ORDER BY ic.ord
+        ),
+        string_agg(
+            CASE WHEN a.attnotnull THEN
+                format(
+                    't.%1$I = p.%2$I',
+                    col,
+                    col || '_ek'
+                )
+            ELSE
+                format(
+                    'COALESCE(t.%1$I, (-1)::%3$s) = COALESCE(p.%2$I, (-1)::%3$s)',
+                    col,
+                    col || '_ek',
+                    format_type(a.atttypid, -1)
+                )
+            END,
+            ' AND ' ORDER BY ic.ord
+        )
+    INTO
+        v_entity_key_select_list,
+        v_entity_key_join_clause
+    FROM unnest(identity_columns) WITH ORDINALITY AS ic(col, ord)
+    JOIN pg_attribute a ON a.attrelid = temporal_merge_execute.target_table AND a.attname = ic.col AND NOT a.attisdropped;
+
+    v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
+    v_entity_key_select_list := COALESCE(v_entity_key_select_list, '');
+
+    -- Partition arrays: single partition for PL/pgSQL fallback (no COALESCE elimination)
+    v_partition_join_clauses := ARRAY[v_entity_key_join_clause];
+    v_partition_plan_filters := ARRAY['true'];
+    v_partition_select_lists := ARRAY[v_entity_key_select_list];
+
+        -- Get dynamic column lists for DML. The data columns are defined as all columns
+        -- in the target table, minus the identity and temporal boundary columns.
+        -- This is intentionally different from the planner's introspection, as the executor
+        -- must be able to handle a final payload that contains columns inherited from
+        -- the target's history, which may not be present in the source.
+        WITH target_cols AS (
+            SELECT pa.attname, pa.atttypid, pa.attgenerated, pa.attidentity, pa.attnum, pa.atthasdef, pa.attnotnull
+            FROM pg_catalog.pg_attribute pa
+            WHERE pa.attrelid = temporal_merge_execute.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
+        ),
+        common_data_cols AS (
+            SELECT t.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
+            FROM target_cols t
+            LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table AND ad.adnum = t.attnum
+            WHERE (v_range_col IS NULL OR t.attname <> v_range_col)
+              AND (v_valid_from_col IS NULL OR t.attname <> v_valid_from_col)
+              AND (v_valid_until_col IS NULL OR t.attname <> v_valid_until_col)
+              AND (v_valid_to_col IS NULL OR t.attname <> v_valid_to_col)
+              AND t.attname <> ALL(COALESCE(temporal_merge_execute.identity_columns, '{}'))
+              AND t.attname <> ALL(v_lookup_columns)
+              AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
+              AND t.attidentity <> 'a' -- Exclude GENERATED ALWAYS AS IDENTITY
+              AND t.attgenerated = '' -- Exclude GENERATED ... STORED
+              AND COALESCE(pg_get_expr(ad.adbin, temporal_merge_execute.target_table), '') NOT ILIKE 'nextval(%'
+        ),
+        all_available_cols AS (
+            SELECT c.attname, c.atttypid, c.attnotnull, c.atthasdef, c.attnum FROM common_data_cols c
+            UNION
+            SELECT u.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
+            FROM unnest(v_lookup_columns) u(attname)
+            JOIN target_cols t ON u.attname = t.attname
+            UNION
+            SELECT u.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
+            FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) u(attname)
+            JOIN target_cols t ON u.attname = t.attname
+            UNION
+            SELECT pk.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
+            FROM unnest(v_pk_cols) pk(attname)
+            JOIN target_cols t ON pk.attname = t.attname
+        ),
+        cols_for_insert AS (
+            -- All available columns that DON'T have a default...
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
+            UNION
+            -- ...plus all identity and lookup columns and primary key columns, which must be provided for SCD-2 inserts.
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum FROM all_available_cols WHERE attname = ANY(COALESCE(temporal_merge_execute.identity_columns, '{}')) OR attname = ANY(v_lookup_columns) OR attname = ANY(v_pk_cols)
+        ),
+        cols_for_founding_insert AS (
+            -- For "founding" INSERTs of new entities, we only include columns that do NOT have a default.
+            -- This allows serial/identity columns to be generated by the database.
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum
+            FROM all_available_cols
+            WHERE attname <> ALL(v_founding_defaulted_columns)
+        )
+        SELECT
+            (SELECT string_agg(
+                format(
+                    '%1$I = CASE WHEN p.data ? %2$L THEN %4$s ELSE t.%1$I END',
+                    cdc.attname,
+                    cdc.attname,
+                    format_type(cdc.atttypid, -1),
+                    -- For NOT NULL columns with a DEFAULT, COALESCE with the existing value to prevent NULL overwrites.
+                    CASE
+                        WHEN cdc.attname = ANY(v_not_null_defaulted_cols)
+                        THEN format('COALESCE(%s, t.%I)', CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cdc.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, p.data->%L))).%I', v_target_table_ident, cdc.attname, cdc.attname, cdc.attname) ELSE format('(p.data->>%L)::%s', cdc.attname, format_type(cdc.atttypid, -1)) END, cdc.attname)
+                        ELSE CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cdc.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, p.data->%L))).%I', v_target_table_ident, cdc.attname, cdc.attname, cdc.attname) ELSE format('(p.data->>%L)::%s', cdc.attname, format_type(cdc.atttypid, -1)) END
+                    END
+                ),
+            ', ') FROM common_data_cols cdc),
+            (SELECT string_agg(format('%I', cfi.attname), ', ' ORDER BY cfi.attnum) FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            -- For Step 1.3 (historical slices for new entities via jsonb_populate_record):
+            -- NOT NULL DEFAULT columns need COALESCE because jsonb_populate_record returns NULL for missing keys.
+            (SELECT string_agg(
+                CASE
+                    WHEN cfi.attnotnull AND cfi.atthasdef THEN
+                        format('COALESCE(jpr_all.%1$I, %2$s)',
+                            cfi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        format('jpr_all.%I', cfi.attname)
+                END,
+                ', ' ORDER BY cfi.attnum
+             )
+             FROM cols_for_insert cfi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
+                                    AND ad.adnum = cfi.attnum
+             WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(
+                -- For NOT NULL DEFAULT columns, we must coalesce missing payload values with the DB default expression.
+                -- This allows us to include the column in the INSERT (for payload preservation) without risking NULL violation.
+                CASE
+                    WHEN cfi.attnotnull AND cfi.atthasdef THEN
+                        format('COALESCE(%s, %s)',
+                            CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cfi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', v_target_table_ident, cfi.attname, cfi.attname, cfi.attname) ELSE format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)) END,
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cfi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', v_target_table_ident, cfi.attname, cfi.attname, cfi.attname) ELSE format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)) END
+                END,
+                ', ' ORDER BY cfi.attnum
+             )
+             FROM cols_for_insert cfi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
+                                    AND ad.adnum = cfi.attnum
+             WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(format('%I', cffi.attname), ', ' ORDER BY cffi.attnum) FROM cols_for_founding_insert cffi WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(
+                -- Same logic for founding inserts: Coalesce with default if NOT NULL and has default.
+                CASE
+                    WHEN cffi.attnotnull AND cffi.atthasdef THEN
+                        format('COALESCE(%s, %s)',
+                            CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cffi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', v_target_table_ident, cffi.attname, cffi.attname, cffi.attname) ELSE format('(s.full_data->>%L)::%s', cffi.attname, format_type(cffi.atttypid, -1)) END,
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        CASE WHEN (SELECT b.typcategory IN ('A', 'C') OR b.oid IN ('json'::regtype, 'jsonb'::regtype) FROM pg_catalog.pg_type AS t JOIN pg_catalog.pg_type AS b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END WHERE t.oid = cffi.atttypid) THEN format('(pg_catalog.jsonb_populate_record(NULL::%s, pg_catalog.jsonb_build_object(%L, s.full_data->%L))).%I', v_target_table_ident, cffi.attname, cffi.attname, cffi.attname) ELSE format('(s.full_data->>%L)::%s', cffi.attname, format_type(cffi.atttypid, -1)) END
+                END,
+                ', ' ORDER BY cffi.attnum
+             )
+             FROM cols_for_founding_insert cffi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
+                                    AND ad.adnum = cffi.attnum
+             WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col)
+        INTO
+            v_update_set_clause,
+            v_all_cols_ident,
+            v_all_cols_select,
+            v_all_cols_from_jsonb,
+            v_founding_all_cols_ident,
+            v_founding_all_cols_from_jsonb;
+
+    END IF; -- NOT v_use_native_executor (introspection phase 2)
+
+        v_partition_count := COALESCE(array_length(v_partition_join_clauses, 1), 0);
+
+        IF v_log_step_timing THEN
+            v_t3 := clock_timestamp();
+            RAISE NOTICE '(%) step_timing: introspection=%.1fms, index_checks=%.1fms, column_list_cte=%.1fms',
+                v_log_id,
+                extract(epoch from v_t1 - v_t0) * 1000,
+                extract(epoch from v_t2 - v_t1) * 1000,
+                extract(epoch from v_t3 - v_t2) * 1000;
+        END IF;
+
+        -- DELETE -> UPDATE -> INSERT order is critical for PostgreSQL 18 temporal FK compatibility.
+        DECLARE
+            v_deferrable_constraints text[];
+            v_set_constraints_sql text;
+            v_old_search_path TEXT;
+        BEGIN
+            /*
+             * sql_saga's referenced-side regular foreign key triggers on the target are deferred whatever
+             * delay_constraints says: a regular reference only needs the key to exist at some time, so a merge is
+             * judged by the timeline it leaves, and a reshaped timeline (a DELETE then an INSERT) neither refuses
+             * nor cascades (ON DELETE CASCADE). delay_constraints => false keeps the native constraints immediate.
+             */
+            IF delay_constraints OR EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgrelid = target_table AND t.tgconstraint <> 0
+                  AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                   'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure))
+            THEN
+                -- For DELETE-first timeline operations, we create temporary gaps that may violate
+                -- foreign key constraints. We need to defer:
+                -- 1. Unique/exclusion constraints ON the target table (prevents overlaps)
+                -- 2. Foreign keys FROM other tables referencing the target table (tolerates gaps during DELETE)
+                -- 3. sql_saga's own constraint triggers for regular foreign keys (contype 't'): the
+                --    referenced-side triggers on the target, so a reshaped timeline is checked once the
+                --    replacement rows are in, and the referencing-side trigger when the target is a child.
+                -- With delay_constraints => false, only the referenced-side triggers of 3.
+                DECLARE
+                    v_intended oid[];
+                    v_conflict record;
+                BEGIN
+                    SELECT array_agg(c.oid ORDER BY c.oid)
+                    INTO v_intended
+                    FROM pg_catalog.pg_constraint AS c
+                    WHERE c.condeferrable
+                      AND (
+                          (delay_constraints AND c.conrelid = target_table AND c.contype IN ('u', 'x'))
+                          OR
+                          (delay_constraints AND c.confrelid = target_table AND c.contype = 'f')
+                          OR
+                          (c.conrelid = target_table AND c.contype = 't' AND EXISTS (
+                              SELECT FROM pg_catalog.pg_trigger AS t
+                              WHERE t.tgconstraint = c.oid
+                                AND (t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                                  'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure)
+                                     OR (delay_constraints AND t.tgfoid = 'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure))))
+                      );
+
+                    /*
+                     * SET CONSTRAINTS schema.name selects every constraint of that name in the schema, not one OID.
+                     * Refuse, before any DML, when that would also select a constraint outside the intended set:
+                     * deferring it (and later forcing it immediate) would change the checking moment of an object
+                     * this merge has no business with.
+                     */
+                    SELECT pg_catalog.format('%I.%I', n.nspname, c.conname) AS deferred_name,
+                           other.conname AS other_name,
+                           pg_catalog.format('%I.%I', on_.nspname, oc.relname) AS other_table,
+                           EXISTS (SELECT FROM pg_catalog.pg_trigger AS t
+                                   WHERE t.tgconstraint = other.oid
+                                     AND t.tgfoid IN ('sql_saga.uk_update_check_c()'::pg_catalog.regprocedure,
+                                                      'sql_saga.uk_delete_check_c()'::pg_catalog.regprocedure,
+                                                      'sql_saga.regular_fk_check_c()'::pg_catalog.regprocedure))
+                           OR EXISTS (SELECT FROM sql_saga.unique_keys AS uk
+                                      WHERE (uk.table_schema, uk.table_name) = (on_.nspname, oc.relname)
+                                        AND other.conname IN (uk.unique_constraint, uk.exclude_constraint))
+                           OR EXISTS (SELECT FROM sql_saga.foreign_keys AS fk
+                                      WHERE (fk.table_schema, fk.table_name, fk.foreign_key_name)
+                                          = (on_.nspname, oc.relname, other.conname)) AS other_managed
+                    INTO v_conflict
+                    FROM pg_catalog.pg_constraint AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+                    JOIN pg_catalog.pg_constraint AS other
+                      ON (other.connamespace, other.conname) = (c.connamespace, c.conname)
+                     AND other.oid <> ALL (v_intended)
+                    JOIN pg_catalog.pg_class AS oc ON oc.oid = other.conrelid
+                    JOIN pg_catalog.pg_namespace AS on_ ON on_.oid = oc.relnamespace
+                    WHERE c.oid = ANY (v_intended)
+                    ORDER BY c.oid, other.oid
+                    LIMIT 1;
+
+                    IF FOUND THEN
+                        IF v_conflict.other_managed THEN
+                            RAISE EXCEPTION 'sql_saga: temporal_merge on table % cannot defer constraint %: SET CONSTRAINTS by that name would also defer constraint % on table %, which belongs to another sql_saga object; rename one of them',
+                                (SELECT pg_catalog.format('%I.%I', tn.nspname, tc.relname) FROM pg_catalog.pg_class AS tc JOIN pg_catalog.pg_namespace AS tn ON tn.oid = tc.relnamespace WHERE tc.oid = target_table),
+                                v_conflict.deferred_name, pg_catalog.quote_ident(v_conflict.other_name), v_conflict.other_table
+                                USING ERRCODE = 'duplicate_object';
+                        END IF;
+                        RAISE EXCEPTION 'sql_saga: temporal_merge on table % cannot defer constraint %: SET CONSTRAINTS by that name would also defer constraint % on table %, which sql_saga does not manage; rename that constraint',
+                            (SELECT pg_catalog.format('%I.%I', tn.nspname, tc.relname) FROM pg_catalog.pg_class AS tc JOIN pg_catalog.pg_namespace AS tn ON tn.oid = tc.relnamespace WHERE tc.oid = target_table),
+                            v_conflict.deferred_name, pg_catalog.quote_ident(v_conflict.other_name), v_conflict.other_table
+                            USING ERRCODE = 'duplicate_object';
+                    END IF;
+
+                    -- Names are schema-qualified: SET CONSTRAINTS resolves a bare name through search_path.
+                    SELECT array_agg(DISTINCT pg_catalog.format('%I.%I', n.nspname, c.conname))
+                    INTO v_deferrable_constraints
+                    FROM pg_catalog.pg_constraint AS c
+                    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.connamespace
+                    WHERE c.oid = ANY (v_intended);
+                END;
+
+                v_old_search_path := current_setting('search_path');
+                EXECUTE format('SET search_path = %I, public', v_target_schema_name);
+
+                IF v_deferrable_constraints IS NOT NULL THEN
+                    v_set_constraints_sql := format('SET CONSTRAINTS %s DEFERRED',
+                        array_to_string(v_deferrable_constraints, ', ')
+                    );
+                    IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
+                    EXECUTE v_set_constraints_sql;
+                END IF;
+            END IF;
+
+            -- This block contains the DML. We wrap it to ensure constraints and search_path are reset.
+            BEGIN
+                -- PERFORMANCE: Analyze the plan table to give the optimizer accurate row estimates.
+                -- Without this, PostgreSQL underestimates cardinality (often rows=1 for filtered enums)
+                -- which causes it to choose Nested Loop joins instead of Hash Joins, resulting in
+                -- 70x+ slower DML execution. This is critical for UPDATE operations that join
+                -- temporal_merge_plan to the target table.
+                ANALYZE temporal_merge_plan;
+
+                -- Execute operations ordered by plan_op_seq: DELETE -> UPDATE -> INSERT
+                -- The planner generates plan_op_seq to ensure DELETE operations come first,
+                -- then UPDATEs (ordered by effect), then INSERTs. This prevents temporal overlaps.
+                IF v_log_step_timing THEN v_t_delete := clock_timestamp(); END IF;
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING DELETES ---', v_log_id;
+                END IF;
+                -- 1. Execute DELETE operations (partitioned by nullable identity columns)
+                -- Pre-extract entity_keys columns in subquery for efficient join.
+                IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
+                    FOR v_part IN 1..v_partition_count LOOP
+                        v_sql := format($$ DELETE FROM %1$s t
+                            USING (SELECT *, %5$s FROM temporal_merge_plan WHERE operation = 'DELETE' AND %6$s) p
+                            WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                        $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                        IF v_log_sql THEN RAISE NOTICE '(%) DELETE partition %/% SQL: %', v_log_id, v_part, v_partition_count, v_sql; END IF;
+                        EXECUTE v_sql;
+                    END LOOP;
+                END IF;
+
+                IF v_log_step_timing THEN v_t_update := clock_timestamp(); END IF;
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING UPDATES ---', v_log_id;
+                END IF;
+                -- 2. Execute UPDATE operations (batched by statement_seq, partitioned by nullable identity columns)
+                -- The planner assigns statement_seq to group operations that can safely execute together:
+                -- - NONE/SHRINK operations share a statement_seq (they only contract ranges)
+                -- - MOVE operations each get their own statement_seq (can create temporary overlaps)
+                -- - GROW operations share a statement_seq (they only expand into gaps)
+                -- This minimizes the number of SQL statements while preventing constraint violations.
+                SELECT ARRAY_AGG(DISTINCT statement_seq ORDER BY statement_seq) INTO v_update_statement_seqs
+                FROM temporal_merge_plan WHERE operation = 'UPDATE';
+
+                IF v_update_statement_seqs IS NOT NULL THEN
+                    FOREACH v_update_statement_seq IN ARRAY v_update_statement_seqs LOOP
+                        FOR v_part IN 1..v_partition_count LOOP
+                            IF v_update_set_clause IS NOT NULL THEN
+                                -- Pre-extract entity_keys columns in subquery for efficient join.
+                                -- This allows PostgreSQL to use Hash/Merge joins instead of cross-join with filter.
+                                v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_range::%5$I, %2$s
+                                    FROM (SELECT *, %9$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s AND %10$s ORDER BY plan_op_seq) p
+                                    WHERE %3$s AND t.%4$I = p.old_valid_range::%5$I;
+                                $$, v_target_table_ident, v_update_set_clause, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                                IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
+                                EXECUTE v_sql;
+                            ELSIF v_all_cols_ident IS NOT NULL THEN
+                                v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
+                                    FROM (SELECT *, %8$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s AND %9$s ORDER BY plan_op_seq) p
+                                    WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                                $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                                IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
+                                EXECUTE v_sql;
+                            END IF;
+                        END LOOP;
+                    END LOOP;
+                END IF;
+
+                IF v_log_step_timing THEN v_t_insert := clock_timestamp(); END IF;
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING INSERTS ---', v_log_id;
+                END IF;
+                -- 3. Execute INSERT operations and capture generated IDs
+                -- Provenance columns (doc/design/provenance.md): the planner gave each untouched piece its old values and
+                -- each changed or new piece none; this transaction-local mark tells the managed trigger to keep the given
+                -- values and fill only the missing ones from their DEFAULT. Cleared right after the INSERTs.
+                PERFORM pg_catalog.set_config('sql_saga.provenance_carry', temporal_merge_execute.target_table::oid::text, true);
+                IF v_all_cols_ident IS NOT NULL THEN
+                     DECLARE
+                        v_entity_id_update_jsonb_build TEXT;
+                        v_needs_founding_insert BOOLEAN;
+                     BEGIN
+                        EXECUTE 'SELECT EXISTS(SELECT 1 FROM temporal_merge_plan WHERE operation = ''INSERT'' AND is_new_entity)'
+                        INTO v_needs_founding_insert;
+
+                        -- Build the expression to construct the entity_keys feedback JSONB.
+                        WITH target_cols AS (
+                            SELECT pa.attname
+                            FROM pg_catalog.pg_attribute pa
+                            WHERE pa.attrelid = v_target_table_ident::regclass
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
+                        ),
+                        feedback_id_cols AS (
+                            SELECT col FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) as col
+                            UNION
+                            SELECT pk_col FROM unnest(v_pk_cols) as pk_col WHERE pk_col IN (SELECT attname FROM target_cols) AND pk_col NOT IN (v_valid_from_col, v_valid_until_col)
+                        )
+                        SELECT
+                            format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
+                        INTO
+                            v_entity_id_update_jsonb_build
+                        FROM feedback_id_cols;
+
+                        -- Stage 1: Handle "founding" inserts for new entities that need generated keys.
+                        IF v_needs_founding_insert THEN
+                            CREATE TEMP TABLE temporal_merge_entity_id_map (grouping_key TEXT PRIMARY KEY, causal_id TEXT, new_entity_keys JSONB) ON COMMIT DROP;
+
+                            -- Step 1.1: Insert just ONE "founding" row for each new conceptual entity to generate its ID.
+                            EXECUTE format($$
+                                WITH founding_plan_ops AS (
+                                    SELECT DISTINCT ON (p.grouping_key)
+                                        p.plan_op_seq,
+                                        p.causal_id,
+                                        p.grouping_key,
+                                        p.new_valid_range,
+                                        p.entity_keys || p.data as full_data
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND p.is_new_entity
+                                    ORDER BY p.grouping_key, p.plan_op_seq
+                                ),
+                                id_map_cte AS (
+                                    MERGE INTO %1$s t
+                                    USING founding_plan_ops s ON false
+                                    WHEN NOT MATCHED THEN
+                                        INSERT (%2$s, %5$I)
+                                        VALUES (%3$s, s.new_valid_range::%7$I)
+                                    RETURNING t.*, s.causal_id, s.grouping_key
+                                )
+                                INSERT INTO temporal_merge_entity_id_map (grouping_key, causal_id, new_entity_keys)
+                                SELECT
+                                    ir.grouping_key,
+                                    ir.causal_id,
+                                    %4$s
+                                FROM id_map_cte ir;
+                            $$,
+                                v_target_table_ident,           /* %1$s */
+                                v_founding_all_cols_ident,      /* %2$s */
+                                v_founding_all_cols_from_jsonb, /* %3$s */
+                                v_entity_id_update_jsonb_build, /* %4$s */
+                                v_range_col,                    /* %5$I */
+                                NULL,                           /* %6$I (placeholder) */
+                                v_range_constructor             /* %7$I */
+                            );
+
+                            -- Step 1.2: Back-fill the captured, generated IDs into the plan
+                            EXECUTE format($$
+                                UPDATE temporal_merge_plan p
+                                SET entity_keys = p.entity_keys || m.new_entity_keys
+                                FROM temporal_merge_entity_id_map m
+                                WHERE p.grouping_key = m.grouping_key;
+                            $$);
+
+                            -- Step 1.3: Insert the remaining historical slices for the new entities
+                            EXECUTE format($$
+                                INSERT INTO %1$s (%2$s, %4$I)
+                                SELECT %3$s, p.new_valid_range::%6$I
+                                FROM temporal_merge_plan p,
+                                     LATERAL jsonb_populate_record(null::%1$s, p.entity_keys || p.data) as jpr_all
+                                WHERE p.operation = 'INSERT'
+                                  AND p.is_new_entity
+                                  AND p.causal_id IS NOT NULL
+                                  AND NOT EXISTS (
+                                    SELECT 1 FROM (
+                                        SELECT DISTINCT ON (p_inner.grouping_key) plan_op_seq
+                                        FROM temporal_merge_plan p_inner
+                                        WHERE p_inner.operation = 'INSERT' AND p_inner.is_new_entity
+                                        ORDER BY p_inner.grouping_key, p_inner.plan_op_seq
+                                    ) AS founding_ops
+                                    WHERE founding_ops.plan_op_seq = p.plan_op_seq
+                                  )
+                                ORDER BY p.plan_op_seq;
+                            $$,
+                                v_target_table_ident,       /* %1$s */
+                                v_all_cols_ident,           /* %2$s */
+                                v_all_cols_select,          /* %3$s */
+                                v_range_col,                /* %4$I */
+                                NULL,                       /* %5$I (placeholder) */
+                                v_range_constructor         /* %6$I */
+                            );
+
+                            DROP TABLE temporal_merge_entity_id_map;
+                        END IF;
+
+                        -- Stage 2: Handle "non-founding" inserts
+                        BEGIN
+                            EXECUTE format($$
+                                WITH
+                                source_for_insert AS (
+                                    SELECT
+                                        p.plan_op_seq, p.new_valid_range,
+                                        p.entity_keys || p.data as full_data
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND NOT p.is_new_entity
+                                ),
+                                inserted_rows AS (
+                                    MERGE INTO %1$s t
+                                    USING source_for_insert s ON false
+                                    WHEN NOT MATCHED THEN
+                                        INSERT (%2$s, %3$I)
+                                        VALUES (%5$s, s.new_valid_range::%9$I)
+                                    RETURNING t.*, s.plan_op_seq
+                                )
+                                UPDATE temporal_merge_plan p
+                                SET entity_keys = p.entity_keys || %8$s
+                                FROM inserted_rows ir
+                                WHERE p.plan_op_seq = ir.plan_op_seq;
+                            $$,
+                                v_target_table_ident,               /* %1$s */
+                                v_all_cols_ident,                   /* %2$s */
+                                v_range_col,                        /* %3$I */
+                                NULL,                               /* %4$I (placeholder) */
+                                v_all_cols_from_jsonb,              /* %5$s */
+                                NULL,                               /* %6$s (placeholder) */
+                                NULL,                               /* %7$s (placeholder) */
+                                v_entity_id_update_jsonb_build,     /* %8$s */
+                                v_range_constructor                 /* %9$I */
+                            );
+                        END;
+                     END;
+                ELSE
+                    -- This case handles tables with only temporal and defaulted ID columns.
+                     DECLARE
+                        v_entity_id_update_jsonb_build TEXT;
+                     BEGIN
+                        -- Build the expression to construct the entity_keys feedback JSONB.
+                        WITH target_cols AS (
+                            SELECT pa.attname
+                            FROM pg_catalog.pg_attribute pa
+                            WHERE pa.attrelid = v_target_table_ident::regclass
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
+                        ),
+                        feedback_id_cols AS (
+                            SELECT col FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) as col
+                            UNION
+                            SELECT pk_col FROM unnest(v_pk_cols) as pk_col WHERE pk_col IN (SELECT attname FROM target_cols) AND pk_col NOT IN (v_valid_from_col, v_valid_until_col)
+                        )
+                        SELECT
+                            format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
+                        INTO
+                            v_entity_id_update_jsonb_build
+                        FROM feedback_id_cols;
+
+                        v_sql := format($$
+                            WITH
+                            source_for_insert AS (
+                                SELECT
+                                    p.plan_op_seq,
+                                    p.new_valid_range,
+                                    p.entity_keys || p.data as full_data
+                                FROM temporal_merge_plan p
+                                WHERE p.operation = 'INSERT'
+                            ),
+                            inserted_rows AS (
+                                MERGE INTO %1$s t
+                                USING source_for_insert s ON false
+                                WHEN NOT MATCHED THEN
+                                    INSERT (%8$s, %3$I)
+                                    VALUES (%9$s, s.new_valid_range::%7$I)
+                                RETURNING t.*, s.plan_op_seq
+                            )
+                            UPDATE temporal_merge_plan p
+                            SET entity_keys = p.entity_keys || %2$s
+                            FROM inserted_rows ir
+                            WHERE p.plan_op_seq = ir.plan_op_seq;
+                        $$,
+                            v_target_table_ident,           /* %1$s */
+                            v_entity_id_update_jsonb_build, /* %2$s */
+                            v_range_col,                    /* %3$I */
+                            NULL,                           /* %4$I (placeholder) */
+                            NULL,                           /* %5$s (placeholder) */
+                            NULL,                           /* %6$s (placeholder) */
+                            v_range_constructor,            /* %7$I */
+                            v_all_cols_ident,               /* %8$s */
+                            v_all_cols_from_jsonb           /* %9$s */
+                        );
+                        EXECUTE v_sql;
+                     END;
+                END IF;
+                PERFORM pg_catalog.set_config('sql_saga.provenance_carry', '', true);
+
+                IF v_log_step_timing THEN
+                    v_t_done := clock_timestamp();
+                    RAISE NOTICE '(%) executor_timing: delete=%.1fms, update=%.1fms, insert=%.1fms',
+                        v_log_id,
+                        extract(epoch from v_t_update - v_t_delete) * 1000,
+                        extract(epoch from v_t_insert - v_t_update) * 1000,
+                        extract(epoch from v_t_done - v_t_insert) * 1000;
+                END IF;
+
+                -- Back-fill source table with generated IDs if requested.
+                IF temporal_merge_execute.update_source_with_identity THEN
+                    DECLARE
+                        v_source_update_set_clause TEXT;
+                    BEGIN
+                        SELECT string_agg(
+                            format('%I = (p.entity_keys->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
+                            ', ' ORDER BY j.key
+                        )
+                        INTO v_source_update_set_clause
+                        FROM (
+                            SELECT key FROM jsonb_object_keys(
+                                (SELECT entity_keys FROM temporal_merge_plan WHERE entity_keys IS NOT NULL and operation = 'INSERT' LIMIT 1)
+                            ) as key
+                            WHERE key = ANY(temporal_merge_execute.identity_columns)
+                        ) j
+                        JOIN pg_attribute a ON a.attname = j.key
+                        WHERE a.attrelid = temporal_merge_execute.source_table AND NOT a.attisdropped AND a.attnum > 0;
+
+                        IF v_source_update_set_clause IS NOT NULL THEN
+                            -- PERFORMANCE OPTIMIZATION: The previous implementation used
+                            -- `s.source_row_id = ANY(p.row_ids)` which caused O(n²) behavior
+                            -- due to Nested Loop with array containment check on every row.
+                            -- This rewrite unnests row_ids first and uses an equijoin, allowing
+                            -- PostgreSQL to use Hash Join for O(n) performance.
+                            v_sql := format($$
+                                WITH plan_with_row_ids AS (
+                                    SELECT p.plan_op_seq, p.entity_keys, unnest(p.row_ids) AS source_row_id
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND p.entity_keys IS NOT NULL
+                                ),
+                                map_row_to_entity AS (
+                                    SELECT DISTINCT ON (pr.source_row_id)
+                                        pr.source_row_id,
+                                        pr.entity_keys
+                                    FROM plan_with_row_ids pr
+                                    ORDER BY pr.source_row_id, pr.plan_op_seq
+                                )
+                                UPDATE %1$s s
+                                SET %2$s
+                                FROM map_row_to_entity p
+                                WHERE s.%3$I = p.source_row_id;
+                            $$, temporal_merge_execute.source_table::text, v_source_update_set_clause, temporal_merge_execute.row_id_column);
+                            EXECUTE v_sql;
+                        END IF;
+                    END;
+                END IF;
+            EXCEPTION
+                WHEN OTHERS THEN
+                    PERFORM pg_catalog.set_config('sql_saga.provenance_carry', '', true);
+                    -- If an error occurs, ensure constraints and search_path are reset before re-raising.
+                    IF v_old_search_path IS NOT NULL THEN
+                        IF v_deferrable_constraints IS NOT NULL THEN
+                            v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
+                                array_to_string(v_deferrable_constraints, ', ')
+                            );
+                            IF v_log_execute THEN RAISE NOTICE '(%) Executing on error: %', v_log_id, v_set_constraints_sql; END IF;
+                            EXECUTE v_set_constraints_sql;
+                        END IF;
+                        EXECUTE format('SET search_path = %s', v_old_search_path);
+                    END IF;
+                    RAISE;
+            END;
+
+            -- Restore constraints and search_path on successful completion.
+            IF v_old_search_path IS NOT NULL THEN
+                IF v_deferrable_constraints IS NOT NULL THEN
+                    v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
+                        array_to_string(v_deferrable_constraints, ', ')
+                    );
+                    IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
+                    EXECUTE v_set_constraints_sql;
+                END IF;
+                EXECUTE format('SET search_path = %s', v_old_search_path);
+            END IF;
+        END;
+
+        -- 4. Generate and store feedback
+        v_sql := format($$
+            WITH
+            all_source_rows AS (
+                SELECT t.%2$I AS source_row_id FROM %1$s t
+            ),
+            plan_unnested AS (
+                SELECT unnest(p.row_ids) as source_row_id, p.plan_op_seq, p.entity_keys, p.operation, p.data, p.feedback
+                FROM temporal_merge_plan p
+            ),
+            feedback_groups AS (
+                SELECT
+                    asr.source_row_id,
+                    -- Aggregate all distinct operations for this source row.
+                    array_agg(DISTINCT pu.operation) FILTER (WHERE pu.operation IS NOT NULL) as operations,
+                    -- Aggregate all distinct entity IDs this source row touched.
+                    COALESCE(jsonb_agg(DISTINCT pu.entity_keys) FILTER (WHERE pu.entity_keys IS NOT NULL), '[]'::jsonb) AS target_entity_keys,
+                    -- Extract the specific error message from the plan's feedback payload if present.
+                    (array_agg(pu.feedback->>'error') FILTER (WHERE pu.operation = 'ERROR' AND pu.feedback ? 'error'))[1] as error_message_from_plan
+                FROM all_source_rows asr
+                LEFT JOIN plan_unnested pu ON asr.source_row_id = pu.source_row_id
+                GROUP BY asr.source_row_id
+            )
+            INSERT INTO temporal_merge_feedback
+                SELECT
+                    fg.source_row_id,
+                    fg.target_entity_keys,
+                    CASE
+                        -- This CASE statement must be ordered from most to least specific to correctly classify outcomes.
+                        -- This CASE statement directly translates the plan's actions into a final feedback status.
+                        -- It is ordered from most to least specific to ensure correctness.
+                        WHEN 'ERROR'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'ERROR'
+                        WHEN 'INSERT'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                          OR 'UPDATE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                          OR 'DELETE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                        THEN 'APPLIED'
+                        WHEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_NO_TARGET'
+                        WHEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_FILTERED'
+                        WHEN 'SKIP_ECLIPSED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_ECLIPSED'
+                        WHEN fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action] THEN 'SKIPPED_IDENTICAL'
+                        -- If a source row resulted in no plan operations, it is an internal error.
+                        WHEN fg.operations IS NULL THEN 'ERROR'
+                        -- This is a safeguard. If the planner produces an unexpected combination of actions, we fail fast.
+                        ELSE 'ERROR'
+                    END::sql_saga.temporal_merge_feedback_status AS status,
+                    CASE
+                        WHEN 'ERROR'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN COALESCE(fg.error_message_from_plan, 'Planner generated an ERROR action, indicating an internal logic error.')
+                        WHEN fg.operations IS NULL THEN 'Planner failed to generate a plan for this source row.'
+                        WHEN NOT (
+                             'INSERT'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'UPDATE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'DELETE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'SKIP_ECLIPSED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action]
+                        )
+                        THEN 'Planner produced an unhandled combination of actions: ' || fg.operations::text
+                        ELSE NULL::TEXT
+                    END AS error_message
+                FROM feedback_groups fg
+                ORDER BY fg.source_row_id;
+        $$,
+            temporal_merge_execute.source_table::text,       -- %1$s
+            temporal_merge_execute.row_id_column      -- %2$I
+        );
+        EXECUTE v_sql;
+
+    -- Conditionally output the feedback for debugging, based on a session variable.
+    DECLARE
+        v_feedback_rec RECORD;
+    BEGIN
+        IF v_log_feedback THEN
+            RAISE NOTICE 'temporal_merge feedback (%) %', v_log_id, v_summary_line;
+            FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+                RAISE NOTICE '(%) %', v_log_id, to_json(v_feedback_rec);
+            END LOOP;
+        END IF;
+    END;
+
+    IF temporal_merge_execute.update_source_with_feedback THEN
+        IF temporal_merge_execute.feedback_status_column IS NULL AND temporal_merge_execute.feedback_error_column IS NULL THEN
+            RAISE EXCEPTION 'When update_source_with_feedback is true, at least one feedback column (feedback_status_column or feedback_error_column) must be provided.';
+        END IF;
+
+        v_feedback_set_clause := '';
+
+        -- If a status column is provided, build its part of the SET clause
+        IF temporal_merge_execute.feedback_status_column IS NOT NULL THEN
+            IF temporal_merge_execute.feedback_status_key IS NULL THEN
+                RAISE EXCEPTION 'When feedback_status_column is provided, feedback_status_key must also be provided.';
+            END IF;
+
+            PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_execute.source_table AND attname = temporal_merge_execute.feedback_status_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'feedback_status_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge_execute.feedback_status_column, temporal_merge_execute.source_table::text;
+            END IF;
+
+            v_feedback_set_clause := v_feedback_set_clause || format(
+                '%I = COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.status)',
+                temporal_merge_execute.feedback_status_column, temporal_merge_execute.feedback_status_column, temporal_merge_execute.feedback_status_key
+            );
+        END IF;
+
+        -- If an error column is provided, build its part of the SET clause
+        IF temporal_merge_execute.feedback_error_column IS NOT NULL THEN
+            IF temporal_merge_execute.feedback_error_key IS NULL THEN
+                RAISE EXCEPTION 'When feedback_error_column is provided, feedback_error_key must also be provided.';
+            END IF;
+
+            PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_execute.source_table AND attname = temporal_merge_execute.feedback_error_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'feedback_error_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge_execute.feedback_error_column, temporal_merge_execute.source_table::text;
+            END IF;
+
+            IF v_feedback_set_clause <> '' THEN
+                v_feedback_set_clause := v_feedback_set_clause || ', ';
+            END IF;
+
+            v_feedback_set_clause := v_feedback_set_clause || format(
+                '%I = CASE WHEN f.error_message IS NOT NULL THEN COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.error_message) ELSE COALESCE(s.%I, ''{}''::jsonb) - %L END',
+                temporal_merge_execute.feedback_error_column, temporal_merge_execute.feedback_error_column, temporal_merge_execute.feedback_error_key, temporal_merge_execute.feedback_error_column, temporal_merge_execute.feedback_error_key
+            );
+        END IF;
+
+        v_sql := format($$
+            UPDATE %1$s s
+            SET %2$s
+            FROM pg_temp.temporal_merge_feedback f
+            WHERE s.%3$I = f.source_row_id;
+        $$, temporal_merge_execute.source_table::text, v_feedback_set_clause, temporal_merge_execute.row_id_column);
+        EXECUTE v_sql;
+    END IF;
+
+END;
+$temporal_merge_execute$;
+/*
+ * sql_saga 1.11 update: data repairs that need the 1.11 definitions. None: the typed decoder changes what later
+ * temporal_merge calls write; rows written before are not inspected (a jsonb string written for a new entity's later
+ * slice by the native planner cannot be told apart from a deliberate JSON string).
+ */
+SELECT sql_saga.check_integrity();
