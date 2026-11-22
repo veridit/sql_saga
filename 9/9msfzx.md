@@ -1,7 +1,7 @@
 ---
 id: 9msfzx
 title: "Release 1.10: provenance fixes"
-state: "doing"
+state: "done"
 type: bug
 priority: ""
 assignee: ["sabertooth"]
@@ -10,11 +10,10 @@ group: ""
 rank: "zzx"
 created: 2026-11-22
 updated: 2026-11-22
-doing_since: "2026-11-22T00:42"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "feature/provenance-columns"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-22T03:03"
 ---
 
 ## Goal
@@ -40,5 +39,7 @@ Situation: found 2026-11-21 by probing the 1.9 trigger (test 161 scenarios 15-17
 
 
 Shipped: annotated tag v1.10 ('sql_saga 1.10') on 39da88a; branch CI 44967440348 and master CI 44971023328 green on that commit. Local: fast 146/146; generator suite 1.4-1.10 + wiring; upgrade paths 1.0..1.9 -> 1.10 GREEN, 0 FAIL (the 1.9 path shows the jsonb defect before and the fix after); restore 12 cases + old dumps 1.0/1.1/1.2/1.7/1.8/1.9; test 161 scenarios 15-17 on fresh install. Benchmarks v1.9 vs 1.10 in todo.md (2ebd...: see 'todo: v1.10 tagged'). Version chosen 1.10 (minor-only series).
+Reflection (open, 2026-11-22, sabertooth): One gap: nothing in doc/upgrade.md's release checklist says a harness check written for release N may name N literally; the 1.8 audit section asserted catalog_format = target version and the 1.9 hint check spelled '1.9', so the first 1.10 matrix failed 15 checks that were test bugs. Also: editing upgrade_test.sh while a matrix run was executing it corrupted that run (bash reads scripts lazily); I stopped it and reran.
 ## History
 - 2026-11-22T00:42 todo -> doing/active (take)
+- 2026-11-22T03:03 doing/active -> done (done); was doing_since: 2026-11-22T00:42
