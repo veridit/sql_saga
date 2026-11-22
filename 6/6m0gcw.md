@@ -13,7 +13,7 @@ updated: 2026-11-16
 ---
 
 ## Goal
-A design for core PostgreSQL support of a child without a time dimension referencing a key that exists in a temporal parent's history, including last-row delete and CASCADE
+A design for native PostgreSQL foreign keys from a plain table to a key in a temporal parent's history
 
 ## Purpose
 Long-term replacement for sql_saga's C-trigger regular foreign keys
@@ -22,7 +22,7 @@ Long-term replacement for sql_saga's C-trigger regular foreign keys
 Separate project, later. Owner agreed 2026-10-26: practical narrow helpers in sql_saga now, upstream changes another time
 
 ## Relevant details
-Semantic baseline: the 1.4 C-trigger behaviour and the parity tests (149, 137-148)
+Scope: a child without a time dimension referencing a key that exists anywhere in the temporal parent's history, including the last-row delete check and CASCADE.
 
 ## Depends on
 
