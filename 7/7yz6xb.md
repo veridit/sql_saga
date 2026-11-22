@@ -32,7 +32,7 @@ Candidates: tests using SAVEPOINT expect_error patterns and the adversarial test
 ## Depends on
 
 ## Acceptance
-- [ ] Each listed test starts with a short statement of what it proves
+- [x] Each listed test starts with a short statement of what it proves
 
 ## Notes
 
