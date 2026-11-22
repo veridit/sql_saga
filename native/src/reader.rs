@@ -881,7 +881,7 @@ fn read_target_ordinals(
 }
 
 /// Parse a text value from PostgreSQL into the correct JSON type based on pg_type.
-fn parse_typed_value(text: String, pg_type: &str) -> serde_json::Value {
+pub(crate) fn parse_typed_value(text: String, pg_type: &str) -> serde_json::Value {
     match pg_type {
         "integer" | "bigint" | "smallint" | "serial" | "bigserial" | "smallserial"
         | "int2" | "int4" | "int8" | "oid" => {
@@ -891,8 +891,13 @@ fn parse_typed_value(text: String, pg_type: &str) -> serde_json::Value {
                 serde_json::Value::String(text)
             }
         }
-        "numeric" | "real" | "double precision" | "decimal"
-        | "float4" | "float8" | "money" => {
+        // numeric/decimal keep their exact digits and scale as a JSON number (serde_json's arbitrary_precision keeps the
+        // text), as PL/pgSQL's to_jsonb does; through f64 they were rounded. Only binary floats may go through f64.
+        "numeric" | "decimal" => match serde_json::from_str::<serde_json::Number>(&text) {
+            Ok(n) => serde_json::Value::Number(n),
+            Err(_) => serde_json::Value::String(text), // NaN, Infinity: kept as text, decoded by the column type
+        },
+        "real" | "double precision" | "float4" | "float8" | "money" => {
             // Try integer first (preserves "1250" as 1250, not 1250.0)
             if let Ok(n) = text.parse::<i64>() {
                 serde_json::Value::Number(n.into())
@@ -909,6 +914,9 @@ fn parse_typed_value(text: String, pg_type: &str) -> serde_json::Value {
             "f" | "false" => serde_json::Value::Bool(false),
             _ => serde_json::Value::String(text),
         },
+        // A json or jsonb value is carried as itself, as the PL/pgSQL planner's to_jsonb does: as a string of its
+        // text form it would be ambiguous with a JSON string value, and the executor could not decode it.
+        "jsonb" | "json" => serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text)),
         _ => serde_json::Value::String(text),
     }
 }

@@ -701,6 +701,28 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_typed_value_numeric_is_exact() {
+        use crate::reader::parse_typed_value;
+        // numeric keeps every digit and its scale (it went through f64 before 1.11).
+        let v = parse_typed_value("12345678901234567890.123456789012345678900".to_string(), "numeric");
+        assert_eq!(v.to_string(), "12345678901234567890.123456789012345678900");
+        assert_eq!(parse_typed_value("1.10".to_string(), "numeric").to_string(), "1.10");
+        assert_eq!(parse_typed_value("-0.5".to_string(), "numeric").to_string(), "-0.5");
+        // NaN and infinities are not JSON numbers: kept as text, which the executor decodes by the column type.
+        assert_eq!(parse_typed_value("NaN".to_string(), "numeric"), serde_json::Value::String("NaN".into()));
+        assert_eq!(parse_typed_value("Infinity".to_string(), "numeric"), serde_json::Value::String("Infinity".into()));
+    }
+
+    #[test]
+    fn test_parse_typed_value_jsonb_is_carried_as_itself() {
+        use crate::reader::parse_typed_value;
+        assert_eq!(parse_typed_value(r#"{"x": [1, "y"]}"#.to_string(), "jsonb"), serde_json::json!({"x": [1, "y"]}));
+        // A jsonb string stays a JSON string (as a text form it would be indistinguishable from "plain").
+        assert_eq!(parse_typed_value(r#""plain""#.to_string(), "jsonb"), serde_json::Value::String("plain".into()));
+        assert_eq!(parse_typed_value("[1, null]".to_string(), "json"), serde_json::json!([1, null]));
+    }
+
+    #[test]
     fn test_allen_relation_equals() {
         use crate::types::AllenRelation;
         let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-01-01", "2024-02-01", false);

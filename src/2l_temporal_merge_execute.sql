@@ -661,8 +661,8 @@ BEGIN
                     -- For NOT NULL columns with a DEFAULT, COALESCE with the existing value to prevent NULL overwrites.
                     CASE
                         WHEN cdc.attname = ANY(v_not_null_defaulted_cols)
-                        THEN format('COALESCE((p.data->>%1$L)::%2$s, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname)
-                        ELSE format('(p.data->>%1$L)::%2$s', cdc.attname, format_type(cdc.atttypid, -1))
+                        THEN format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%3$I, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname, v_target_table_ident)
+                        ELSE format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%2$I', cdc.attname, cdc.attname, v_target_table_ident)
                     END
                 ),
             ', ') FROM common_data_cols cdc),
@@ -690,13 +690,14 @@ BEGIN
                 -- This allows us to include the column in the INSERT (for payload preservation) without risking NULL violation.
                 CASE
                     WHEN cfi.attnotnull AND cfi.atthasdef THEN
-                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
                             cfi.attname,
-                            format_type(cfi.atttypid, -1),
-                            pg_get_expr(ad.adbin, ad.adrelid)
+                            cfi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid),
+                            v_target_table_ident
                         )
                     ELSE
-                        format('(s.full_data->>%1$L)::%2$s', cfi.attname, format_type(cfi.atttypid, -1))
+                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cfi.attname, cfi.attname, v_target_table_ident)
                 END,
                 ', ' ORDER BY cfi.attnum
              )
@@ -709,13 +710,14 @@ BEGIN
                 -- Same logic for founding inserts: Coalesce with default if NOT NULL and has default.
                 CASE
                     WHEN cffi.attnotnull AND cffi.atthasdef THEN
-                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
                             cffi.attname,
-                            format_type(cffi.atttypid, -1),
-                            pg_get_expr(ad.adbin, ad.adrelid)
+                            cffi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid),
+                            v_target_table_ident
                         )
                     ELSE
-                        format('(s.full_data->>%1$L)::%2$s', cffi.attname, format_type(cffi.atttypid, -1))
+                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cffi.attname, cffi.attname, v_target_table_ident)
                 END,
                 ', ' ORDER BY cffi.attnum
              )

@@ -750,8 +750,8 @@ fn build_column_list_cte_query(
                     format_type(cdc.atttypid, -1),
                     CASE
                         WHEN cdc.attname = ANY({nn_def_arr}::text[])
-                        THEN format('COALESCE((p.data->>%1$L)::%2$s, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname)
-                        ELSE format('(p.data->>%1$L)::%2$s', cdc.attname, format_type(cdc.atttypid, -1))
+                        THEN format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%3$I, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname, {target_oid}::oid::regclass::text)
+                        ELSE format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, p.data->%1$L))).%2$I', cdc.attname, cdc.attname, {target_oid}::oid::regclass::text)
                     END
                 ),
             ', ') FROM common_data_cols cdc),
@@ -775,13 +775,14 @@ fn build_column_list_cte_query(
             (SELECT string_agg(
                 CASE
                     WHEN cfi.attnotnull AND cfi.atthasdef THEN
-                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
                             cfi.attname,
-                            format_type(cfi.atttypid, -1),
-                            pg_get_expr(ad.adbin, ad.adrelid)
+                            cfi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid),
+                            {target_oid}::oid::regclass::text
                         )
                     ELSE
-                        format('(s.full_data->>%1$L)::%2$s', cfi.attname, format_type(cfi.atttypid, -1))
+                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cfi.attname, cfi.attname, {target_oid}::oid::regclass::text)
                 END,
                 ', ' ORDER BY cfi.attnum
              )
@@ -793,13 +794,14 @@ fn build_column_list_cte_query(
             (SELECT string_agg(
                 CASE
                     WHEN cffi.attnotnull AND cffi.atthasdef THEN
-                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                        format('COALESCE((pg_catalog.jsonb_populate_record(NULL::%4$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I, %3$s)',
                             cffi.attname,
-                            format_type(cffi.atttypid, -1),
-                            pg_get_expr(ad.adbin, ad.adrelid)
+                            cffi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid),
+                            {target_oid}::oid::regclass::text
                         )
                     ELSE
-                        format('(s.full_data->>%1$L)::%2$s', cffi.attname, format_type(cffi.atttypid, -1))
+                        format('(pg_catalog.jsonb_populate_record(NULL::%3$s, pg_catalog.jsonb_build_object(%1$L, s.full_data->%1$L))).%2$I', cffi.attname, cffi.attname, {target_oid}::oid::regclass::text)
                 END,
                 ', ' ORDER BY cffi.attnum
              )
