@@ -40,6 +40,7 @@ Situation: native/src/reader.rs parse_typed_value parses numeric/decimal/money/r
 
 Shipped in v1.11 (61343fa, master CI 44983601001; native unit tests green in branch CI 44980572355). The native reader keeps numeric/decimal exact (serde_json arbitrary_precision); test 162 stores 12345678901234567890.123456789012345678900 and 0.1000 identically under both planners. Rows already written by earlier releases are not repaired (rounded values cannot be recovered); doc/upgrade.md says so.
 Reflection (open, 2026-11-22, sabertooth): My first acceptance item (coalescing must treat 1.1 and 1.10 as equal) was wrong: numeric scale is part of the value, and both planners keep the pieces apart. I struck it with the measurement.
+landed 4996dfd on master 2026-11-22: temporal_merge: typed data payload under both planners (hug 7t5hd7, nw3qmt)
 ## History
 - 2026-11-22T03:18 todo -> doing/active (take)
 - 2026-11-22T06:08 doing/active -> done (done); was doing_since: 2026-11-22T03:18
