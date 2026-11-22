@@ -5,6 +5,19 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Acceptance of 1.10-1.12 end to end (released v1.12 against released v1.9)
+- One script of public-interface checks (provenance typing, dropped DEFAULT, generated column, check_integrity;
+  array/composite/jsonb/numeric through temporal_merge on update and on a new entity's later slice; nested jsonb nulls
+  under PATCH and in coalescing; top-level NULL under PATCH still keeps the old value), run under both planners:
+  fresh v1.12 24/24 PASS; released v1.9 (own tag binaries) FAIL on jsonb provenance typing (both planners), generated
+  column (aborts every write), numeric 12345678901234567890.1234... stored as 123456789012345670..., jsonb later slice
+  stored as a string and a nested-null piece stored as "{}" (native), and "malformed array literal" plus [1, {}]
+  (PL/pgSQL)
+- StatBus-shaped path: a 1.9 database (provenance columns, numeric turnover, current view) updated in place to 1.12:
+  existing rows unchanged, check_integrity clean, temporal_merge stores the 20-digit numeric exactly, the current view
+  writes, the changed piece carries the writer's provenance, check_integrity clean after the writes
+- The v1.12 tag rebuilt from git archive gives the 13 SQL artifacts byte-identical to the tested install
+
 ## 2026-11-22: Version 1.12, PL/pgSQL planner keeps nested jsonb nulls (tag v1.12 at 676370d, CI 44996552757 green; hug y37p3x)
 - Since v1.0 the PL/pgSQL planner stripped payloads with jsonb_strip_nulls, which also removes nulls nested inside a
   jsonb column's value: MERGE_ENTITY_PATCH stored [1, {"k": null}] as [1, {}], and adjacent pieces that differed only by
