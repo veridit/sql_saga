@@ -39,5 +39,6 @@ Situation: found 2026-11-21 by probing the 1.9 trigger (test 161 scenarios 15-17
 ## Notes
 
 
+Shipped: annotated tag v1.10 ('sql_saga 1.10') on 39da88a; branch CI 44967440348 and master CI 44971023328 green on that commit. Local: fast 146/146; generator suite 1.4-1.10 + wiring; upgrade paths 1.0..1.9 -> 1.10 GREEN, 0 FAIL (the 1.9 path shows the jsonb defect before and the fix after); restore 12 cases + old dumps 1.0/1.1/1.2/1.7/1.8/1.9; test 161 scenarios 15-17 on fresh install. Benchmarks v1.9 vs 1.10 in todo.md (2ebd...: see 'todo: v1.10 tagged'). Version chosen 1.10 (minor-only series).
 ## History
 - 2026-11-22T00:42 todo -> doing/active (take)
