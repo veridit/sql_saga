@@ -33,7 +33,7 @@ Situation: found 2026-11-21 by probing the 1.9 trigger (test 161 scenarios 15-17
 
 ## Acceptance
 - [x] Upgrade paths 1.0..1.9 -> new version GREEN locally and in CI
-- [ ] Test 161 scenarios 15-17 pass on a fresh install and after upgrade from 1.9
+- [x] Test 161 scenarios 15-17 pass on a fresh install and after upgrade from 1.9
 - [ ] Annotated tag on a CI-verified master commit
 
 ## Notes
