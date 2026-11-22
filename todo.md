@@ -5,7 +5,7 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
-## 2026-11-22: Version 1.11, temporal_merge typed data payload (hug 7t5hd7, nw3qmt; tag and CI recorded at release)
+## 2026-11-22: Version 1.11, temporal_merge typed data payload (tag v1.11 at 61343fa, CI 44983601001 green; hug 7t5hd7, nw3qmt)
 - Since v1.0, the two planners put different JSON in the plan and the executor read it through `->>` and a text cast:
   the PL/pgSQL planner failed on every array or composite column and on a jsonb holding a JSON string ("malformed
   array literal"); the native (default) planner rounded numeric through f64 (12345678901234567890.1234... stored as
