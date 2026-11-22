@@ -44,7 +44,11 @@ class Packaging(unittest.TestCase):
             tail = text[text.rindex(head):]
             heads = re.findall(r'CREATE OR REPLACE (?:FUNCTION|PROCEDURE) (sql_saga\.[A-Za-z_0-9]+)\(', tail)
             self.assertEqual(heads, ['sql_saga.temporal_merge_plan'], name)
-            self.assertNotIn('jsonb_strip_nulls(s.data_payload)', tail, name)
+            # Nested nulls stay: a payload is stripped of top-level null keys only (jsonb_strip_nulls remains as the fast
+            # path when jsonpath finds no null below the top level, where both give the same result).
+            self.assertNotIn('|| jsonb_strip_nulls(s.data_payload)', tail, name)
+            # Ten sites; the provenance comparison strips both of its sides, hence eleven.
+            self.assertEqual(tail.count("'strict $.*.**{1 to last} ? (@ == null)'"), 11, name)
             self.assertNotIn('ALTER TABLE sql_saga.', tail, name)
             self.assertNotIn('DROP FUNCTION', tail, name)
 
