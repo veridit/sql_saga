@@ -38,6 +38,11 @@ BEGIN
         v_trg_name := sql_saga.__internal_make_name(ARRAY[v_table_name, era_name], 'sync_temporal_trg');
     END IF;
 
+    -- Metadata first: drop protection refuses DROP TRIGGER of the trigger an era names.
+    UPDATE sql_saga.era AS e
+    SET sync_temporal_trg_name = NULL
+    WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_drop_synchronize_temporal_columns_trigger.era_name);
+
     -- Cleanup: earlier development iterations used different naming patterns.
     IF EXISTS (
         SELECT 1
@@ -66,10 +71,9 @@ BEGIN
     -- D1d: only the generated function in sql_saga's own schema is dropped with elevated rights.
     PERFORM sql_saga.__internal_synchronize_temporal_function_ddl(table_oid, era_name, 'DROP');
 
-    -- Clear the stored names after successful cleanup
+    -- The function name is cleared only now: the DROP above checks it against the canonical name.
     UPDATE sql_saga.era AS e
-    SET sync_temporal_trg_name = NULL,
-        sync_temporal_trg_function_name = NULL
+    SET sync_temporal_trg_function_name = NULL
     WHERE (e.table_schema, e.table_name, e.era_name) = (v_table_schema, v_table_name, __api_drop_synchronize_temporal_columns_trigger.era_name);
 END;
 $drop_synchronize_temporal_columns_trigger$;

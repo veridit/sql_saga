@@ -3,10 +3,11 @@
 -- refused, while DDL on unrelated tables is not. Covered objects: era boundary columns and the range type; the
 -- for_portion_of and current views, their triggers, and the primary keys they depend on; unique-key constraints,
 -- including the pk_consistency EXCLUDE constraint; and the history table, history view, triggers and infinity check
--- of system versioning. The SAVEPOINT blocks s1-s7, s_current_*, expect_error and sv_* are required refusals: their
--- errors in the expected output are the correct behaviour. s9 is a known gap (hug p60d2m): the era's bounds check
--- can still be dropped, so its expected output shows no error. s10, s11 and system_versioning_tests only scope setup.
--- Each section ends by showing that the matching sql_saga drop_* call still removes the same objects.
+-- of system versioning; the era's bounds and boundary checks, its synchronization trigger and its range column
+-- (s9*, hug p60d2m: from v1.0 to 1.12 these drops went through). The SAVEPOINT blocks s1-s9*, s_current_*,
+-- expect_error and sv_* are required refusals: their errors in the expected output are the correct behaviour.
+-- s10, s11 and system_versioning_tests only scope setup. Each section ends by showing that the matching sql_saga
+-- drop_* call still removes the same objects.
 -- Error CONTEXT carries PL/pgSQL line numbers, which change with every edit of the event trigger functions.
 \set SHOW_CONTEXT never
 
@@ -93,8 +94,17 @@ SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s9;
-ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- should fail (bounds check constraint) but is not refused yet: hug p60d2m
+ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails (bounds check constraint)
 ROLLBACK TO SAVEPOINT s9;
+SAVEPOINT s9_boundary;
+ALTER TABLE dp DROP CONSTRAINT dp_check; -- fails (boundary check constraint)
+ROLLBACK TO SAVEPOINT s9_boundary;
+SAVEPOINT s9_sync_trigger;
+DROP TRIGGER dp_p_sync_temporal_trg ON dp; -- fails (synchronization trigger)
+ROLLBACK TO SAVEPOINT s9_sync_trigger;
+SAVEPOINT s9_range_column;
+ALTER TABLE dp DROP COLUMN v CASCADE; -- fails (range column)
+ROLLBACK TO SAVEPOINT s9_range_column;
 
 SAVEPOINT s10;
 /* unique_keys - pk_consistency */

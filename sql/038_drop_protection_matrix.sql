@@ -69,8 +69,17 @@ SELECT dp_matrix.case_result('direct managed policy', $$DROP POLICY sql_saga_his
 CREATE TABLE dp_matrix.era_t (id int, valid_range daterange NOT NULL, valid_from date, valid_until date, payload text);
 SELECT sql_saga.add_era('dp_matrix.era_t', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT dp_matrix.case_result('direct era period column', $$ALTER TABLE dp_matrix.era_t DROP COLUMN valid_from CASCADE$$, 'P0001', 'cannot drop column "dp_matrix.era_t.valid_from" because it is part of the period "valid"');
-SELECT dp_matrix.case_result('direct era bounds constraint cleanup', $$ALTER TABLE dp_matrix.era_t DROP CONSTRAINT era_t_valid_check$$, NULL, NULL);
-SELECT dp_matrix.case_result('direct era synchronization trigger cleanup', $$DROP TRIGGER era_t_valid_sync_temporal_trg ON dp_matrix.era_t$$, NULL, NULL);
+-- 1.13 (hug p60d2m): the era's checks, synchronization trigger and range column are refused like its boundary
+-- columns. Until 1.12 the first two rows were pinned as 'ok', which left the era unenforced.
+SELECT dp_matrix.case_result('direct era bounds constraint', $$ALTER TABLE dp_matrix.era_t DROP CONSTRAINT era_t_valid_check$$, 'P0001', 'cannot drop constraint "era_t_valid_check" on table "dp_matrix.era_t" because it keeps empty ranges out of period "valid"; use sql_saga.drop_era()');
+SELECT dp_matrix.case_result('direct era boundary constraint', $$ALTER TABLE dp_matrix.era_t DROP CONSTRAINT era_t_check$$, 'P0001', 'cannot drop constraint "era_t_check" on table "dp_matrix.era_t" because it keeps the start of period "valid" before its end; use sql_saga.drop_era()');
+SELECT dp_matrix.case_result('direct era synchronization trigger', $$DROP TRIGGER era_t_valid_sync_temporal_trg ON dp_matrix.era_t$$, 'P0001', 'cannot drop trigger "era_t_valid_sync_temporal_trg" on table "dp_matrix.era_t" because it synchronizes the columns of period "valid"; use sql_saga.drop_era()');
+SELECT dp_matrix.case_result('direct era range column', $$ALTER TABLE dp_matrix.era_t DROP COLUMN valid_range CASCADE$$, 'P0001', 'cannot drop column "dp_matrix.era_t.valid_range" because it is part of the period "valid"');
+SELECT dp_matrix.case_result('era synchronization function cascade', $$DROP FUNCTION sql_saga.dp_matrix_era_t_valid_template_sync() CASCADE$$, 'P0001', 'cannot drop trigger "era_t_valid_sync_temporal_trg" on table "dp_matrix.era_t" because it synchronizes the columns of period "valid"; use sql_saga.drop_era()');
+CREATE TABLE dp_matrix.era_range_only (id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('dp_matrix.era_range_only', 'valid_range', 'valid');
+-- No dependent trigger: PostgreSQL itself would drop the column and its single-column check without CASCADE.
+SELECT dp_matrix.case_result('range-only era range column', $$ALTER TABLE dp_matrix.era_range_only DROP COLUMN valid_range$$, 'P0001', 'cannot drop column "dp_matrix.era_range_only.valid_range" because it is part of the period "valid"');
 
 ALTER TABLE dp_matrix.era_t ADD CONSTRAINT era_t_pk PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('dp_matrix.era_t', ARRAY['id'], 'valid', key_type => 'primary', unique_key_name => 'era_primary', unique_constraint => 'era_t_pk');

@@ -16,8 +16,13 @@ direct from-to function | P0001: cannot drop function "dp_matrix.sv__from_to(tim
 direct managed policy | P0001: cannot drop or alter policy "sql_saga_history_reader_newtoken" on "dp_matrix.sv_history" because it is managed by sql_saga for table "dp_matrix.sv"
 t
 direct era period column | P0001: cannot drop column "dp_matrix.era_t.valid_from" because it is part of the period "valid"
-direct era bounds constraint cleanup | ok
-direct era synchronization trigger cleanup | ok
+direct era bounds constraint | P0001: cannot drop constraint "era_t_valid_check" on table "dp_matrix.era_t" because it keeps empty ranges out of period "valid"; use sql_saga.drop_era()
+direct era boundary constraint | P0001: cannot drop constraint "era_t_check" on table "dp_matrix.era_t" because it keeps the start of period "valid" before its end; use sql_saga.drop_era()
+direct era synchronization trigger | P0001: cannot drop trigger "era_t_valid_sync_temporal_trg" on table "dp_matrix.era_t" because it synchronizes the columns of period "valid"; use sql_saga.drop_era()
+direct era range column | P0001: cannot drop column "dp_matrix.era_t.valid_range" because it is part of the period "valid"
+era synchronization function cascade | P0001: cannot drop trigger "era_t_valid_sync_temporal_trg" on table "dp_matrix.era_t" because it synchronizes the columns of period "valid"; use sql_saga.drop_era()
+t
+range-only era range column | P0001: cannot drop column "dp_matrix.era_range_only.valid_range" because it is part of the period "valid"
 era_primary
 direct temporal unique constraint | P0001: cannot drop constraint "era_t_pk" on table "dp_matrix.era_t" because it is used in era unique key "era_primary"
 direct standard temporal backing index | 2BP01: cannot drop index era_t_pk because constraint era_t_pk on table era_t requires it

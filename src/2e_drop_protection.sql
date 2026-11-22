@@ -108,7 +108,11 @@ BEGIN
                   SELECT FROM sql_saga.era AS e
                   WHERE e.provenance_columns IS NOT NULL
                     AND (e.table_schema, e.table_name) = (d.address_names[1], d.address_names[2])
-                    AND d.address_names[3] = e.era_name || '_provenance')) THEN
+                    AND d.address_names[3] = e.era_name || '_provenance')
+           OR EXISTS (
+                  SELECT FROM sql_saga.era AS e
+                  WHERE (e.table_schema, e.table_name, e.sync_temporal_trg_name) =
+                        (d.address_names[1], d.address_names[2], d.address_names[3]))) THEN
         RETURN;
     END IF;
 
@@ -129,6 +133,16 @@ BEGIN
               AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
               AND d.address_names[3] IN (e.valid_from_column_name, e.valid_until_column_name))
           OR d.objid = e.range_type::oid
+          -- 1.13: the era's checks, its synchronization trigger and its range column (hug p60d2m).
+          OR (d.object_type = 'table column'
+              AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
+              AND d.address_names[3] IN (e.range_column_name, e.valid_to_column_name))
+          OR (d.object_type = 'table constraint'
+              AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
+              AND d.address_names[3] IN (e.bounds_check_constraint, e.boundary_check_constraint))
+          OR (d.object_type = 'trigger'
+              AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                  (e.table_schema, e.table_name, e.sync_temporal_trg_name))
           -- 1.9: provenance columns and their managed trigger (doc/design/provenance.md).
           OR (d.object_type = 'table column'
               AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
@@ -365,6 +379,13 @@ BEGIN
              AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
              AND d.address_names[3] = e.era_name || '_provenance'
             UNION ALL
+            SELECT 24, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it synchronizes the columns of period "%s"; use sql_saga.drop_era()',
+                          d.address_names[3], sql_saga.__internal_display_name(e.table_schema, e.table_name), e.era_name)
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                (e.table_schema, e.table_name, e.sync_temporal_trg_name)
+            UNION ALL
             SELECT 90, d.dropped_ordinality,
                    format('cannot drop trigger "%s" on view "%s" because it is part of an updatable view for era "%s" on table "%s"',
                           d.address_names[3],
@@ -436,6 +457,38 @@ BEGIN
                           d.object_identity, e.era_name,
                           sql_saga.__internal_display_name(e.table_schema, e.table_name))
             FROM dropped AS d JOIN sql_saga.era AS e ON d.objid = e.range_type::oid
+            UNION ALL
+            /* After the range type (a DROP TYPE CASCADE names the type) and before what the column takes with it. */
+            SELECT 21, d.dropped_ordinality,
+                   format('cannot drop column "%s" because it is part of the period "%s"', d.object_identity, e.era_name)
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON d.object_type = 'table column'
+             AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
+             AND d.address_names[3] IN (e.range_column_name, e.valid_to_column_name)
+            UNION ALL
+            SELECT 22, d.dropped_ordinality,
+                   format('cannot drop constraint "%s" on table "%s" because it keeps empty ranges out of period "%s"; use sql_saga.drop_era()',
+                          d.address_names[3], sql_saga.__internal_display_name(e.table_schema, e.table_name), e.era_name)
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON d.object_type = 'table constraint'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                 (e.table_schema, e.table_name, e.bounds_check_constraint)
+            UNION ALL
+            SELECT 23, d.dropped_ordinality,
+                   format('cannot drop constraint "%s" on table "%s" because it keeps the start of period "%s" before its end; use sql_saga.drop_era()',
+                          d.address_names[3], sql_saga.__internal_display_name(e.table_schema, e.table_name), e.era_name)
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON d.object_type = 'table constraint'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                 (e.table_schema, e.table_name, e.boundary_check_constraint)
+            UNION ALL
+            SELECT 24, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it synchronizes the columns of period "%s"; use sql_saga.drop_era()',
+                          d.address_names[3], sql_saga.__internal_display_name(e.table_schema, e.table_name), e.era_name)
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON d.object_type = 'trigger'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                 (e.table_schema, e.table_name, e.sync_temporal_trg_name)
             UNION ALL
             SELECT 30, d.dropped_ordinality,
                    format('cannot drop constraint "%s" on table "%s" because it is used in SYSTEM_TIME period',
