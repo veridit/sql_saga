@@ -10,13 +10,13 @@ EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/defau
 SQL_SAGA_PYTHON ?= python3
 # Each released tag carries its own Makefile, so only the current version's rules live here (the upgrade test and
 # released_tree.py build older releases from their tags with `git archive`).
-ifeq ($(EXTVERSION),1.12)
-# Direct single-hop updates from every release: devops/generate_update_scripts_1_12.py holds the 1.12 release data
-# (SHA-256 of the frozen 1.11 artifacts and the routines changed since 1.11, devops/upgrade_1_12_repairs.sql), and
+ifeq ($(EXTVERSION),1.13)
+# Direct single-hop updates from every release: devops/generate_update_scripts_1_13.py holds the 1.13 release data
+# (SHA-256 of the frozen 1.12 artifacts and the routines changed since 1.12, devops/upgrade_1_13_repairs.sql), and
 # devops/direct_update.py builds the scripts.
-DIRECT_UPDATE = $(foreach v,1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10 1.11,$(EXTENSION)--$(v)--1.12.sql)
-UPDATE_GENERATOR = devops/generate_update_scripts_1_12.py
-UPDATE_GENERATOR_INPUTS = $(UPDATE_GENERATOR) devops/direct_update.py devops/generate_update_scripts_1_4.py devops/generate_update_scripts.py devops/upgrade_1_12_repairs.sql $(wildcard versions/*.sql src/[0-9][a-z]_*.sql)
+DIRECT_UPDATE = $(foreach v,1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10 1.11 1.12,$(EXTENSION)--$(v)--1.13.sql)
+UPDATE_GENERATOR = devops/generate_update_scripts_1_13.py
+UPDATE_GENERATOR_INPUTS = $(UPDATE_GENERATOR) devops/direct_update.py devops/generate_update_scripts_1_4.py devops/generate_update_scripts.py devops/upgrade_1_13_repairs.sql $(wildcard versions/*.sql src/[0-9][a-z]_*.sql)
 DATA = $(wildcard versions/*.sql) $(DIRECT_UPDATE) $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
 else
 $(error no update-script generation rule for EXTVERSION $(EXTVERSION))
@@ -150,6 +150,7 @@ update_scripts_force:
 .PHONY: test-generator
 test-generator:
 	$(SQL_SAGA_PYTHON) devops/test_upgrade_migration_safety.py
+	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_13.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_12.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_11.py
 	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_10.py

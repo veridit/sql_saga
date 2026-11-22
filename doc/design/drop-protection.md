@@ -1,6 +1,6 @@
 # Drop and rename protection, and `check_integrity()`
 
-Status: implemented in 1.2, current in 1.8 (revision 4 of the 1.2 design, 2026-10-15). Code:
+Status: implemented in 1.2, current in 1.13 (revision 4 of the 1.2 design, 2026-10-15; era objects extended in 1.13). Code:
 `src/2e_drop_protection.sql`, `src/2f_rename_following.sql`, `src/2h_health_checks.sql`,
 `src/2j_event_triggers.sql`. Tests: 037-039, 094, 116, 117, 127. User documentation: README.md.
 
@@ -29,6 +29,14 @@ dropped object of this statement (constraint, trigger, column, view, policy, fun
 for missing objects. Refusal candidates have a fixed priority and are ordered by `(priority, position in the
 payload)`, so a cascade containing many protected objects always reports the same first error.
 `DISABLE TRIGGER` is not a drop and is outside this promise.
+
+An era protects its boundary columns, its range type (1.2), and from 1.13 its range and `valid_to` columns, its
+bounds check (`NOT isempty`), its boundary check (`from < until`) and its synchronization trigger, also when they go
+by `CASCADE` from a column or from `DROP FUNCTION` of the generated synchronization function. Before 1.13 those drops
+went through: test 038 even pinned two of them as allowed cleanups, while `check_integrity()` called the result a
+violation. The only sanctioned removals are `drop_era` (which deletes the era row before the DDL) and
+`drop_synchronize_temporal_columns_trigger` (which clears the trigger name before its `DROP TRIGGER`). A constraint or
+trigger that only shares a name on another table is not attributed (the join includes schema and table).
 
 ## Column renames of a system-versioned table
 

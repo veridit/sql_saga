@@ -26,7 +26,7 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.12: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default 1.13: the candidate version every baseline must reach
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -59,12 +59,12 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.12}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-1.13}
 # The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
-catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
@@ -108,6 +108,9 @@ frozen_artifacts() {
     fi
     if version_lt 1.11 "$NEW_VERSION"; then
         for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10; do echo "sql_saga--$source--1.11.sql"; done
+    fi
+    if version_lt 1.12 "$NEW_VERSION"; then
+        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10 1.11; do echo "sql_saga--$source--1.12.sql"; done
     fi
 }
 # The candidate's update scripts: one direct hop from every released baseline.
@@ -3700,6 +3703,32 @@ INSERT INTO jn_src VALUES (1, 1, '[1, {\"k\": null}]', '2024-01-01', 'infinity')
 CALL sql_saga.temporal_merge(target_table => 'jn'::regclass, source_table => 'jn_src'::regclass, primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH');
 SELECT doc::text FROM jn;" | sql "$NULLS_DB" | grep -m1 -E '^ERROR|^\[')"
     assert_integrity "$NULLS_DB"
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 1.13: drop protection refuses DDL that drops an era's bounds check, boundary check or synchronization trigger, or its
+# range column. Before, each went through and left the era unenforced until check_integrity was run.
+if ! version_lt "$NEW_VERSION" 1.13; then
+    section "$BASELINE_VERSION era checks and synchronization trigger are drop-protected after the update to $NEW_VERSION" "expected RED"
+    ERA_DP_DB=${PREFIX}_eradrop113
+    v13_db "$ERA_DP_DB" "CREATE TABLE ed (id integer NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('ed', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');"
+    v13_restart "$ERA_DP_DB"
+    check "update succeeds" "" "$(q "$ERA_DP_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "DROP CONSTRAINT of the bounds check is refused" \
+        'ERROR:  cannot drop constraint "ed_valid_check" on table "public.ed" because it keeps empty ranges out of period "valid"; use sql_saga.drop_era()' \
+        "$(q "$ERA_DP_DB" "ALTER TABLE ed DROP CONSTRAINT ed_valid_check" | grep -m1 '^ERROR')"
+    check "DROP CONSTRAINT of the boundary check is refused" \
+        'ERROR:  cannot drop constraint "ed_check" on table "public.ed" because it keeps the start of period "valid" before its end; use sql_saga.drop_era()' \
+        "$(q "$ERA_DP_DB" "ALTER TABLE ed DROP CONSTRAINT ed_check" | grep -m1 '^ERROR')"
+    check "DROP TRIGGER of the synchronization trigger is refused" \
+        'ERROR:  cannot drop trigger "ed_valid_sync_temporal_trg" on table "public.ed" because it synchronizes the columns of period "valid"; use sql_saga.drop_era()' \
+        "$(q "$ERA_DP_DB" "DROP TRIGGER ed_valid_sync_temporal_trg ON ed" | grep -m1 '^ERROR')"
+    check "DROP COLUMN of the range column with CASCADE is refused" \
+        'ERROR:  cannot drop column "public.ed.valid_range" because it is part of the period "valid"' \
+        "$(q "$ERA_DP_DB" "ALTER TABLE ed DROP COLUMN valid_range CASCADE" | grep -m1 '^ERROR')"
+    check "drop_era still removes the era" "t" "$(q "$ERA_DP_DB" "BEGIN; SELECT sql_saga.drop_era('ed'); ROLLBACK;" | grep -m1 -E '^ERROR|^t$')"
+    assert_integrity "$ERA_DP_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
