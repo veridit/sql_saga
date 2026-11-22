@@ -5,7 +5,7 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
-## 2026-11-22: Version 1.12, PL/pgSQL planner keeps nested jsonb nulls (hug y37p3x; tag and CI recorded at release)
+## 2026-11-22: Version 1.12, PL/pgSQL planner keeps nested jsonb nulls (tag v1.12 at 676370d, CI 44996552757 green; hug y37p3x)
 - Since v1.0 the PL/pgSQL planner stripped payloads with jsonb_strip_nulls, which also removes nulls nested inside a
   jsonb column's value: MERGE_ENTITY_PATCH stored [1, {"k": null}] as [1, {}], and adjacent pieces that differed only by
   such a null were merged. The native (default) planner was right. Now only top-level null keys are removed, at all
