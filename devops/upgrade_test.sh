@@ -3726,7 +3726,7 @@ SELECT sql_saga.add_era('ed', 'valid_range', valid_from_column_name => 'valid_fr
         "$(q "$ERA_DP_DB" "DROP TRIGGER ed_valid_sync_temporal_trg ON ed" | grep -m1 '^ERROR')"
     check "DROP COLUMN of the range column with CASCADE is refused" \
         'ERROR:  cannot drop column "public.ed.valid_range" because it is part of the period "valid"' \
-        "$(q "$ERA_DP_DB" "ALTER TABLE ed DROP COLUMN valid_range CASCADE" | grep -m1 '^ERROR')"
+        "$(printf '%s\n' "ALTER TABLE ed DROP COLUMN valid_range CASCADE" | sql "$ERA_DP_DB" | grep -m1 '^ERROR')"  # q stops at the NOTICE
     check "drop_era still removes the era" "t" "$(q "$ERA_DP_DB" "BEGIN; SELECT sql_saga.drop_era('ed'); ROLLBACK;" | grep -m1 -E '^ERROR|^t$')"
     assert_integrity "$ERA_DP_DB"
 fi
