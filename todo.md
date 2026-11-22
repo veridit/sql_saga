@@ -5,6 +5,29 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Version 1.13, era drop protection (tag v1.13 at a96e1cf, CI 45074292407 green; hug p60d2m)
+
+- Bug since v1.0: user DDL could drop an era's bounds check (NOT isempty), boundary check (from < until),
+  synchronization trigger, or its range or valid_to column (by CASCADE from the column or from DROP FUNCTION of the
+  generated sync function; a range-only era's column even without CASCADE). check_integrity reported it, but until then
+  empty ranges and from >= until rows were accepted. Test 094 s9 said "-- fails" and never failed; test 038 pinned two
+  of these drops as allowed "cleanup". Found while writing the 094 header (7yz6xb).
+- Fix: src/2e_drop_protection.sql refuses each with a message naming the era and drop_era (priorities 21 to 24, after
+  the range type, so DROP TYPE ... CASCADE still names the type). drop_synchronize_temporal_columns_trigger clears the
+  trigger name before its DROP TRIGGER (metadata first). Attribution joins schema, table and name.
+- Tests written first and RED on 1.12: 094 (s9, s9_boundary, s9_sync_trigger, s9_range_column), 038 (5 era rows,
+  incl. function cascade and range-only era). Upgrade gate: on the v1.12 binaries all four drops succeed.
+- Review (tmp/journal.md): sanctioned paths probed and unchanged (drop_era RESTRICT/CASCADE/cleanup, sync drop/re-add,
+  DROP TABLE, DROP SCHEMA CASCADE, renames, pg_restore --clean via 029). Out of scope: DISABLE TRIGGER (filed a5sdk3:
+  check_integrity does not report a disabled sync trigger), session_replication_role=replica.
+- Packaging: versions/ 1.12 artifacts built twice from v1.12 (676370d), byte-identical; 1.13 replaces two routines;
+  no catalog (format 1.9) or native change. Preflight accepts 1.12; upgrade_test.sh v1.12 baseline and 1.13 gate
+  (first run caught a harness bug: q() returned the CASCADE NOTICE line, fixed at a96e1cf); restore old_dump_112.
+- Acceptance: make test fast 147/147; generator suites 11/11 + make wiring; local upgrade matrix all 13 baselines GREEN
+  (v1.0 rerun alone after its first native build was killed by the session reload); restore round trip 21 passed,
+  0 failed; CI 45074292407 green on every step; v1.13 rebuilt from git archive gives 14/14 artifacts byte-identical
+  to the tested install.
+
 ## 2026-11-22: Purpose headers on the complex and expected-failure tests (no release; hug 7yz6xb)
 
 Every test with intentional failures or an intricate setup now says at the top what it proves. Audit of the
