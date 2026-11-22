@@ -1,5 +1,13 @@
 \set ECHO none
 \i sql/include/test_setup.sql
+-- check_integrity() against deliberately corrupted state. Every case breaks one managed object behind sql_saga's back
+-- (wrong relation kind or persistence, forged or renamed triggers and constraints, wrong function properties, history
+-- ACLs and policies, view triggers, same-named impostors) and expects the exact named error, SQLSTATE P0001, with the
+-- checker leaving the database unchanged (integrity_g4.attempt compares a full catalog snapshot before and after).
+-- Rows reading "| unexpected ..." or "| checker changed state" are failures; "| P0001: ..." and "| ok" are passes.
+-- Also pins the PUBLIC-executable sql_saga function set (any widening must be deliberate and listed below), checks
+-- that the first error is chosen deterministically when several are present, and that drops by name keep same-named
+-- user objects that sql_saga cannot attribute to itself. Everything runs in one transaction and is rolled back.
 \pset format unaligned
 \pset tuples_only on
 SET client_min_messages = warning;

@@ -1,4 +1,11 @@
 \i sql/include/test_setup.sql
+-- The for_portion_of view end to end, in 13 numbered scenarios: a non-public schema; ownership and ACLs (the view is
+-- security_invoker, so a writer needs the base table's privileges; an UPDATE that splits a row needs no DELETE);
+-- drop_era RESTRICT/CASCADE and DROP TABLE with a dependent view; no primary key; column types without B-tree
+-- support; generated and identity columns; native temporal foreign keys under the DELETE-first strategy; valid_to,
+-- coalescing and exact matches (with a StatBus regression); a missing era; a range-only table; setting a column to
+-- NULL; era-level ephemeral columns. The SAVEPOINT expect_error blocks are refusals the test requires; their errors
+-- in the expected output are the correct behaviour, not failures.
 
 CREATE ROLE view_test_role;
 

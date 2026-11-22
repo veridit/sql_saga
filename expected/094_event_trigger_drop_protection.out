@@ -23,6 +23,14 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- The drop-protection event trigger: user DDL that would remove or retype an object sql_saga keeps in its catalogs is
+-- refused, while DDL on unrelated tables is not. Covered objects: era boundary columns and the range type; the
+-- for_portion_of and current views, their triggers, and the primary keys they depend on; unique-key constraints,
+-- including the pk_consistency EXCLUDE constraint; and the history table, history view, triggers and infinity check
+-- of system versioning. The SAVEPOINT blocks s1-s7, s_current_*, expect_error and sv_* are required refusals: their
+-- errors in the expected output are the correct behaviour. s9 is a known gap (hug p60d2m): the era's bounds check
+-- can still be dropped, so its expected output shows no error. s10, s11 and system_versioning_tests only scope setup.
+-- Each section ends by showing that the matching sql_saga drop_* call still removes the same objects.
 -- Error CONTEXT carries PL/pgSQL line numbers, which change with every edit of the event trigger functions.
 \set SHOW_CONTEXT never
 BEGIN;
@@ -161,7 +169,7 @@ ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "public.dp" because it is used in era unique key "k"
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s9;
-ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails (bounds check constraint)
+ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- should fail (bounds check constraint) but is not refused yet: hug p60d2m
 ROLLBACK TO SAVEPOINT s9;
 SAVEPOINT s10;
 /* unique_keys - pk_consistency */

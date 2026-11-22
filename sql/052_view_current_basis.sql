@@ -1,4 +1,8 @@
 \i sql/include/test_setup.sql
+-- The current view, basic lifecycle: add_current_view with now() overridden for a fixed date, SELECT showing only rows
+-- valid now, INSERT, UPDATE as a close-and-reopen (SCD Type 2), DELETE as a cutoff (soft delete), then
+-- drop_current_view. The expect_* SAVEPOINT blocks are required refusals: a current view on an era that is not
+-- time-based, and on a table with no era or with an era name that doesn't exist.
 
 BEGIN;
 

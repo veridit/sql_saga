@@ -5,6 +5,27 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Purpose headers on the complex and expected-failure tests (no release; hug 7yz6xb)
+
+Every test with intentional failures or an intricate setup now says at the top what it proves. Audit of the
+candidates: 139, 146, 061 and 066 already had a description header, and 010 and 016 state their purpose in their
+first comments. Added headers:
+- 117 (check_integrity adversarial): what each case corrupts, the pass/fail row format of `integrity_g4.attempt`
+  (exact P0001 message, catalog snapshot unchanged), the pinned PUBLIC function set, deterministic first error,
+  and attribution-safe drops.
+- 051 (for_portion_of view): its 13 scenarios, and that the `expect_error` errors are required refusals.
+- 052 (current view): the lifecycle it walks and its three required refusals.
+- 088 (temporal_merge key columns): scenarios 1-4 and 7 are required refusals, 5 and 6 the valid cases.
+- 094 (drop protection): the protected objects, which SAVEPOINT blocks are required refusals and which only scope
+  setup. Writing it found a bug: block s9, commented "-- fails (bounds check constraint)" since v1.0, has never
+  failed. User DDL can drop an era's bounds check, boundary check and sync trigger; check_integrity detects it, but
+  until then empty ranges and from >= until rows are accepted (probed on v1.12). Filed as hug p60d2m (needs a
+  release); the s9 comment now says so instead of claiming a refusal.
+
+Validation: the expected-output diffs of 051, 052, 088 and 094 (which echo their SQL) are exactly the new comment
+lines (7, 4, 5, 8) plus the changed s9 comment; `make test fast` passes. Also removed a stray empty
+`expected/099_api_documentation.out` (no such test).
+
 ## 2026-11-22: Acceptance of 1.10-1.12 end to end (released v1.12 against released v1.9)
 - One script of public-interface checks (provenance typing, dropped DEFAULT, generated column, check_integrity;
   array/composite/jsonb/numeric through temporal_merge on update and on a new entity's later slice; nested jsonb nulls
