@@ -37,5 +37,6 @@ Candidates: tests using SAVEPOINT expect_error patterns and the adversarial test
 ## Notes
 
 
+Done at e107dad: headers on 051, 052, 088, 094, 117 (139, 146, 061, 066 already had them; 010, 016 state purpose in first comments). Comment-only expected diffs; make test fast 147/147. Writing 094's header found s9 has never failed since v1.0: era check constraints and sync trigger are not drop-protected, filed as p60d2m.
 ## History
 - 2026-11-22T21:35 todo -> doing/active (take)
