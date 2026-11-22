@@ -5,6 +5,24 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-22: Version 1.10, provenance trigger corrections (hug 9msfzx; tag and CI recorded at release)
+- Probing the 1.9 trigger beyond test 161 found three defects in released 1.9, fixed with hand-written failing
+  scenarios first (161: 15-17, both planners): a jsonb provenance DEFAULT was stored as a JSON string (the DEFAULT
+  was evaluated as text; now `to_jsonb(DEFAULT)` keeps the type); a provenance column whose DEFAULT was dropped after
+  registration stored NULL silently (writes now refused with the repair, and `check_integrity()` reports it); a
+  generated column passed registration (pg_attrdef also holds generation expressions) and then broke every write
+  (now refused at registration). Rows written by 1.9 are not rewritten
+- Routine-only update (provenance_trigger, the shared provenance validation, check_integrity); catalog_format stays
+  1.9, so a 1.9 dump restores plainly. First two-digit minor version: the spec tests check every guard and lock
+  names exactly `1.10`; the harness compares versions numerically and maps versions to catalog layouts
+- Also found, not fixed here: the PL/pgSQL-planner executor fails on array columns in every release (hug 7t5hd7)
+- Acceptance (local): 146 fast regressions; generator suite 1.4-1.10 and make wiring; upgrade paths 1.0..1.9 ->
+  1.10 GREEN, 0 FAIL (the 1.9 path shows the defect before and the fix after); restore round trips 12 cases plus old
+  dumps 1.0, 1.1, 1.2, 1.7, 1.8, 1.9. Benchmarks 100 and 101, v1.9 then 1.10 (load average 13-25): PATCH parent
+  265-274 against 262-270 ms, child 276-280 against 274 ms in three of four runs (one 314 ms outlier); seeds and DML
+  within 1-5 ms
+- doc/upgrade.md describes 1.10, the 1.9 guide is frozen as doc/upgrade-1.9.md
+
 ## 2026-11-21: Version 1.9, provenance columns (tag v1.9 at fb9b351, CI 44953800430 green; hug s4bvm1)
 - Eras can name provenance columns (`add_era(..., provenance_columns => ...)`, `set_era_provenance_columns`): ephemeral
   columns with a DEFAULT that the managed trigger `<era>_provenance` fills, evaluated as the writing role, on every

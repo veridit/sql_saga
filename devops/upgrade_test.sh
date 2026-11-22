@@ -60,6 +60,9 @@ CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
 NEW_VERSION=${UPGRADE_NEW_VERSION:-1.10}
+# The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; *) echo 1.9 ;; esac; }
+NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
 RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351"
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
@@ -3570,7 +3573,7 @@ UPDATE ah SET payload = 'b';"
     check "unlogged history table: extension still $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$AUDIT_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     q "$AUDIT_DB" "ALTER TABLE ah_history SET LOGGED" >/dev/null
     check "after both repairs the update succeeds" "" "$(q "$AUDIT_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
-    check "audit columns dropped, every era row at catalog_format $NEW_VERSION" "-|$NEW_VERSION" \
+    check "audit columns dropped, every era row at catalog_format $NEW_CATALOG_FORMAT" "-|$NEW_CATALOG_FORMAT" \
         "$(q "$AUDIT_DB" "$audit_cols_sql")|$(q "$AUDIT_DB" "SELECT string_agg(DISTINCT catalog_format, ',') FROM sql_saga.era")"
     check "history data preserved" "a|b" "$(q "$AUDIT_DB" "SELECT string_agg(payload, '|' ORDER BY payload) FROM (SELECT payload FROM ah_history UNION ALL SELECT payload FROM ah) AS s")"
     check "after 1.8, SET UNLOGGED on a history table is refused" \
@@ -3605,14 +3608,14 @@ REVOKE EXECUTE ON FUNCTION $ADD_ERA_13 FROM PUBLIC;"
         "ERROR:  sql_saga: the privileges on $ADD_ERA_13 differ from those its 1.9 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
         "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     check "revoked add_era: the hint carries the revoke to the new signature" "1" \
-        "$(sql "$PROV_DB" -c "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^HINT:  ' | grep -cF "Run: GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.9'; REVOKE ALL ON FUNCTION sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC CASCADE;")"
+        "$(sql "$PROV_DB" -c "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^HINT:  ' | grep -cF "Run: GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC CASCADE;")"
     check "revoked add_era: extension still $BASELINE_VERSION, no provenance column, no probe left" "$BASELINE_VERSION|0|0" \
         "$(q "$PROV_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$PROV_DB" "$prov_cols_sql")|$(q "$PROV_DB" "SELECT count(*) FROM pg_proc WHERE proname LIKE '%acl_probe%'")"
     q "$PROV_DB" "GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC" >/dev/null
     check "after the grant the update succeeds" "" "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     q "$PROV_DB" "REVOKE ALL ON FUNCTION $ADD_ERA_14 FROM PUBLIC" >/dev/null
-    check "add_era has only the 14-argument signature; every era row at catalog_format 1.9 with no provenance columns" \
-        "$ADD_ERA_14|1.9|" \
+    check "add_era has only the 14-argument signature; every era row at catalog_format $NEW_CATALOG_FORMAT with no provenance columns" \
+        "$ADD_ERA_14|$NEW_CATALOG_FORMAT|" \
         "$(q "$PROV_DB" "SELECT string_agg(p.oid::regprocedure::text, ',') FROM pg_proc AS p WHERE p.proname = 'add_era'")|$(q "$PROV_DB" "SELECT string_agg(DISTINCT catalog_format, ',') || '|' || coalesce(string_agg(provenance_columns::text, ','), '') FROM sql_saga.era")"
     check "existing era gains provenance: set_era_provenance_columns creates the trigger" "pv|valid_provenance|{edit_by}" \
         "$(q "$PROV_DB" "SET client_min_messages = warning; SELECT sql_saga.set_era_provenance_columns('pv', 'valid', ARRAY['edit_by']::name[]); SELECT e.table_name || '|' || t.tgname || '|' || e.provenance_columns::text FROM sql_saga.era AS e JOIN pg_trigger AS t ON t.tgrelid = 'pv'::regclass AND t.tgname = 'valid_provenance'")"
