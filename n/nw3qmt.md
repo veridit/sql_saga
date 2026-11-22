@@ -39,5 +39,6 @@ Situation: native/src/reader.rs parse_typed_value parses numeric/decimal/money/r
 ## Notes
 
 
+Shipped in v1.11 (61343fa, master CI 44983601001; native unit tests green in branch CI 44980572355). The native reader keeps numeric/decimal exact (serde_json arbitrary_precision); test 162 stores 12345678901234567890.123456789012345678900 and 0.1000 identically under both planners. Rows already written by earlier releases are not repaired (rounded values cannot be recovered); doc/upgrade.md says so.
 ## History
 - 2026-11-22T03:18 todo -> doing/active (take)
