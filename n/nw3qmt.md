@@ -28,7 +28,7 @@ Situation: native/src/reader.rs parse_typed_value parses numeric/decimal/money/r
 
 ## Acceptance
 - [ ] A regression test stores 12345678901234567890.123456789012345678900 and 1.10 exactly under both planners
-- [ ] Coalescing treats 1.1 and 1.10 as the same value under both planners
+- [ ] ~~Coalescing treats 1.1 and 1.10 as the same value under both planners~~ (not relevant: Wrong premise: both planners already keep 1.1 and 1.10 as separate pieces (measured 2026-11-22 on the 1.11 candidate, table cz in scratch db arr_jhf), and that is correct, since numeric scale is part of the stored value. The real requirement is that the planners agree, which test 162 now checks., sabertooth, 2026-11-22)
 - [ ] Fast suite green; make test-native green in CI
 
 ## Notes
