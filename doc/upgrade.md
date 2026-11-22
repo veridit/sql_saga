@@ -1,8 +1,8 @@
 # Upgrading sql_saga
 
 This guide describes the normal PostgreSQL extension upgrade workflow. The current
-package is **1.10**, supporting a fresh install and direct upgrades from released
-**1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8 and 1.9** on PostgreSQL 18.
+package is **1.11**, supporting a fresh install and direct upgrades from released
+**1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9 and 1.10** on PostgreSQL 18.
 
 ## Before the maintenance window
 
@@ -15,7 +15,7 @@ package is **1.10**, supporting a fresh install and direct upgrades from release
   server's PostgreSQL 18 `pg_config`. Do not deploy to another local cluster.
 - For sources before 1.4, read the historical migration requirements in
   [the 1.4 migration guide](upgrade-1.4.md). Its historical commands name 1.4,
-  but when using the current package update **directly to 1.10** instead.
+  but when using the current package update **directly to 1.11** instead.
   Orphan rows, changed routine ACLs, mispaired XOR keys and noncanonical generated
   objects can intentionally refuse an upgrade. Never bypass an integrity gate.
 - A `for_portion_of` view that already has a user trigger named like its 1.6 apply
@@ -49,15 +49,15 @@ The native library is not a separate extension and must not be installed using
 The package contains:
 
 - `sql_saga.control`, with the current `default_version`.
-- `sql_saga--1.10.sql`, the fresh installation.
-- `sql_saga--<source>--1.10.sql`, one direct script for each supported source.
+- `sql_saga--1.11.sql`, the fresh installation.
+- `sql_saga--<source>--1.11.sql`, one direct script for each supported source.
 - Every frozen released installation and upgrade artifact in `versions/`.
 - `sql_saga_upgrade_preflight.sql`.
 - `$libdir/sql_saga` and `$libdir/sql_saga_native` for the same release.
 
 Restart PostgreSQL after replacing either library. The native library version is
 embedded from `sql_saga.control` at build time. The direct upgrades require
-`sql_saga.native_library_version()` to return `1.10`. Do not run an older upgrade
+`sql_saga.native_library_version()` to return `1.11`. Do not run an older upgrade
 script with the current native library loaded, because its guard requires its
 own release's library.
 
@@ -81,7 +81,7 @@ substitute for the real rollback-only upgrade.
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
 SELECT source, target, path
 FROM pg_catalog.pg_extension_update_paths('sql_saga')
-WHERE target = '1.10' AND source IN ('1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9')
+WHERE target = '1.11' AND source IN ('1.0', '1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8', '1.9', '1.10')
 ORDER BY source;
 ALTER EXTENSION sql_saga UPDATE;
 SELECT extversion FROM pg_catalog.pg_extension WHERE extname = 'sql_saga';
@@ -89,10 +89,35 @@ SELECT sql_saga.native_library_version();
 SELECT sql_saga.check_integrity();
 ```
 
-Expected paths are `<source>--1.10`, never an intermediate hop. Both version
-queries must report `1.10` and integrity must complete without error. Exercise
+Expected paths are `<source>--1.11`, never an intermediate hop. Both version
+queries must report `1.11` and integrity must complete without error. Exercise
 application reads and writes before reopening writers. Repeat for every database
 that contains the extension.
+
+## What changes in 1.11
+
+`temporal_merge` writes each data value with its column's type, identically under the
+native planner (the default) and the PL/pgSQL planner
+(`sql_saga.temporal_merge.use_plpgsql_planner`). Every release before 1.11:
+
+- With the native planner, rounded `numeric` values through a 64-bit float, so
+  `12345678901234567890.123456789012345678900` was stored as `12345678901234567000`,
+  and dropped trailing zeros (`1.10` became `1.1`). 1.11 keeps the exact value and scale.
+- With the native planner, stored a `json`/`jsonb` value of a new entity's second and
+  later pieces as a JSON string (`"{\"k\": 1}"` instead of `{"k": 1}`).
+- With the PL/pgSQL planner, failed on any array or composite column
+  (`malformed array literal`) and on a `jsonb` column holding a JSON string.
+
+Rows written before are not rewritten: a rounded number cannot be recovered, and a
+`jsonb` string cannot be told apart from one written on purpose. Check numeric columns
+loaded with `temporal_merge` against their source if exact values matter.
+
+The update replaces `sql_saga.temporal_merge_execute` with `CREATE OR REPLACE`, retaining
+its OID, owner and site-specific privileges, and needs the 1.11 native library (the
+numeric and jsonb fixes are in it). The catalog is unchanged (catalog format **1.9**),
+so a 1.9 or 1.10 dump restores plainly. See [the 1.10 guide](upgrade-1.10.md).
+
+Sources before 1.10 also receive the 1.10 provenance corrections (below).
 
 ## What changes in 1.10
 
@@ -212,7 +237,7 @@ rebuild user tables or rewrite their data. Existing managed views use the update
 trigger immediately. See [the 1.5 guide](upgrade-1.5.md).
 
 From 1.4 to 1.7 the catalog format was **1.4**; 1.8 changed it to **1.8** and 1.9 to
-**1.9**, which 1.10 keeps (above). A
+**1.9**, which 1.10 and 1.11 keep (above). A
 catalog-format marker names the compatible layout, not the current extension or
 native-library version. Do not change it by hand or add a default to bypass old-dump
 safeguards.
@@ -261,20 +286,20 @@ verified pre-upgrade backup with its matching package, then rehearsing again.
 
 ## Release engineering and validation
 
-Released files are immutable. The 1.9 assets were reproduced from immutable tag
-`v1.9`, commit `fb9b351`, using only that tag's ordered SQL sources and its own
+Released files are immutable. The 1.10 assets were reproduced from immutable tag
+`v1.10`, commit `39da88a`, using only that tag's ordered SQL sources and its own
 update generator, not development source or shelved prototypes. Two independent
 builds gave byte-identical files.
 
-`devops/generate_update_scripts_1_10.py` authenticates those assets by SHA-256,
+`devops/generate_update_scripts_1_11.py` authenticates those assets by SHA-256,
 retargets native guards, actionable hints and locks in embedded older migrations,
-and appends the same 1.10 tail to every path: the 1.10 routine delta and
-`devops/upgrade_1_10_repairs.sql`. 1.10 is the first two-digit minor version; its
-specification tests check that every guard and lock names exactly `1.10`.
+and appends the same 1.11 tail to every path: the 1.11 routine delta and
+`devops/upgrade_1_11_repairs.sql`. Its specification tests check that every guard and
+lock names exactly `1.11` (not `1.1` or `1.10`).
 Each script has exactly one final integrity gate. Unmanifested SQL changes, including
 a catalog table change outside the declared tables, fail generation rather than
 silently disappearing from upgrades. The specification tests of the released 1.4 to
-1.9 generators run against their own tagged source trees.
+1.10 generators run against their own tagged source trees.
 
 `make test-generator` runs generator unit and parallel make wiring checks without
 a database. `make test-upgrade` builds immutable released tags privately and uses
@@ -291,7 +316,7 @@ one uniquely owned database.
 ### Cutting the next release (maintainers)
 
 The release data lives in `devops/generate_update_scripts_<X_Y>.py`; `devops/direct_update.py` builds the
-scripts. For a release that changes routines (as 1.6 to 1.10 did), with N the new and P the previous version:
+scripts. For a release that changes routines (as 1.6 to 1.11 did), with N the new and P the previous version:
 
 1. Freeze P: build `sql_saga--P.sql` and every `sql_saga--<source>--P.sql` twice from `git archive vP`, check that
    both builds are byte-identical, copy them into `versions/` and record their SHA-256.
@@ -306,7 +331,11 @@ scripts. For a release that changes routines (as 1.6 to 1.10 did), with N the ne
 3. Set `default_version` in `sql_saga.control` and `expected/001_install.out`, and replace the version rule in the
    Makefile (only the current version's rule is kept; older releases build from their own tags).
 4. Extend `sql_saga_upgrade_preflight.sql` for the P release shape, and `devops/upgrade_test.sh` with the vP
-   baseline, the frozen P artifacts and a gate for what the repairs change.
+   baseline, the frozen P artifacts, `catalog_format_of` for N, and a gate for what N fixes. A gate must fail on
+   the vP binaries (run it once there), and must not name N or its catalog format literally: sections written for
+   one release run again for every later one. Do not edit `devops/upgrade_test.sh` while it runs (bash reads the
+   file as it goes); rerun instead. A native library change takes effect only after `make install` and a
+   PostgreSQL restart: check `sql_saga.native_library_version()` before trusting a local result.
 5. Freeze this guide as `doc/upgrade-P.md` and describe N here.
 6. Branch CI, fast-forward master, master CI on the exact head (`gh workflow run` if the head is `[skip ci]`), then
    the annotated tag `vN` ("sql_saga N") on that commit.
