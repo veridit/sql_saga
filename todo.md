@@ -29,6 +29,9 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
   (v1.0 rerun alone after its first native build was killed by the session reload); restore round trip 21 passed,
   0 failed; CI 45074292407 green on every step; v1.13 rebuilt from git archive gives 14/14 artifacts byte-identical
   to the tested install.
+- End to end (tmp/accept_113.sql, the attack from the bug report): drop the sync trigger and both checks, then insert
+  an empty range with from > until. Fresh 1.12: 3 drops succeed, 1 bad row accepted. Fresh 1.13 and a 1.12 database
+  updated in place to 1.13 (check_integrity clean): all 3 drops refused with the named errors, 0 bad rows.
 
 ## 2026-11-22: Purpose headers on the complex and expected-failure tests (no release; hug 7yz6xb)
 
