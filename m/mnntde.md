@@ -28,7 +28,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 ## Depends on
 
 ## Acceptance
-- [ ] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
+- [x] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
 - [ ] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
 - [ ] add_unique_key has no enforce_consistency_with_primary_key parameter; doc/api.md, README and tests updated
 - [ ] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
@@ -36,3 +36,5 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 ## Notes
 
 Owner decided (a), 2026-11-23: refuse in both orders. Reason: a natural key that can drift between primary keys is dangerous and confusing; StatBus import checks for exactly this. Order must not matter. Checked: every StatBus table with a natural key has a single-column primary key (id), so StatBus is unaffected. Explicit enforce_consistency_with_primary_key => false stays the documented opt-out and is unaffected.
+
+check 1: Owner decided 2026-11-23: no opt-out at all; recorded in notes, goal and principle. 016 4a is covered by check 2.
