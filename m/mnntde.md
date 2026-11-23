@@ -1,16 +1,21 @@
 ---
 id: mnntde
 title: "A natural key is always bound to one primary key, also composite"
-state: todo
+state: "doing"
 type: "bug"
 priority: "medium"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzv"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
+doing_since: "2026-11-23T13:51"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -38,3 +43,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 Owner decided (a), 2026-11-23: refuse in both orders. Reason: a natural key that can drift between primary keys is dangerous and confusing; StatBus import checks for exactly this. Order must not matter. Checked: every StatBus table with a natural key has a single-column primary key (id), so StatBus is unaffected. Explicit enforce_consistency_with_primary_key => false stays the documented opt-out and is unaffected.
 
 check 1: Owner decided 2026-11-23: no opt-out at all; recorded in notes, goal and principle. 016 4a is covered by check 2.
+
+
+## History
+- 2026-11-23T13:51 todo -> doing/active (take)
