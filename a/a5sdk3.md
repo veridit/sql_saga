@@ -27,6 +27,7 @@ Found in the 1.13 review of p60d2m (probe on 1.12/1.13: ALTER TABLE dp DISABLE T
 
 ## Depends on
 
+- qnzn33
 ## Acceptance
 - [ ] A test disables the sync trigger and check_integrity raises a named error with the ENABLE TRIGGER repair; expected output hand-written first
 - [ ] An enabled (ALWAYS or REPLICA) sync trigger still passes; make test fast passes
