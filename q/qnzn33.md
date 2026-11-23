@@ -1,6 +1,6 @@
 ---
 id: qnzn33
-title: "Assemble update scripts from pieces instead of per-release generators"
+title: "Updates as a chain of single-release steps instead of direct scripts"
 state: todo
 type: feature
 priority: "high"
@@ -14,16 +14,16 @@ parent: "2q5nvf"
 ---
 
 ## Goal
-Update scripts are assembled at build time from a macro template, all target routines, and per-release step files.
+Each release ships one step script; PostgreSQL chains them from any released version in one transaction.
 
 ## Purpose
-Each release copies every older update script into a new one (1.0 to 1.13 is 69,213 lines, versions/ is 142 MB) and needs a hand-written generator with signature lists; 1.14's signature change needed a crutch flag.
+Direct scripts copy every earlier script each release (1.13: 14 files, 19 MB) and need hand-written routine lists; the 1.14 signature change needed a crutch flag.
 
 ## Principle
-Same guarantees as today: one transaction, one native check, one integrity gate, site privileges never lost silently, released files never change. A simple line-macro assembler, no template language. Reviewed by another agent; the owner does not review.
+Owner approved 2026-11-23: PostgreSQL's own chain, each step with its own release's definitions. The released single steps change only in their native check (this release or newer). No hand-written routine lists; version only in sql_saga.control. The assembly variant was tried and rejected.
 
 ## Details
-Design: doc/design/update-assembly.md (owner approved direction 2026-11-23, review delegated). Floor at 1.8: older sources embed their frozen bridge to 1.8. Replaces devops/generate_update_scripts*.py, direct_update.py and the per-release spec tests; version only in sql_saga.control. First used by 1.14.
+Design: doc/design/update-chain.md. Prototype tmp/chain.py; empty DBs 1.0..1.12 -> 1.13 identical to fresh. Full data matrix running.
 
 ## Depends on
 
