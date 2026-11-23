@@ -30,3 +30,5 @@ Question for the owner: when the consistency check cannot be enforced because th
 - [ ] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
 
 ## Notes
+
+Owner decided (a), 2026-11-23: refuse in both orders. Reason: a natural key that can drift between primary keys is dangerous and confusing; StatBus import checks for exactly this. Order must not matter. Checked: every StatBus table with a natural key has a single-column primary key (id), so StatBus is unaffected. Explicit enforce_consistency_with_primary_key => false stays the documented opt-out and is unaffected.
