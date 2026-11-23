@@ -37,6 +37,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 - [ ] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
 - [ ] add_unique_key has no enforce_consistency_with_primary_key parameter; doc/api.md, README and tests updated
 - [ ] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
+- [ ] check_integrity reports a natural key without its guard (missing pk_consistency constraint, or NULL/empty state while a primary key exists); test hand-written first
 
 ## Notes
 
