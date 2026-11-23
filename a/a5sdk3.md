@@ -10,6 +10,7 @@ group: ""
 rank: "zzzq"
 created: 2026-11-22
 updated: 2026-11-22
+parent: "2q5nvf"
 ---
 
 ## Goal
