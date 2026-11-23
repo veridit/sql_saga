@@ -12,7 +12,7 @@ created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
 doing_since: "2026-11-23T13:51"
-stage: "active"
+stage: "depends"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
@@ -32,6 +32,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 
 ## Depends on
 
+- qnzn33
 ## Acceptance
 - [x] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
 - [ ] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
