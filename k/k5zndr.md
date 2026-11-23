@@ -27,6 +27,7 @@ Provenance values come only from the column DEFAULT via sql_saga.provenance_trig
 
 ## Depends on
 
+- qnzn33
 ## Acceptance
 - [ ] A 1.9 database with such rows, updated to 1.14, has objects in those columns and a NOTICE with the count; a jsonb provenance value that is a plain string not encoding an object is untouched
 - [ ] The upgrade matrix gate fails on the v1.13 binaries and passes on 1.14
