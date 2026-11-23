@@ -1,6 +1,6 @@
 ---
 id: mnntde
-title: "Decide: natural key on a composite-PK table, refuse or opt out silently"
+title: "Refuse a natural key whose consistency guard cannot be built (composite PK)"
 state: todo
 type: spike
 priority: "medium"
