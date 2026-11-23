@@ -1,8 +1,8 @@
 ---
 id: mnntde
-title: "Refuse a natural key whose consistency guard cannot be built (composite PK)"
+title: "A natural key is always bound to one primary key, also composite"
 state: todo
-type: spike
+type: "bug"
 priority: "medium"
 assignee: []
 labels: []
@@ -10,24 +10,28 @@ group: ""
 rank: "zzzv"
 created: 2026-11-23
 updated: 2026-11-23
+parent: "2q5nvf"
 ---
 
 ## Goal
-Decide whether add_unique_key refuses a natural key on a table whose primary key is composite, or keeps opting out silently.
+add_unique_key always ties a natural key value to one primary key value, also for a composite primary key; no opt-out.
 
 ## Purpose
-Test 016 scenario 4a says '-- fails' but has never failed since c71c01f (2025-09-29): the key is added without PK consistency enforcement, while the mirror case 4b (composite PK after a natural key) is refused.
+A natural key that can move between entities identifies nothing, and StatBus import treats such a mismatch as dangerous. Today the result depends on call order: test 016 4a adds the key unguarded, 4b refuses.
 
 ## Principle
-Tests document intended behaviour. Either the code or the test comment is wrong; decide which, then make them agree.
+Owner decided 2026-11-23: no opt-out, no deprecated parameter; enforce_consistency_with_primary_key is removed. Existing unguarded keys get the guard on update; conflicting rows refuse the update and are listed, never changed.
 
 ## Details
-Question for the owner: when the consistency check cannot be enforced because the stable PK part is composite, should add_unique_key with the default enforce_consistency_with_primary_key (NULL) (a) refuse, as 4b does, or (b) add the key without enforcement and say so in a NOTICE? Today: src/1j_add_unique_key.sql line ~480 opts out silently unless enforcement was explicitly requested; line ~618 (4b path) always refuses. (a) changes installed behaviour and needs a release, and may refuse existing StatBus-like calls; (b) only needs a NOTICE plus the test comment fixed. Found by auditing every '-- fails' comment in expected/*.out against its output: 33 such statements, 7 without a visible ERROR, 6 of those caught inside DO blocks (correct), 1 real (this one).
+Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_col WITH <>) per stable PK column, which together bind the natural key to the whole PK (proved in a scratch database: same nk on (1,2) or (2,1) refused, on (1,1) later allowed). The 'PK with no stable column' branch is dead: PostgreSQL refuses WITHOUT OVERLAPS on one column. Opt-out users today: tests 016 (scenario 3), 039, 116, 117; none relies on a drifting natural key. StatBus: every natural key is on a table whose primary key is (id), unaffected. Signature change of add_unique_key goes through replaced_routines (EXECUTE privilege rule). Needs a release.
 
 ## Depends on
 
 ## Acceptance
 - [ ] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
+- [ ] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
+- [ ] add_unique_key has no enforce_consistency_with_primary_key parameter; doc/api.md, README and tests updated
+- [ ] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
 
 ## Notes
 
