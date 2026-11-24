@@ -32,11 +32,12 @@ Children: a5sdk3 (check_integrity reports a disabled sync trigger), mnntde (natu
 ## Depends on
 
 ## Acceptance
-- [ ] Every child is done
+- [x] Every child is done
 - [ ] v1.14 tagged on a CI-verified master commit; todo.md records it
 
 ## Notes
 
 
+check 1: qnzn33, mnntde, a5sdk3, k5zndr done
 ## History
 - 2026-11-24T05:00 todo -> doing/active (take)
