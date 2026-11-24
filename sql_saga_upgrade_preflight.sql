@@ -144,10 +144,19 @@ BEGIN
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'Restore the released v1.13 artifact before upgrading, or contact the sql_saga maintainer.';
         END IF;
+    ELSIF installed_version = '1.14' THEN
+        -- 1.14 removed enforce_consistency_with_primary_key: add_unique_key has nine parameters (hug mnntde).
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.provenance_trigger()') IS NULL
+           OR pg_catalog.to_regprocedure('sql_saga.__api_add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text, name[])') IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.14 is not the supported v1.14 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.14 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
     ELSE
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 or 1.13, found %', coalesce(installed_version, 'not installed')
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 or 1.14, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6, v1.7, v1.8, v1.9, v1.10, v1.11, v1.12 or v1.13 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0, v1.1, v1.2, v1.3, v1.4, v1.5, v1.6, v1.7, v1.8, v1.9, v1.10, v1.11, v1.12, v1.13 or v1.14 extension.';
     END IF;
 
     /* Regular foreign keys the 1.4 update refuses (a partitioned referencing table, a predicated referenced key). */
@@ -355,6 +364,49 @@ BEGIN
             RAISE EXCEPTION 'sql_saga: natural key values held by more than one primary key value prevent upgrade:%', E'\n' || policy_list
                 USING ERRCODE = 'object_not_in_prerequisite_state',
                       HINT = 'The 1.14 update binds every natural key value to one primary key value. Correct the rows so that each value belongs to one entity.';
+        END IF;
+    END;
+
+    /* 1.15 (hug 40nwvn): an entity holds one value of each natural key column outside its primary key (NULL before
+       the key starts and after it is retired). The update adds that guard to every natural key on a table with a
+       primary key; an entity holding two values of such a column refuses it. */
+    DECLARE
+        k record;
+        stable_pk name[];
+        col name;
+        nk_value text;
+    BEGIN
+        policy_list := NULL;
+        FOR k IN
+            SELECT nk.unique_key_name, nk.table_schema, nk.table_name, nk.column_names, pk.column_names AS pk_columns,
+                   e.range_column_name
+            FROM sql_saga.unique_keys AS nk
+            JOIN sql_saga.unique_keys AS pk ON (pk.table_schema, pk.table_name, pk.key_type) = (nk.table_schema, nk.table_name, 'primary')
+            JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (nk.table_schema, nk.table_name, nk.era_name)
+            WHERE nk.key_type = 'natural'
+            ORDER BY nk.table_schema, nk.table_name, nk.unique_key_name
+        LOOP
+            stable_pk := ARRAY(SELECT c FROM pg_catalog.unnest(k.pk_columns) AS c WHERE c <> k.range_column_name);
+            FOREACH col IN ARRAY k.column_names LOOP
+                CONTINUE WHEN col = ANY (stable_pk);
+                EXECUTE pg_catalog.format(
+                    'SELECT pg_catalog.string_agg(v, '', '') FROM (SELECT pg_catalog.format(%L, %s, pg_catalog.string_agg(DISTINCT %I::text, '' and '')) AS v FROM %I.%I WHERE %I IS NOT NULL GROUP BY %s HAVING pg_catalog.count(DISTINCT %I) > 1 ORDER BY 1 LIMIT 5) AS x',
+                    '(' || pg_catalog.array_to_string(ARRAY(SELECT '%s' FROM pg_catalog.unnest(stable_pk)), ', ') || ') holds %s',
+                    (SELECT pg_catalog.string_agg(pg_catalog.format('%I', c), ', ') FROM pg_catalog.unnest(stable_pk) AS c),
+                    col, k.table_schema, k.table_name, col,
+                    (SELECT pg_catalog.string_agg(pg_catalog.format('%I', c), ', ') FROM pg_catalog.unnest(stable_pk) AS c),
+                    col)
+                INTO nk_value;
+                IF nk_value IS NOT NULL THEN
+                    policy_list := pg_catalog.concat_ws(E'\n', policy_list,
+                        pg_catalog.format('%I.%I natural key %I column %I: %s', k.table_schema, k.table_name, k.unique_key_name, col, nk_value));
+                END IF;
+            END LOOP;
+        END LOOP;
+        IF policy_list IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: entities holding more than one value of a natural key prevent upgrade:%', E'\n' || policy_list
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'The 1.15 update lets an entity hold one value of each natural key column. An identifier that changes belongs in another natural key column. Correct the rows so that each entity holds one value.';
         END IF;
     END;
 END;

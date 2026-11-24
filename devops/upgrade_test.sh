@@ -64,7 +64,7 @@ NEW_VERSION=${UPGRADE_NEW_VERSION:-$(sed -n "s/^default_version[[:space:]]*=[[:s
 catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf v1.14|1.14|87085d0"
 chain_path() {  # chain_path <from> <to>: the released versions from <from> to <to>, joined by --
     local spec v on=0 out=""
     for spec in $RELEASED_BASELINES "x|$NEW_VERSION|x"; do
@@ -301,7 +301,7 @@ SQL
         echo "    FAIL [expected RED] candidate update scripts (expected '$wanted_steps', got '$shipped_steps')"; artifact_fails=$((artifact_fails + 1))
     fi
     if "${SQL_SAGA_PYTHON:-python3}" "$REPO/devops/chain_steps.py" --check "$RELEASE_ARTIFACT_DIR" >"$ARTIFACT_WORK/chain_steps.log" 2>&1; then
-        echo "    ok    versions/ steps are the documented transformation of the steps v1.0 to v1.13 shipped"
+        echo "    ok    versions/ steps are the documented transformation of the steps v1.0 to v1.14 shipped"
     else
         echo "    FAIL [prerequisite] versions/ steps: $(head -1 "$ARTIFACT_WORK/chain_steps.log")"; artifact_fails=$((artifact_fails + 1))
     fi
@@ -3626,8 +3626,9 @@ fi
 
 # 1.14: every natural key is bound to its primary key. Before, a natural key could be added unbound (opted out, or with
 # a composite primary key), and one added before its primary key got its guard while its catalog entry still said
-# pending. The update binds the first two and records the third; conflicting rows refuse it, unchanged.
-if ! version_lt "$NEW_VERSION" 1.14; then
+# pending. The update binds the first two and records the third; conflicting rows refuse it, unchanged. Not reachable
+# from 1.14 (nothing left unbound; the opt-out parameter is gone).
+if ! version_lt "$NEW_VERSION" 1.14 && version_lt "$BASELINE_VERSION" 1.14; then
     section "$BASELINE_VERSION natural keys are bound to their primary keys after the update to $NEW_VERSION" "expected RED"
     NK_DB=${PREFIX}_nkbind114
     NK_FIXTURE="CREATE TABLE nk_out (id integer NOT NULL, code text, valid_range daterange NOT NULL, valid_from date, valid_until date);
@@ -3651,9 +3652,15 @@ INSERT INTO nk_late (id, code, valid_from, valid_until) VALUES (1, 'a', '2020-01
         "$(run_preflight "$NK_DB" | grep -m1 'natural key')"
     v13_restart "$NK_DB"
     NK_STATE="SELECT string_agg(uk.unique_key_name || '=' || coalesce(uk.pk_consistency_constraint_names::text, 'null'), ' ' ORDER BY uk.unique_key_name) FROM sql_saga.unique_keys AS uk WHERE uk.key_type = 'natural'"
+    # From 1.15 each natural key also holds one value per entity (hug 40nwvn): the second guard follows the first.
+    if version_lt "$NEW_VERSION" 1.15; then
+        NK_EXPECT_114="nk_comp_code={nk_comp_code_org_pk_consistency_excl,nk_comp_code_unit_pk_consistency_excl} nk_late_code={nk_late_code_pk_consistency_excl} nk_out_code={nk_out_code_pk_consistency_excl}"
+    else
+        NK_EXPECT_114="nk_comp_code={nk_comp_code_org_pk_consistency_excl,nk_comp_code_unit_pk_consistency_excl,nk_comp_code_nk_consistency_excl} nk_late_code={nk_late_code_pk_consistency_excl,nk_late_code_nk_consistency_excl} nk_out_code={nk_out_code_pk_consistency_excl,nk_out_code_nk_consistency_excl}"
+    fi
     check "update succeeds" "" "$(q "$NK_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     check "every natural key records its guards" \
-        "nk_comp_code={nk_comp_code_org_pk_consistency_excl,nk_comp_code_unit_pk_consistency_excl} nk_late_code={nk_late_code_pk_consistency_excl} nk_out_code={nk_out_code_pk_consistency_excl}" \
+        "$NK_EXPECT_114" \
         "$(q "$NK_DB" "$NK_STATE")"
     # The fixture rows end in 2025: a later row of another entity overlaps none, so only the guard can refuse it.
     check "an opted-out natural key now refuses a second entity" "refused" \
@@ -3682,6 +3689,53 @@ INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 2, 'a'
     assert_integrity "$NK_BAD_DB"
 fi
 
+# 1.15: a natural key holds one value per entity (hug 40nwvn). The update adds, beside the guards above, EXCLUDE (primary
+# key WITH =, column WITH <>) for each natural key column outside the primary key; NULL periods stay allowed. An entity
+# holding two values refuses the update, by name, unchanged; the preflight lists it.
+if ! version_lt "$NEW_VERSION" 1.15; then
+    section "$BASELINE_VERSION natural keys hold one value per entity after the update to $NEW_VERSION" "expected RED"
+    NK1_DB=${PREFIX}_nkone115
+    NK1_FIXTURE="CREATE TABLE nk_one (id integer NOT NULL, old_code text, new_code text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('nk_one', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nk_one', ARRAY['id']::name[], key_type => 'primary');
+SELECT sql_saga.add_unique_key('nk_one', ARRAY['old_code']::name[], unique_key_name => 'nk_one_old');
+SELECT sql_saga.add_unique_key('nk_one', ARRAY['new_code']::name[], unique_key_name => 'nk_one_new');
+INSERT INTO nk_one (id, old_code, new_code, valid_from, valid_until) VALUES
+    (1, NULL, NULL, '2018-01-01', '2020-01-01'), (1, 'x', NULL, '2020-01-01', '2025-01-01'), (1, 'x', 'y', '2025-01-01', '2026-01-01'),
+    (1, NULL, 'y', '2026-01-01', 'infinity');"
+    v13_db "$NK1_DB" "$NK1_FIXTURE"
+    check "preflight accepts an entity whose natural keys start and retire (NULL periods)" "" \
+        "$(run_preflight "$NK1_DB" | grep -m1 'value of a natural key')"
+    v13_restart "$NK1_DB"
+    NK1_STATE="SELECT string_agg(uk.unique_key_name || '=' || coalesce(uk.pk_consistency_constraint_names::text, 'null'), ' ' ORDER BY uk.unique_key_name) FROM sql_saga.unique_keys AS uk WHERE uk.key_type = 'natural'"
+    check "update succeeds" "" "$(q "$NK1_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "every natural key records both guards" \
+        "nk_one_new={nk_one_new_pk_consistency_excl,nk_one_new_nk_consistency_excl} nk_one_old={nk_one_old_pk_consistency_excl,nk_one_old_nk_consistency_excl}" \
+        "$(q "$NK1_DB" "$NK1_STATE")"
+    check "an entity now refuses a second value of a natural key" "refused" \
+        "$(v13_probe "$NK1_DB" "UPDATE nk_one SET old_code = 'q' WHERE id = 1 AND valid_from = '2020-01-01'")"
+    check "a key that starts later is still accepted" "accepted" \
+        "$(v13_probe "$NK1_DB" "UPDATE nk_one SET new_code = 'y' WHERE id = 1 AND valid_from = '2020-01-01'")"
+    assert_integrity "$NK1_DB"
+
+    NK1_BAD_DB=${PREFIX}_nkone115_conflict
+    v13_db "$NK1_BAD_DB" "$NK1_FIXTURE
+UPDATE nk_one SET old_code = 'q' WHERE id = 1 AND valid_from = '2025-01-01';"
+    check "preflight names the entity holding two values" \
+        "public.nk_one natural key nk_one_old column old_code: (1) holds q and x" \
+        "$(run_preflight "$NK1_BAD_DB" | grep -m1 '^public.nk_one natural key')"
+    v13_restart "$NK1_BAD_DB"
+    NK1_BEFORE=$(q "$NK1_BAD_DB" "$NK1_STATE")
+    check "an entity with two values of a natural key refuses the update, by name" \
+        "ERROR:  sql_saga: natural key nk_one_old on table public.nk_one holds more than one value for an entity" \
+        "$(q "$NK1_BAD_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "the refused update leaves version and catalog unchanged" "$BASELINE_VERSION|$NK1_BEFORE" \
+        "$(q "$NK1_BAD_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$NK1_BAD_DB" "$NK1_STATE")"
+    check "after correcting the rows the update succeeds" "" \
+        "$(q "$NK1_BAD_DB" "UPDATE nk_one SET old_code = 'x' WHERE id = 1 AND old_code = 'q'; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    assert_integrity "$NK1_BAD_DB"
+fi
+
 # 1.14: a disabled era synchronization trigger (valid_from/valid_until stop following the range column) refuses the
 # update by name, with its repair; the preflight lists it. Before, check_integrity said nothing.
 if ! version_lt "$NEW_VERSION" 1.14; then
@@ -3708,7 +3762,8 @@ fi
 # table and its history, without firing triggers (no new history row, provenance not rewritten) and keeping each
 # trigger's firing mode; a string that does not encode an object is left as it is. Only a 1.9 database can hold them
 # (1.10 fixed the trigger); from older sources the fixture writes them as 1.9 did.
-if ! version_lt "$NEW_VERSION" 1.14 && ! version_lt "$BASELINE_VERSION" 1.9; then
+# The repair is the 1.14 step; a 1.14 database has nothing left to convert.
+if ! version_lt "$NEW_VERSION" 1.14 && ! version_lt "$BASELINE_VERSION" 1.9 && version_lt "$BASELINE_VERSION" 1.14; then
     section "$BASELINE_VERSION jsonb provenance strings become objects in the update to $NEW_VERSION" "expected RED"
     PROV_DB=${PREFIX}_provjson114
     v13_db "$PROV_DB" "CREATE TABLE pj (id integer NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date,
