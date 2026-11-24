@@ -34,7 +34,7 @@ Revert commit a9d2f728240 (Peter Eisentraut, 2026-09-15, 23 commits; its message
 
 ## Acceptance
 - [ ] The report lists each issue raised in the revert discussion, with links to the messages
-- [ ] Each issue has a concurrent-session test against temporal_merge and the for_portion_of view, with its observed result
+- [x] Each issue has a concurrent-session test against temporal_merge and the for_portion_of view, with its observed result
 - [ ] Any sql_saga failure found has its own hug task with the reproducer
 
 ## Notes
