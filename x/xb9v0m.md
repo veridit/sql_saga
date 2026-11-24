@@ -1,16 +1,21 @@
 ---
 id: xb9v0m
 title: "make test-native aborts on macOS before running any test"
-state: todo
+state: "doing"
 type: bug
 priority: "low"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzx"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
+doing_since: "2026-11-24T16:25"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -33,3 +38,7 @@ Makefile lines ~113-121 (NATIVE_TEST_ENV only for PORTNAME linux). macOS candida
 ## Notes
 
 landed d04b7b4 on master 2026-11-24: Native planner: read the target per key set, combined by ctid (aqqsgb); make…
+
+
+## History
+- 2026-11-24T16:25 todo -> doing/active (take)
