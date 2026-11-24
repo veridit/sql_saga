@@ -30,8 +30,10 @@ Found in the 1.13 review of p60d2m (probe on 1.12/1.13: ALTER TABLE dp DISABLE T
 - qnzn33
 ## Acceptance
 - [x] A test disables the sync trigger and check_integrity raises a named error with the ENABLE TRIGGER repair; expected output hand-written first
-- [ ] An enabled (ALWAYS or REPLICA) sync trigger still passes; make test fast passes
+- [x] An enabled (ALWAYS or REPLICA) sync trigger still passes; make test fast passes
 
 ## Notes
 
 check 1: 116 case 'disabled era synchronization trigger': expected written first, showed 'unexpected success' on 1.13 code; named error with ALTER TABLE ... ENABLE TRIGGER repair (5f7c71e)
+
+check 2: 116: ENABLE ALWAYS and ENABLE REPLICA pass; make test fast 147/147; upgrade gate RED on 1.13 health checks, GREEN from 1.0/1.13
