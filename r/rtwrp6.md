@@ -30,7 +30,7 @@ Repro: doc/upstream/repro/delete_missing_timeline_interior.sql (psql against a *
 ## Acceptance
 - [x] A regression test with hand-written expected output fails on 1.14 for interior source edges and passes after the fix
 - [x] The test covers source edges inside, on and outside target slices, for REPLACE, UPSERT and PATCH, with both timeline delete modes
-- [ ] make test fast passes
+- [x] make test fast passes
 
 ## Notes
 
