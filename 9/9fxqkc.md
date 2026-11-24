@@ -37,3 +37,5 @@ Owner's three areas (2026-11-24):
 - [ ] The three areas each have a section: the problem with a concrete example, what sql_saga does, what PostgreSQL offers and is working on
 
 ## Notes
+
+Mapping modes surfaced two more bugs: rtwrp6 (DELETE_MISSING_TIMELINE with interior source edges) and 2hxkwx (UPSERT ignores DELETE_MISSING_ENTITIES); repros in doc/upstream/repro/.
