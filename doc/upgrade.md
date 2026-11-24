@@ -1,8 +1,8 @@
 # Upgrading sql_saga
 
 This guide describes the normal PostgreSQL extension upgrade workflow. The current
-package is **1.14**, supporting a fresh install and upgrades from released
-**1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 and 1.13** on PostgreSQL 18,
+package is **1.15**, supporting a fresh install and upgrades from released
+**1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.13 and 1.14** on PostgreSQL 18,
 each with one `ALTER EXTENSION sql_saga UPDATE`.
 
 ## Before the maintenance window
@@ -100,6 +100,55 @@ must complete without error. `ALTER EXTENSION sql_saga UPDATE TO '<release>'`
 stops at an older release; a later plain update continues from there. Exercise
 application reads and writes before reopening writers. Repeat for every database
 that contains the extension.
+
+## What changes in 1.15
+
+1.15 is about `temporal_merge` giving the right result. Every item below changes what a
+merge writes or refuses; read them before an import runs on 1.15.
+
+**A natural key holds one value per entity.** A natural key column outside the primary key
+may be NULL before the key starts and after it is retired, but an entity never holds two
+different values of it. An identifier that changes belongs in another natural key column;
+the entity moves to it through a source row that carries both the old and the new key.
+
+- `add_unique_key` adds a second guard per natural key column,
+  `<key>_nk_consistency_excl`: `EXCLUDE (primary key WITH =, column WITH <>)`.
+- The update adds it to every existing natural key. An entity holding two values of a
+  natural key column refuses the update, naming the key and the rows; correct them and
+  retry. `sql_saga_upgrade_preflight.sql` lists them beforehand.
+- `temporal_merge` gives `ERROR` feedback to a source row that gives a natural key value
+  other than its entity's, or than another row of the batch gives. It writes a natural
+  key value only inside the source row's time, and a NULL never clears one. Before, the
+  default planner could write one entity's value over another piece's.
+
+**A source row is resolved by every key it names.** A row carrying an identity and a
+natural key that find different entities gets "ambiguous" or "inconsistent" `ERROR`
+feedback. Before, the default planner wrote to the entity of the natural key and dropped
+the identity, and the PL/pgSQL planner ignored the identity.
+
+**Delete modes.** `DELETE_MISSING_ENTITIES` now applies to every `MERGE_ENTITY_*` mode
+(before, `MERGE_ENTITY_UPSERT` ignored it), and `DELETE_MISSING_TIMELINE` deletes all time
+of a source entity the source does not cover. The `*_FOR_PORTION_OF` and
+`INSERT_NEW_ENTITIES` modes refuse a delete mode other than `NONE` (SQLSTATE 22023);
+remove the argument.
+
+**Concurrent writers.** `temporal_merge` locks the entities a batch names before it plans,
+so two merges of one entity at READ COMMITTED give the result of running them one after
+the other; before, one could silently lose the other's change
+([doc/design/temporal-merge-concurrency.md](design/temporal-merge-concurrency.md)). A
+merge that finds the target changed under its plan raises SQLSTATE XX000 instead of
+writing. Merges of different entities still run in parallel.
+
+**Speed.** The default planner no longer takes seconds per batch when a natural key is
+discovered, and a multi-column natural key no longer makes the lock step a nested loop.
+An entity whose natural key starts during the source's time is now split there, so such a
+batch writes more rows than in 1.14.
+
+The catalog layout is unchanged (catalog format **1.9**), so a 1.9 to 1.14 dump restores
+plainly. The native library changes: install the package and restart PostgreSQL. See
+[the 1.14 guide](upgrade-1.14.md).
+
+Sources before 1.14 also receive the 1.14 changes (below).
 
 ## What changes in 1.14
 
