@@ -180,13 +180,13 @@ it is explicit about the period and extends the existing `PERIOD` foreign key sy
 | user writes | one statement, explicit SET list | one statement, columns by name | several statements, ordered by the user |
 | implementation in PostgreSQL | large: MERGE executor applies actions per sub-period; reuses FOR PORTION OF leftovers and MERGE concurrency | large: new statement, but it can be planned as A internally | smaller pieces, but per-row bounds hit the v2 restrictions |
 | concurrency answer | MERGE locks the target rows it matches, but at READ COMMITTED it can still raise a serialization failure, and concurrent `WHEN NOT MATCHED` inserts are unprotected (a unique or exclusion violation): per-entity locking is needed | same as A | each statement alone has the FOR PORTION OF problem |
-| testable against sql_saga | yes, each example maps to a temporal_merge call, once bugs rtwrp6 and 2hxkwx in the delete modes are fixed | yes, directly, with the same caveat | partly |
+| testable against sql_saga | yes, each example maps to a temporal_merge call (delete-mode bugs rtwrp6 and 2hxkwx fixed for 1.15) | yes, directly, with the same caveat | partly |
 | open questions | see below | naming; columns by name | gap insertion; ordering |
 
 **Recommendation: A**, with table-level declarations for coalescing and ignored columns, and form A for the
 regular-to-temporal foreign key. It asks the least new syntax of the standard for the most coverage, and each
-example can be checked against temporal_merge, so sql_saga's regression tests can become its conformance tests once
-the delete-mode bugs (rtwrp6, 2hxkwx) are fixed.
+example can be checked against temporal_merge, so sql_saga's regression tests can become its conformance tests (the
+delete-mode bugs rtwrp6 and 2hxkwx are fixed for 1.15).
 
 ## Open questions for candidate A
 

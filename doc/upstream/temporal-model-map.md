@@ -116,8 +116,8 @@ Each row is a capability of temporal_merge, what the standard or PostgreSQL offe
 | `DELETE_FOR_PORTION_OF` | remove a slice | `DELETE ... FOR PORTION OF` | per-row slices |
 | `MERGE_ENTITY_UPSERT` / `_PATCH` / `_REPLACE` | as the three above, and also fill gaps and create new entities | none (no temporal MERGE, no temporal INSERT) | **gap** |
 | `INSERT_NEW_ENTITIES` | insert only entities not yet present | `INSERT ... WHERE NOT EXISTS`, or `MERGE ... WHEN NOT MATCHED` | small |
-| `DELETE_MISSING_TIMELINE` | for entities in the source, remove target time the source does not cover | none | **gap** (sql_saga 1.14 misses target time beside a source edge that falls inside a slice: bug rtwrp6) |
-| `DELETE_MISSING_ENTITIES` | remove entities absent from the source | `MERGE ... WHEN NOT MATCHED BY SOURCE THEN DELETE` (PostgreSQL 17, non-temporal) | small (sql_saga 1.14 applies it with PATCH and REPLACE but not UPSERT: bug 2hxkwx) |
+| `DELETE_MISSING_TIMELINE` | for entities in the source, remove target time the source does not cover | none | **gap** (sql_saga 1.14 kept target time beside a source edge inside a slice: bug rtwrp6, fixed for 1.15) |
+| `DELETE_MISSING_ENTITIES` | remove entities absent from the source | `MERGE ... WHEN NOT MATCHED BY SOURCE THEN DELETE` (PostgreSQL 17, non-temporal) | small (sql_saga 1.14 ignored it with UPSERT: bug 2hxkwx, fixed for 1.15; since 1.15 delete modes apply to MERGE_ENTITY_* only) |
 | coalescing | adjacent pieces with equal values become one row | none: FOR PORTION OF leaves the split rows even when values end up equal | **gap** |
 | `ephemeral_columns` | columns (audit, provenance) ignored when deciding equality, still written | none | **gap**, part of coalescing |
 | DELETE, then UPDATE (shrink before grow), then INSERT | never a transient overlap; transient gaps allowed, checked by deferrable foreign keys at commit | FOR PORTION OF is one statement; foreign keys checked at its end | an engine statement would not need it |
