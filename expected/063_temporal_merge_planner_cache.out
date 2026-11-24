@@ -347,7 +347,7 @@ NOTICE:  Explaining:
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.id AS discovered_id_1 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (source_row.id = target_row.id /* v_source_rows_exists_join_expr */)
+                LEFT JOIN target_rows target_row ON (((source_row.id = target_row.id)) /* v_source_rows_exists_join_expr */)
             
 NOTICE:  Hash Left Join (actual rows=1.00 loops=1)
 NOTICE:    Hash Cond: (source_row.id = target_row.id)
@@ -416,6 +416,14 @@ NOTICE:  Explaining:
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
                     p.temporal_columns_are_consistent,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+                    -- The identity the row names (its non-NULL columns) must be the entity's its natural key found (hug
+                    -- mfky60); values compare as text, as the native planner does.
+                    CASE WHEN p.discovered_stable_pk_payload IS NOT NULL AND EXISTS (
+                        SELECT FROM jsonb_each(jsonb_strip_nulls(p.stable_pk_payload)) AS n(key, value)
+                        WHERE (p.discovered_stable_pk_payload ->> n.key) IS DISTINCT FROM (n.value #>> '{}'))
+                    THEN 'Source row is inconsistent. Its natural key matches target entity ' || p.discovered_stable_pk_payload::text
+                         || ', but its identity is ' || jsonb_strip_nulls(p.stable_pk_payload)::text || '.'
+                    END AS identity_conflict,
                     (p.discovered_stable_pk_payload IS NOT NULL) /* v_target_entity_exists_expr */ as target_entity_exists,
                     COALESCE(p.id, p.discovered_id_1) AS id /* v_coalesced_id_cols_list */
                 FROM source_rows_with_discovery p
@@ -424,11 +432,15 @@ NOTICE:  Explaining:
 NOTICE:  Unique (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    ->  Sort (actual rows=1.00 loops=1)
-NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
+NOTICE:          Sort Key: p.source_row_id, p.discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
+NOTICE:                SubPlan 1
+NOTICE:                  ->  Function Scan on jsonb_each n (actual rows=0.00 loops=1)
+NOTICE:                        Filter: ((p.discovered_stable_pk_payload ->> key) IS DISTINCT FROM (value #>> '{}'::text[]))
+NOTICE:                        Rows Removed by Filter: 1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
@@ -525,6 +537,8 @@ NOTICE:  Explaining:
                     CASE
                         WHEN s.is_ambiguous
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
+                        WHEN s.identity_conflict IS NOT NULL
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', s.identity_conflict )
                         WHEN NOT s.is_identifiable AND s.is_new_entity
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace('{id}'::text, '"', '') || ' and all natural keys ' || replace(NULL::text, '"', '') )
                         WHEN NOT s.temporal_columns_are_consistent
@@ -1835,7 +1849,7 @@ NOTICE:  Explaining:
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.lu_id AS discovered_id_1, target_row.type AS discovered_id_2 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (source_row.type = target_row.type AND source_row.lu_id = target_row.lu_id /* v_source_rows_exists_join_expr */)
+                LEFT JOIN target_rows target_row ON (((source_row.type = target_row.type AND source_row.lu_id = target_row.lu_id)) /* v_source_rows_exists_join_expr */)
             
 NOTICE:  Hash Left Join (actual rows=1.00 loops=1)
 NOTICE:    Hash Cond: ((source_row.type = target_row.type) AND (source_row.lu_id = target_row.lu_id))
@@ -1904,6 +1918,14 @@ NOTICE:  Explaining:
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
                     p.temporal_columns_are_consistent,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+                    -- The identity the row names (its non-NULL columns) must be the entity's its natural key found (hug
+                    -- mfky60); values compare as text, as the native planner does.
+                    CASE WHEN p.discovered_stable_pk_payload IS NOT NULL AND EXISTS (
+                        SELECT FROM jsonb_each(jsonb_strip_nulls(p.stable_pk_payload)) AS n(key, value)
+                        WHERE (p.discovered_stable_pk_payload ->> n.key) IS DISTINCT FROM (n.value #>> '{}'))
+                    THEN 'Source row is inconsistent. Its natural key matches target entity ' || p.discovered_stable_pk_payload::text
+                         || ', but its identity is ' || jsonb_strip_nulls(p.stable_pk_payload)::text || '.'
+                    END AS identity_conflict,
                     (p.discovered_stable_pk_payload IS NOT NULL) /* v_target_entity_exists_expr */ as target_entity_exists,
                     COALESCE(p.lu_id, p.discovered_id_1) AS lu_id, COALESCE(p.type, p.discovered_id_2) AS type /* v_coalesced_id_cols_list */
                 FROM source_rows_with_discovery p
@@ -1912,11 +1934,15 @@ NOTICE:  Explaining:
 NOTICE:  Unique (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    ->  Sort (actual rows=1.00 loops=1)
-NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
+NOTICE:          Sort Key: p.source_row_id, p.discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
+NOTICE:                SubPlan 1
+NOTICE:                  ->  Function Scan on jsonb_each n (actual rows=0.00 loops=1)
+NOTICE:                        Filter: ((p.discovered_stable_pk_payload ->> key) IS DISTINCT FROM (value #>> '{}'::text[]))
+NOTICE:                        Rows Removed by Filter: 2
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
@@ -2013,6 +2039,8 @@ NOTICE:  Explaining:
                     CASE
                         WHEN s.is_ambiguous
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
+                        WHEN s.identity_conflict IS NOT NULL
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', s.identity_conflict )
                         WHEN NOT s.is_identifiable AND s.is_new_entity
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace('{type,lu_id}'::text, '"', '') || ' and all natural keys ' || replace(NULL::text, '"', '') )
                         WHEN NOT s.temporal_columns_are_consistent
@@ -3383,7 +3411,7 @@ NOTICE:  Explaining:
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.es_id AS discovered_id_1, target_row.lu_id AS discovered_id_2, target_row.type AS discovered_id_3 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (source_row.type = target_row.type AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND (source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL)) /* v_source_rows_exists_join_expr */)
+                LEFT JOIN target_rows target_row ON (((source_row.type = target_row.type AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND (source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL)))) /* v_source_rows_exists_join_expr */)
             
 NOTICE:  Hash Left Join (actual rows=2.00 loops=1)
 NOTICE:    Hash Cond: (source_row.type = target_row.type)
@@ -3453,6 +3481,14 @@ NOTICE:  Explaining:
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
                     p.temporal_columns_are_consistent,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+                    -- The identity the row names (its non-NULL columns) must be the entity's its natural key found (hug
+                    -- mfky60); values compare as text, as the native planner does.
+                    CASE WHEN p.discovered_stable_pk_payload IS NOT NULL AND EXISTS (
+                        SELECT FROM jsonb_each(jsonb_strip_nulls(p.stable_pk_payload)) AS n(key, value)
+                        WHERE (p.discovered_stable_pk_payload ->> n.key) IS DISTINCT FROM (n.value #>> '{}'))
+                    THEN 'Source row is inconsistent. Its natural key matches target entity ' || p.discovered_stable_pk_payload::text
+                         || ', but its identity is ' || jsonb_strip_nulls(p.stable_pk_payload)::text || '.'
+                    END AS identity_conflict,
                     (p.discovered_stable_pk_payload IS NOT NULL) /* v_target_entity_exists_expr */ as target_entity_exists,
                     COALESCE(p.es_id, p.discovered_id_1) AS es_id, COALESCE(p.lu_id, p.discovered_id_2) AS lu_id, COALESCE(p.type, p.discovered_id_3) AS type /* v_coalesced_id_cols_list */
                 FROM source_rows_with_discovery p
@@ -3461,11 +3497,15 @@ NOTICE:  Explaining:
 NOTICE:  Unique (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    ->  Sort (actual rows=2.00 loops=1)
-NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
+NOTICE:          Sort Key: p.source_row_id, p.discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
+NOTICE:                SubPlan 1
+NOTICE:                  ->  Function Scan on jsonb_each n (actual rows=0.00 loops=2)
+NOTICE:                        Filter: ((p.discovered_stable_pk_payload ->> key) IS DISTINCT FROM (value #>> '{}'::text[]))
+NOTICE:                        Rows Removed by Filter: 2
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
@@ -3562,6 +3602,8 @@ NOTICE:  Explaining:
                     CASE
                         WHEN s.is_ambiguous
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
+                        WHEN s.identity_conflict IS NOT NULL
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', s.identity_conflict )
                         WHEN NOT s.is_identifiable AND s.is_new_entity
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace('{type,lu_id,es_id}'::text, '"', '') || ' and all natural keys ' || replace(NULL::text, '"', '') )
                         WHEN NOT s.temporal_columns_are_consistent

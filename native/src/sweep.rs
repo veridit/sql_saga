@@ -171,26 +171,26 @@ fn correlate_entities(
         let mut discovered_identity = None;
         let mut canonical_nk = None;
         let mut early_feedback = None;
-        // Try identity key match first
-        if !sr.identity_keys.is_empty() {
-            let id_key = json_map_to_key(&sr.identity_keys);
+        // A row names its entity by every key it carries: its identity, and each natural key on its non-NULL columns.
+        // All keys that find a target entity must find the same one (hug mfky60): a natural key is bound to one primary
+        // key, so a row whose keys disagree is contradictory and gets an ERROR, never a write to one of the entities.
+        // E.g. ssn='222' finding entity A and employee_nr='E101' finding entity B is ambiguous, and so is id=1 with
+        // code='B' when code 'B' belongs to entity 2.
+        let mut all_matched_entities: BTreeSet<String> = BTreeSet::new();
+        let mut all_matched_id_maps: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
+        let mut first_discovered_identity = None;
+        let mut found_by_natural_key = false;
+        let id_key = json_map_to_key(&sr.identity_keys);
+        if !id_key.is_empty() {
             if let Some(targets) = target_by_id.get(&id_key) {
-                if !targets.is_empty() {
-                    is_new = false;
-                    discovered_identity = Some(sr.identity_keys.clone());
+                if let Some((_i, tr)) = targets.first() {
+                    all_matched_entities.insert(json_map_to_key(&tr.identity_keys));
+                    all_matched_id_maps.push(tr.identity_keys.clone());
+                    first_discovered_identity = Some(tr.identity_keys.clone());
                 }
             }
         }
-
-        // Try NK match if identity didn't match — try each key set independently (OR).
-        // Must try ALL key sets to detect cross-key-set ambiguity (PL/pgSQL behavior):
-        // e.g., source with ssn='222' + employee_nr='E101' may match entity A via employee_nr
-        // and entity B via ssn — that's ambiguous.
-        if is_new && !sr.lookup_keys.is_empty() && !sr.lookup_cols_are_null {
-            let mut all_matched_entities: BTreeSet<String> = BTreeSet::new();
-            let mut all_matched_id_maps: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
-            let mut first_discovered_identity = None;
-
+        if !sr.lookup_keys.is_empty() && !sr.lookup_cols_are_null {
             for (ks_idx, key_set) in ctx.lookup_key_sets.iter().enumerate() {
                 let nk_key = build_key_for_cols(&sr.lookup_keys, key_set);
                 if nk_key.is_empty() {
@@ -198,6 +198,7 @@ fn correlate_entities(
                 }
                 if let Some(targets) = target_indexes_per_key_set[ks_idx].get(&nk_key) {
                     for (_i, tr) in targets {
+                        found_by_natural_key = true;
                         let ek = json_map_to_key(&tr.identity_keys);
                         if all_matched_entities.insert(ek) {
                             all_matched_id_maps.push(tr.identity_keys.clone());
@@ -208,28 +209,43 @@ fn correlate_entities(
                     }
                 }
             }
+        }
 
-            if all_matched_entities.len() > 1 {
-                // Ambiguous: source row matches multiple distinct target entities.
-                // PL/pgSQL: target_entity_exists = true (discovered_stable_pk_payload IS NOT NULL),
-                // so is_new_entity = false, and discovered_identity comes from first match.
-                is_new = false;
-                discovered_identity = first_discovered_identity;
-                let conflicting_ids: Vec<String> = all_matched_id_maps.iter()
-                    .map(|m| json_to_pg_text(&serde_json::Value::Object(m.clone())))
-                    .collect();
+        if all_matched_entities.len() > 1 {
+            // Ambiguous: source row matches multiple distinct target entities.
+            // PL/pgSQL: target_entity_exists = true (discovered_stable_pk_payload IS NOT NULL),
+            // so is_new_entity = false, and discovered_identity comes from first match.
+            is_new = false;
+            discovered_identity = first_discovered_identity;
+            let conflicting_ids: Vec<String> = all_matched_id_maps.iter()
+                .map(|m| json_to_pg_text(&serde_json::Value::Object(m.clone())))
+                .collect();
+            early_feedback = Some(EarlyFeedback {
+                action: PlanAction::Error,
+                message: Some(format!(
+                    "Source row is ambiguous. It matches multiple distinct target entities: [{}]",
+                    conflicting_ids.join(", ")
+                )),
+            });
+        } else if let Some(found) = first_discovered_identity {
+            is_new = false;
+            // The identity the row names, on its non-NULL columns, must be the found entity's: an identity of no
+            // target entity beside a natural key that finds one names two different entities.
+            let named = strip_nulls(&sr.identity_keys);
+            if named.iter().any(|(c, v)| found.get(c).map(json_value_to_str) != Some(json_value_to_str(v))) {
                 early_feedback = Some(EarlyFeedback {
                     action: PlanAction::Error,
                     message: Some(format!(
-                        "Source row is ambiguous. It matches multiple distinct target entities: [{}]",
-                        conflicting_ids.join(", ")
+                        "Source row is inconsistent. Its natural key matches target entity {}, but its identity is {}.",
+                        json_to_pg_text(&serde_json::Value::Object(found.clone())),
+                        json_to_pg_text(&serde_json::Value::Object(named))
                     )),
                 });
-            } else if all_matched_entities.len() == 1 {
-                is_new = false;
-                discovered_identity = first_discovered_identity;
+            }
+            if found_by_natural_key && id_key.is_empty() {
                 canonical_nk = Some(strip_nulls(&sr.lookup_keys));
             }
+            discovered_identity = Some(found);
         }
 
         // For new entities, check identifiability

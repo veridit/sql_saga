@@ -624,8 +624,8 @@ BEGIN
                 jsonb_build_object('notnull', a.attnotnull, 'type', format_type(a.atttypid, a.atttypmod))
             )
             INTO v_lookup_cols_meta
-            FROM unnest(v_lookup_columns) AS col
-            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            FROM (SELECT DISTINCT unnest(v_lookup_columns || COALESCE(v_identity_columns, '{}'))) AS c(col)
+            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c.col AND NOT a.attisdropped;
             
             v_lookup_cols_meta := COALESCE(v_lookup_cols_meta, '{}'::jsonb);
             
@@ -1073,11 +1073,12 @@ BEGIN
             LEFT JOIN pg_attribute a ON a.attrelid = temporal_merge_plan.source_table AND a.attname = c.col AND a.attnum > 0 AND NOT a.attisdropped;
     
             -- Determine the scope of target entities to process based on the mode.
-            -- Determine the set of keys to use for filtering the target table.
-            -- Prioritize natural keys if provided; otherwise, fall back to the stable primary key.
-            v_keys_for_filtering := lookup_keys;
-            IF v_keys_for_filtering IS NULL OR jsonb_array_length(v_keys_for_filtering) = 0 THEN
-                v_keys_for_filtering := jsonb_build_array(to_jsonb(identity_columns));
+            -- Determine the set of keys to use for filtering the target table: every key a source row may name its
+            -- entity by, each natural key and the identity (hug mfky60).
+            v_keys_for_filtering := COALESCE(lookup_keys, '[]'::jsonb);
+            IF cardinality(v_identity_columns) > 0
+               AND NOT EXISTS (SELECT FROM jsonb_array_elements(v_keys_for_filtering) AS k(key) WHERE k.key = to_jsonb(v_identity_columns)) THEN
+                v_keys_for_filtering := v_keys_for_filtering || jsonb_build_array(to_jsonb(v_identity_columns));
             END IF;
     
             IF delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
@@ -1406,25 +1407,9 @@ BEGIN
                         LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = k.c AND NOT a.attisdropped
                     )),
                 ' OR ' ORDER BY lk.ord)
-                FROM jsonb_array_elements(lookup_keys) WITH ORDINALITY AS lk(v_key, ord)
+                -- Every key a source row may name its entity by: each natural key and the identity (hug mfky60).
+                FROM jsonb_array_elements(v_keys_for_filtering) WITH ORDINALITY AS lk(v_key, ord)
             );
-
-            IF v_source_rows_exists_join_expr IS NULL THEN
-                -- Fallback to identity columns when no lookup keys provided
-                v_source_rows_exists_join_expr := (
-                    SELECT string_agg(
-                        CASE
-                            WHEN a.attnotnull THEN
-                                format('source_row.%1$I = target_row.%2$I', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
-                            ELSE
-                                format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
-                        END,
-                        ' AND ' ORDER BY ic.ord
-                    )
-                    FROM unnest(v_identity_columns) WITH ORDINALITY AS ic(col, ord)
-                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = ic.col AND NOT a.attisdropped
-                );
-            END IF;
     
             v_source_rows_exists_join_expr := COALESCE(v_source_rows_exists_join_expr, 'false');
             v_atomic_segments_select_list_expr := (SELECT COALESCE(string_agg(format('seg.%I', col), ', ') || ',', '') || ' seg.corr_ent' FROM unnest(v_lookup_columns) as col);
@@ -2023,6 +2008,14 @@ BEGIN
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
                     p.temporal_columns_are_consistent,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+                    -- The identity the row names (its non-NULL columns) must be the entity's its natural key found (hug
+                    -- mfky60); values compare as text, as the native planner does.
+                    CASE WHEN p.discovered_stable_pk_payload IS NOT NULL AND EXISTS (
+                        SELECT FROM jsonb_each(jsonb_strip_nulls(p.stable_pk_payload)) AS n(key, value)
+                        WHERE (p.discovered_stable_pk_payload ->> n.key) IS DISTINCT FROM (n.value #>> '{}'))
+                    THEN 'Source row is inconsistent. Its natural key matches target entity ' || p.discovered_stable_pk_payload::text
+                         || ', but its identity is ' || jsonb_strip_nulls(p.stable_pk_payload)::text || '.'
+                    END AS identity_conflict,
                     %1$s /* v_target_entity_exists_expr */ as target_entity_exists,
                     %2$s /* v_coalesced_id_cols_list */
                 FROM source_rows_with_discovery p
@@ -2103,6 +2096,8 @@ BEGIN
                     CASE
                         WHEN s.is_ambiguous
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
+                        WHEN s.identity_conflict IS NOT NULL
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', s.identity_conflict )
                         WHEN NOT s.is_identifiable AND s.is_new_entity
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace(%1$L::text, '"', '') || ' and all natural keys ' || replace(%2$L::text, '"', '') )
                         WHEN NOT s.temporal_columns_are_consistent
