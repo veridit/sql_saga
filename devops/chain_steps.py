@@ -98,6 +98,7 @@ def _generated_1_13(name):
     import shutil
     import tarfile
     import tempfile
+    (ROOT / 'tmp').mkdir(exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix='chain_steps_', dir=str(ROOT / 'tmp')))
     try:
         archive = subprocess.run(['git', '-C', str(ROOT), 'archive', '--format=tar', 'v1.13', 'src', 'devops', 'versions'],
