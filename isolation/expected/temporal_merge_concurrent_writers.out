@@ -1,0 +1,76 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1note s2m2025 s1c s2c result
+step s1note: UPDATE t SET note = 's1' WHERE id = 1;
+step s2m2025: 
+  CREATE TEMP TABLE src2 (row_id int, id int, price int, valid_from date, valid_until date) ON COMMIT DROP;
+  INSERT INTO src2 VALUES (1, 1, 2, '2025-01-01', '2026-01-01');
+  CALL sql_saga.temporal_merge(target_table => 't', source_table => 'src2', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF');
+ <waiting ...>
+step s1c: COMMIT;
+step s2m2025: <... completed>
+step s2c: COMMIT;
+step result: SELECT id, price, note, valid_from, valid_until FROM t ORDER BY id, valid_from;
+id|price|note|valid_from|valid_until
+--+-----+----+----------+-----------
+ 1|    0|s1  |2020-01-01| 2025-01-01
+ 1|    2|s1  |2025-01-01| 2026-01-01
+ 1|    0|s1  |2026-01-01| 2030-01-01
+(3 rows)
+
+
+starting permutation: s1delete s2m2025 s1c s2c result
+step s1delete: DELETE FROM t WHERE id = 1;
+step s2m2025: 
+  CREATE TEMP TABLE src2 (row_id int, id int, price int, valid_from date, valid_until date) ON COMMIT DROP;
+  INSERT INTO src2 VALUES (1, 1, 2, '2025-01-01', '2026-01-01');
+  CALL sql_saga.temporal_merge(target_table => 't', source_table => 'src2', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF');
+ <waiting ...>
+step s1c: COMMIT;
+step s2m2025: <... completed>
+step s2c: COMMIT;
+step result: SELECT id, price, note, valid_from, valid_until FROM t ORDER BY id, valid_from;
+id|price|note|valid_from|valid_until
+--+-----+----+----------+-----------
+(0 rows)
+
+
+starting permutation: s1note s2view s1c s2c result
+step s1note: UPDATE t SET note = 's1' WHERE id = 1;
+step s2view: UPDATE t__for_portion_of_valid SET price = 2, valid_from = '2025-01-01', valid_until = '2026-01-01' WHERE id = 1; <waiting ...>
+step s1c: COMMIT;
+step s2view: <... completed>
+step s2c: COMMIT;
+step result: SELECT id, price, note, valid_from, valid_until FROM t ORDER BY id, valid_from;
+id|price|note|valid_from|valid_until
+--+-----+----+----------+-----------
+ 1|    0|s1  |2020-01-01| 2025-01-01
+ 1|    2|s1  |2025-01-01| 2026-01-01
+ 1|    0|s1  |2026-01-01| 2030-01-01
+(3 rows)
+
+
+starting permutation: s1m2022 s2m2025 s1c s2c result
+step s1m2022: 
+  CREATE TEMP TABLE src1 (row_id int, id int, price int, valid_from date, valid_until date) ON COMMIT DROP;
+  INSERT INTO src1 VALUES (1, 1, 1, '2022-01-01', '2023-01-01');
+  CALL sql_saga.temporal_merge(target_table => 't', source_table => 'src1', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF');
+
+step s2m2025: 
+  CREATE TEMP TABLE src2 (row_id int, id int, price int, valid_from date, valid_until date) ON COMMIT DROP;
+  INSERT INTO src2 VALUES (1, 1, 2, '2025-01-01', '2026-01-01');
+  CALL sql_saga.temporal_merge(target_table => 't', source_table => 'src2', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF');
+ <waiting ...>
+step s1c: COMMIT;
+step s2m2025: <... completed>
+step s2c: COMMIT;
+step result: SELECT id, price, note, valid_from, valid_until FROM t ORDER BY id, valid_from;
+id|price|note|valid_from|valid_until
+--+-----+----+----------+-----------
+ 1|    0|orig|2020-01-01| 2022-01-01
+ 1|    1|orig|2022-01-01| 2023-01-01
+ 1|    0|orig|2023-01-01| 2025-01-01
+ 1|    2|orig|2025-01-01| 2026-01-01
+ 1|    0|orig|2026-01-01| 2030-01-01
+(5 rows)
+

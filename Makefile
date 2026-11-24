@@ -282,6 +282,18 @@ test-regular-fk-concurrency:
 test-drop-api-performance:
 	devops/test_drop_api_performance.sh
 
+# Isolation tests (isolation/specs/*.spec, isolation/expected/*.out): concurrent sessions driven by PostgreSQL's
+# isolation tester against the installed server, in a database sql_saga_isolation with btree_gist and sql_saga. They
+# hold sql_saga's concurrency contract (hug 7rzgv5): temporal writes at READ COMMITTED give the result of running the
+# transactions one after the other. `make test-isolation [ISOLATION_TESTS="name ..."]`; results in isolation/output.
+ISOLATION_SPECS = $(patsubst isolation/specs/%.spec,%,$(wildcard isolation/specs/*.spec))
+ISOLATION_TESTS ?= $(ISOLATION_SPECS)
+ISOLATION_REGRESS = $(dir $(PGXS))../../src/test/isolation/pg_isolation_regress
+.PHONY: test-isolation
+test-isolation:
+	$(ISOLATION_REGRESS) --inputdir=isolation --outputdir=isolation/output --bindir='$(bindir)' \
+		--dbname=sql_saga_isolation --load-extension=btree_gist --load-extension=sql_saga $(ISOLATION_TESTS)
+
 # Renumber test files to make room for a new test at a specific slot.
 # Usage: make renumber-tests-from SLOT=066
 # This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
