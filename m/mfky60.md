@@ -1,16 +1,21 @@
 ---
 id: mfky60
 title: "Planners disagree when a source row has both an identity and a natural key"
-state: todo
+state: "doing"
 type: bug
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzz"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
+doing_since: "2026-11-24T16:30"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ PL/pgSQL (src/2k): v_keys_for_filtering and v_source_rows_exists_join_expr use o
 - [ ] make test fast passes; StatBus call shapes (primary_identity_columns with discovered or given natural keys) checked against the new rule
 
 ## Notes
+
+
+## History
+- 2026-11-24T16:30 todo -> doing/active (take)
