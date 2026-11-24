@@ -45,6 +45,7 @@ Cause: the planner reads the target with one snapshot; the executor then matches
 
 
 Review notes (tmp/ is not committed), for the implementer: natural-key lookups lock on key values all writers use; plain INSERT of a new row bypasses advisory locks; row locks vs plain multi-row UPDATE/FK/user triggers can deadlock; advisory key = table oid + hash of full key, collisions only cost waiting; one advisory lock per entity can hit max_locks_per_transaction on 1000+ entity batches.
+Prototype in temporal_merge (identity key only): advisory lock per entity + FOR NO KEY UPDATE before planning makes isolation scenarios a, b, c, d, f and disjoint-entities serial; e (view) still loses the note, as the design predicts. Design: doc/design/temporal-merge-concurrency.md, under independent review.
 ## History
 - 2026-11-24T14:02 request 1 by sabertooth
 - 2026-11-24T14:02 request 1 not delivered: no coordinator set (hug task coordinator NAME)
