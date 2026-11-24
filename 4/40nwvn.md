@@ -17,7 +17,7 @@ parent: "pj849j"
 Natural key values follow time like data: a merge never changes a natural key outside the source's time or one the source leaves NULL.
 
 ## Purpose
-Found with mfky60. Target id 1 code A; source id=1 code=Z. Native writes code Z over the row's time (and carries it to the later piece of the split row); PL/pgSQL writes code A, ignoring Z, because natural key columns are entity key columns there, unified to the target's value (time_points_unified) and excluded from the data payload. When the natural key changes over time (A then Q) and the source names only id=1, PL/pgSQL loses the target time after the source (1.14: SKIPPED_NO_TARGET; with mfky60 it applies, but drops [2026,2030)).
+Found with mfky60 (grid doc/upstream/repro/natural_key_time_varying_grid.sql, same on 1.14). A natural key value may differ over time for one entity (target id 1: code A [2020,2025), Q [2025,2030)). Source [2024,2026) naming id=1: the native planner (default) writes one code over the whole source time, A over [2025,2026) where the target holds Q, in PATCH_FOR_PORTION_OF and MERGE_ENTITY_*: a silent rewrite of a stored natural key value the source did not give. PL/pgSQL refuses such rows ('Planner failed to generate a plan'). A row naming only code A or Q under MERGE_ENTITY_* fails the whole call with an exclusion violation in both.
 
 ## Principle
 Decide first what a natural key column is in a merge: an identifying key (fixed per entity; changing it is not a merge) or data that may change over time (sql_saga lets a natural key value differ over time). Then make both planners follow it, test on both, expected hand-written.
