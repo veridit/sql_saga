@@ -38,7 +38,7 @@ Cause: the planner reads the target with one snapshot; the executor then matches
 - [x] Two concurrent temporal_merge calls on disjoint entities do not wait for each other (isolation spec)
 - [x] The executor raises when an UPDATE or DELETE changes a different number of rows than planned (test)
 - [x] Benchmark rows/s before and after are recorded
-- [ ] Scenario e (for_portion_of view) gives the serial result with the locking inside sql_saga, not in the caller
+- [x] Scenario e (for_portion_of view) gives the serial result with the locking inside sql_saga, not in the caller
 
 ## Requests
 - 2026-11-24T14:02 request 1 by sabertooth:
