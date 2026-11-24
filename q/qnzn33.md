@@ -33,7 +33,7 @@ Design: doc/design/update-chain.md. Committed ed7d9c8 (chain, 142 MB -> 17 MB in
 ## Depends on
 
 ## Acceptance
-- [ ] doc/design/update-assembly.md reviewed by an independent agent; every blocking finding resolved in the document
+- [ ] ~~doc/design/update-assembly.md reviewed by an independent agent; every blocking finding resolved in the document~~ (not relevant: it named update-assembly.md, the rejected design; replaced by check 4 (update-chain.md), sabertooth, 2026-11-24)
 - [ ] make builds every sql_saga--<source>--1.14.sql from the template, with no per-release generator or signature list
 - [ ] The upgrade matrix passes for every released source; the 1.14 add_unique_key signature change needs no hand-written entry
 - [ ] doc/design/update-chain.md reviewed by an independent agent; every blocking finding resolved in the document
