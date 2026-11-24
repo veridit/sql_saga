@@ -19,7 +19,7 @@ worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
-Natural key values follow time like data: a merge never changes a natural key outside the source's time or one the source leaves NULL.
+Each natural key column holds at most one non-NULL value per entity, enforced by the schema and per row by temporal_merge.
 
 ## Purpose
 Found with mfky60 (grid doc/upstream/repro/natural_key_time_varying_grid.sql, same on 1.14). A natural key value may differ over time for one entity (target id 1: code A [2020,2025), Q [2025,2030)). Source [2024,2026) naming id=1: the native planner (default) writes one code over the whole source time, A over [2025,2026) where the target holds Q, in PATCH_FOR_PORTION_OF and MERGE_ENTITY_*: a silent rewrite of a stored natural key value the source did not give. PL/pgSQL refuses such rows ('Planner failed to generate a plan'). A row naming only code A or Q under MERGE_ENTITY_* fails the whole call with an exclusion violation in both.
