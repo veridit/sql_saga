@@ -1,16 +1,21 @@
 ---
 id: 7rzgv5
 title: "temporal_merge silently loses concurrent changes under READ COMMITTED"
-state: todo
+state: "doing"
 type: bug
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzz"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
+doing_since: "2026-11-24T15:55"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -50,3 +55,4 @@ Prototype in temporal_merge (identity key only): advisory lock per entity + FOR 
 - 2026-11-24T14:02 request 1 by sabertooth
 - 2026-11-24T14:02 request 1 not delivered: no coordinator set (hug task coordinator NAME)
 - 2026-11-24T14:03 resolved request 1 by sabertooth
+- 2026-11-24T15:55 todo -> doing/active (take)
