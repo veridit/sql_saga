@@ -41,5 +41,6 @@ Revert commit a9d2f728240 (Peter Eisentraut, 2026-09-15, 23 commits; its message
 
 
 Six RC scenarios (+3 RR) via isolationtester on 1.14/PG18.3, tmp/upstream/iso. Silent loss: B (note lost), C (deleted entity resurrected), E (view, as B). Loud: A, D, F (exclusion error), RR always 40001. Prototype entity advisory lock + FOR UPDATE before planning: all six serial. Bug: 7rzgv5.
+Report: doc/upstream/for-portion-of-revert.md (871987de), discussion table with links to all 13 messages; fact-checked by an independent agent.
 ## History
 - 2026-11-24T13:29 todo -> doing/active (take)
