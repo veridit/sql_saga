@@ -1,7 +1,7 @@
 ---
 id: mnntde
 title: "A natural key is always bound to one primary key, also composite"
-state: "doing"
+state: "done"
 type: "bug"
 priority: "medium"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzv"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
-doing_since: "2026-11-23T13:51"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T05:00"
 ---
 
 ## Goal
@@ -51,6 +50,8 @@ check 2: 016 4a (PK then NK) and 4b (NK then composite PK) both succeed; both re
 check 3: parameter removed from src/1j, 3h, 3g; doc/api.md regenerated (line removed); README never documented it; tests 016/039/116/117 updated; 016 scenario 3 shows 'function ... does not exist'
 check 4: devops/update_step.sql bind_natural_keys; upgrade gate GREEN from 1.0/1.6/1.13 (guards recorded for opted-out, composite and late keys), RED (5 checks) on 1.13 code; conflict refused by name with PostgreSQL DETAIL naming both rows, extversion and catalog unchanged; preflight lists the value
 check 5: check_integrity: 'natural key is not bound to the primary key' (src/2h); 016 scenario 4d, expected written first
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-23T13:51 todo -> doing/active (take)
 - 2026-11-24T05:00 doing/depends -> doing/active (dependency qnzn33)
+- 2026-11-24T05:00 doing/active -> done (done); was doing_since: 2026-11-23T13:51
