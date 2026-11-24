@@ -1,7 +1,7 @@
 ---
 id: xb9v0m
 title: "make test-native aborts on macOS before running any test"
-state: "doing"
+state: "done"
 type: bug
 priority: "low"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzx"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T16:25"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T16:25"
 ---
 
 ## Goal
@@ -43,3 +42,4 @@ landed d04b7b4 on master 2026-11-24: Native planner: read the target per key set
 check 1: make test-native 7 passed on macOS (Postgres.app 18); CI ubuntu passed 7 before; d04b7b42
 ## History
 - 2026-11-24T16:25 todo -> doing/active (take)
+- 2026-11-24T16:25 doing/active -> done (done); was doing_since: 2026-11-24T16:25
