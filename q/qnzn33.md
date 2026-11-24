@@ -36,7 +36,7 @@ Design: doc/design/update-chain.md. Committed ed7d9c8 (chain, 142 MB -> 17 MB in
 - [ ] ~~doc/design/update-assembly.md reviewed by an independent agent; every blocking finding resolved in the document~~ (not relevant: it named update-assembly.md, the rejected design; replaced by check 4 (update-chain.md), sabertooth, 2026-11-24)
 - [ ] ~~make builds every sql_saga--<source>--1.14.sql from the template, with no per-release generator or signature list~~ (not relevant: direct scripts replaced by the chain; replaced by check 5, sabertooth, 2026-11-24)
 - [ ] ~~The upgrade matrix passes for every released source; the 1.14 add_unique_key signature change needs no hand-written entry~~ (not relevant: restated for the chain as check 6, sabertooth, 2026-11-24)
-- [ ] doc/design/update-chain.md reviewed by an independent agent; every blocking finding resolved in the document
+- [x] doc/design/update-chain.md reviewed by an independent agent; every blocking finding resolved in the document
 - [x] make builds sql_saga--1.13--1.14.sql with devops/update_step.py; versions/ holds the released steps exactly as devops/chain_steps.py derives them from the tags
 - [ ] The upgrade matrix passes for every released source through the chain, locally and in CI
 
@@ -44,5 +44,6 @@ Design: doc/design/update-chain.md. Committed ed7d9c8 (chain, 142 MB -> 17 MB in
 
 
 check 5: make builds sql_saga--1.13--1.14.sql via devops/update_step.py (13 unit tests OK); chain_steps.py --check versions exit 0; versions/ 142 MB -> 17 MB; 34/34 C symbols (ed7d9c8)
+check 4: Independent agent (cat) reviewed design + code: tmp/review_update_chain.md. Blocking B1 (DROP ROUTINE) and B2 (dependency refusal) fixed with tests, N1/N4/N5 addressed, design doc updated (commit 69fcfe2).
 ## History
 - 2026-11-24T02:12 todo -> doing/active (take)
