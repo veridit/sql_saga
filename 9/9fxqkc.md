@@ -46,5 +46,6 @@ Owner's three areas (2026-11-24):
 Mapping modes surfaced two more bugs: rtwrp6 (DELETE_MISSING_TIMELINE with interior source edges) and 2hxkwx (UPSERT ignores DELETE_MISSING_ENTITIES); repros in doc/upstream/repro/.
 
 
+doc/upstream/temporal-model-map.md (871987de): PostgreSQL status table with commits and threads, three area sections, Area 3 mode table, recommendation (help with FPO v2/FK actions, then regular-to-temporal FK, temporal MERGE as direction).
 ## History
 - 2026-11-24T14:03 todo -> doing/active (take)
