@@ -1,6 +1,6 @@
 ---
 id: 40nwvn
-title: "Natural key values that change over time are rewritten by a merge"
+title: "A natural key holds one value per entity; merges and the schema enforce it"
 state: "doing"
 type: bug
 priority: ""
@@ -43,5 +43,6 @@ Severity raised, blocks 1.15. Target id 1: code A [2020,2025), code Q [2025,2030
 CORRECTION of the previous note: the 'PL/pgSQL plans DELETE of the Q row' result came from a scratch database still holding my reverted join experiment (make install does not replace functions in an existing database). Fresh database, grid doc/upstream/repro/natural_key_time_varying_grid.sql, HEAD 7ae460c4 identical to 1.14: target code A [2020,2025), Q [2025,2030); source [2024,2026). Native (default) with id=1 and code NULL, A or Q writes one code over the whole source time, e.g. A over [2025,2026) where the target holds Q, in PATCH_FOR_PORTION_OF, MERGE_ENTITY_PATCH and MERGE_ENTITY_REPLACE: it rewrites a stored natural key value the source did not give. PL/pgSQL refuses those rows ('Planner failed to generate a plan'), no write. id=- code=A or Q under MERGE_ENTITY_*: exclusion violation in both (the natural key finds the entity, but the row is built with the target's other value).
 
 
+Owner decision 2026-11-24 (conversation): (a). Natural keys do not change over time; replacing an identifier means another natural key column (or a separate non-temporal table keyed to the base id), with an overlap where one row carries old and new key, so every point in time resolves to one entity. NULL before/after allowed.
 ## History
 - 2026-11-24T17:02 todo -> doing/active (take)
