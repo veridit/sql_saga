@@ -46,7 +46,6 @@ Mapping modes surfaced two more bugs: rtwrp6 (DELETE_MISSING_TIMELINE with inter
 
 
 doc/upstream/temporal-model-map.md (871987de): PostgreSQL status table with commits and threads, three area sections, Area 3 mode table, recommendation (help with FPO v2/FK actions, then regular-to-temporal FK, temporal MERGE as direction).
-Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T14:03 todo -> doing/active (take)
 - 2026-11-24T14:03 doing/active -> done (done); was doing_since: 2026-11-24T14:03
