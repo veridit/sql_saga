@@ -180,6 +180,39 @@ SELECT sql_saga.check_integrity(); -- fails
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4d;
 
+-- Scenario 4e: Guard names stay distinct when truncation to 63 bytes makes them meet, and a primary key column that is
+-- part of the natural key needs no guard of its own ((c WITH =, c WITH <>) never conflicts).
+\echo
+\echo --- Scenario 4e: long primary key column names; primary key column inside the natural key ---
+SAVEPOINT s4e;
+CREATE TABLE pk_consistency.long_names (
+    a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1 int,
+    a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2 int,
+    natural_key text,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('pk_consistency.long_names','valid_range');
+SELECT sql_saga.add_unique_key('pk_consistency.long_names', ARRAY['a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1', 'a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2'], key_type => 'primary', unique_key_name => 'long_names_pk');
+SELECT sql_saga.add_unique_key('pk_consistency.long_names', ARRAY['natural_key'], unique_key_name => 'long_names_nk');
+SELECT unnest(pk_consistency_constraint_names) AS guard FROM sql_saga.unique_keys WHERE unique_key_name = 'long_names_nk';
+SELECT sql_saga.check_integrity();
+CREATE TABLE pk_consistency.shared_column (
+    org_id int,
+    unit_id int,
+    code text,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('pk_consistency.shared_column','valid_range');
+SELECT sql_saga.add_unique_key('pk_consistency.shared_column', ARRAY['org_id', 'unit_id'], key_type => 'primary');
+SELECT sql_saga.add_unique_key('pk_consistency.shared_column', ARRAY['org_id', 'code']);
+SELECT unnest(pk_consistency_constraint_names) AS guard FROM sql_saga.unique_keys WHERE unique_key_name = 'shared_column_org_id_code_valid';
+SELECT sql_saga.check_integrity();
+ROLLBACK TO SAVEPOINT s4e;
+
 -- Scenario 5: API Symmetry (Drop Key)
 \echo
 \echo --- Scenario 5a: Drop NK removes its consistency constraint ---

@@ -423,7 +423,8 @@ RELEASE SAVEPOINT missing_trigger;
 SELECT integrity_test.valid('missing trigger rollback restores integrity');
 
 -- Disabled era synchronization trigger (1.14, hug a5sdk3): valid_from/valid_until stop following the range column.
--- DISABLE TRIGGER stays allowed; check_integrity names the repair. ENABLE ALWAYS and ENABLE REPLICA still synchronize.
+-- DISABLE TRIGGER stays allowed; check_integrity names the repair. ENABLE ALWAYS and ENABLE REPLICA are a site's
+-- replication choice, accepted as for the foreign key and provenance triggers.
 SAVEPOINT disabled_sync_trigger;
 ALTER TABLE integrity_test.period_child DISABLE TRIGGER period_child_valid_sync_temporal_trg;
 SELECT integrity_test.attempt('disabled era synchronization trigger', 'P0001', 'sql_saga: integrity violation for era "valid" on table "integrity_test.period_child": synchronization trigger period_child_valid_sync_temporal_trg is disabled; repair with ALTER TABLE integrity_test.period_child ENABLE TRIGGER period_child_valid_sync_temporal_trg');

@@ -39,9 +39,16 @@ BEGIN
     END IF;
     FOREACH v_pk_column IN ARRAY p_stable_pk_columns LOOP
         IF p_mutually_exclusive_columns IS NULL THEN
+            -- A primary key column that is part of the natural key binds itself: (c WITH =, c WITH <>) never conflicts.
+            CONTINUE WHEN v_pk_column = ANY (p_natural_key_columns);
             v_constraint_name := CASE WHEN v_composite
                 THEN sql_saga.__internal_make_name(ARRAY[p_unique_key_name, v_pk_column, 'pk_consistency_excl'])
                 ELSE p_unique_key_name || '_pk_consistency_excl' END;
+            -- Truncated to 63 bytes, two long names can meet: the ordinal goes in the part that is never truncated.
+            IF v_constraint_name = ANY (v_constraint_names) THEN
+                v_constraint_name := sql_saga.__internal_make_name(ARRAY[p_unique_key_name, v_pk_column],
+                    pg_catalog.cardinality(v_constraint_names) + 1 || '_pk_consistency_excl');
+            END IF;
             SELECT array_agg(pg_catalog.format('%I WITH =', col)) INTO v_withs FROM pg_catalog.unnest(p_natural_key_columns) AS col;
             v_withs := v_withs || pg_catalog.format('%I WITH <>', v_pk_column);
             v_constraint_sql := pg_catalog.format('ADD CONSTRAINT %I EXCLUDE USING gist (%s)', v_constraint_name, pg_catalog.array_to_string(v_withs, ', '));
@@ -49,9 +56,14 @@ BEGIN
             v_constraint_names := pg_catalog.array_append(v_constraint_names, v_constraint_name);
         ELSE
             FOREACH xor_col IN ARRAY p_mutually_exclusive_columns LOOP
+                CONTINUE WHEN v_pk_column = ANY (non_xor_cols || xor_col);
                 v_constraint_name := sql_saga.__internal_make_name(
                     CASE WHEN v_composite THEN ARRAY[p_unique_key_name, xor_col, v_pk_column, 'pk_consistency_excl']
                          ELSE ARRAY[p_unique_key_name, xor_col, 'pk_consistency_excl'] END);
+                IF v_constraint_name = ANY (v_constraint_names) THEN
+                    v_constraint_name := sql_saga.__internal_make_name(ARRAY[p_unique_key_name, xor_col, v_pk_column],
+                        pg_catalog.cardinality(v_constraint_names) + 1 || '_pk_consistency_excl');
+                END IF;
                 SELECT array_agg(pg_catalog.format('%I WITH =', col)) INTO v_withs FROM pg_catalog.unnest(non_xor_cols || xor_col) AS col;
                 v_withs := v_withs || pg_catalog.format('%I WITH <>', v_pk_column);
                 -- Written as PostgreSQL deparses it (pg_get_constraintdef), so check_integrity compares text with text.

@@ -134,7 +134,8 @@ BEGIN
                    '%1$I = CASE WHEN pg_catalog.jsonb_typeof(%1$I) = ''string'' AND CASE WHEN pg_catalog.pg_input_is_valid(%1$I #>> ''{}'', ''jsonb'') THEN pg_catalog.jsonb_typeof((%1$I #>> ''{}'')::pg_catalog.jsonb) = ''object'' ELSE false END THEN (%1$I #>> ''{}'')::pg_catalog.jsonb ELSE %1$I END', c), ', ')
         INTO fixable, sets
         FROM pg_catalog.unnest(rel.cols) AS c;
-        EXECUTE pg_catalog.format('SELECT EXISTS (SELECT FROM %s WHERE %s)', rel.rel_oid::pg_catalog.regclass, fixable) INTO STRICT found_one;
+        -- ONLY: a table that inherits from it is not sql_saga's, and its triggers stay enabled.
+        EXECUTE pg_catalog.format('SELECT EXISTS (SELECT FROM ONLY %s WHERE %s)', rel.rel_oid::pg_catalog.regclass, fixable) INTO STRICT found_one;
         IF NOT found_one THEN
             CONTINUE;
         END IF;
@@ -143,7 +144,7 @@ BEGIN
         FOR trg IN SELECT k AS tgname FROM pg_catalog.jsonb_object_keys(modes) AS k ORDER BY k LOOP
             EXECUTE pg_catalog.format('ALTER TABLE %s DISABLE TRIGGER %I', rel.rel_oid::pg_catalog.regclass, trg.tgname);
         END LOOP;
-        EXECUTE pg_catalog.format('UPDATE %s SET %s WHERE %s', rel.rel_oid::pg_catalog.regclass, sets, fixable);
+        EXECUTE pg_catalog.format('UPDATE ONLY %s SET %s WHERE %s', rel.rel_oid::pg_catalog.regclass, sets, fixable);
         GET DIAGNOSTICS n = ROW_COUNT;
         total := total + n;
         FOR trg IN SELECT m.key AS tgname, m.value #>> '{}' AS mode FROM pg_catalog.jsonb_each(modes) AS m ORDER BY m.key LOOP

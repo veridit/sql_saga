@@ -491,6 +491,99 @@ ERROR:  sql_saga: integrity violation for unique key "unguarded_natural_key_vali
 \set VERBOSITY default
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4d;
+-- Scenario 4e: Guard names stay distinct when truncation to 63 bytes makes them meet, and a primary key column that is
+-- part of the natural key needs no guard of its own ((c WITH =, c WITH <>) never conflicts).
+\echo
+
+\echo --- Scenario 4e: long primary key column names; primary key column inside the natural key ---
+--- Scenario 4e: long primary key column names; primary key column inside the natural key ---
+SAVEPOINT s4e;
+CREATE TABLE pk_consistency.long_names (
+    a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1 int,
+    a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2 int,
+    natural_key text,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('pk_consistency.long_names','valid_range');
+NOTICE:  sql_saga: Created trigger "long_names_synchronize_temporal_columns_trigger" on table pk_consistency.long_names to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "long_names_valid_range_gist_idx" on column pk_consistency.long_names.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('pk_consistency.long_names', ARRAY['a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1', 'a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2'], key_type => 'primary', unique_key_name => 'long_names_pk');
+NOTICE:  sql_saga: Added constraints to table pk_consistency.long_names: ALTER COLUMN a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1 SET NOT NULL; ALTER COLUMN a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2 SET NOT NULL; ADD PRIMARY KEY (a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1, a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2, valid_range WITHOUT OVERLAPS)
+ add_unique_key 
+----------------
+ long_names_pk
+(1 row)
+
+SELECT sql_saga.add_unique_key('pk_consistency.long_names', ARRAY['natural_key'], unique_key_name => 'long_names_nk');
+NOTICE:  sql_saga: Added constraints to table pk_consistency.long_names: ADD CONSTRAINT long_names_nk_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT long_names_nk_a_very_long_primary_key_col_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, a_very_long_primary_key_column_name_xxxxxxxxxxxxxx1 WITH <>); ADD CONSTRAINT long_names_nk_a_very_long_primary_key_c_2_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, a_very_long_primary_key_column_name_xxxxxxxxxxxxxx2 WITH <>)
+ add_unique_key 
+----------------
+ long_names_nk
+(1 row)
+
+SELECT unnest(pk_consistency_constraint_names) AS guard FROM sql_saga.unique_keys WHERE unique_key_name = 'long_names_nk';
+                             guard                             
+---------------------------------------------------------------
+ long_names_nk_a_very_long_primary_key_col_pk_consistency_excl
+ long_names_nk_a_very_long_primary_key_c_2_pk_consistency_excl
+(2 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+CREATE TABLE pk_consistency.shared_column (
+    org_id int,
+    unit_id int,
+    code text,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('pk_consistency.shared_column','valid_range');
+NOTICE:  sql_saga: Created trigger "shared_column_synchronize_temporal_columns_trigger" on table pk_consistency.shared_column to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "shared_column_valid_range_gist_idx" on column pk_consistency.shared_column.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('pk_consistency.shared_column', ARRAY['org_id', 'unit_id'], key_type => 'primary');
+NOTICE:  sql_saga: Added constraints to table pk_consistency.shared_column: ALTER COLUMN org_id SET NOT NULL; ALTER COLUMN unit_id SET NOT NULL; ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
+           add_unique_key           
+------------------------------------
+ shared_column_org_id_unit_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key('pk_consistency.shared_column', ARRAY['org_id', 'code']);
+NOTICE:  sql_saga: Added constraints to table pk_consistency.shared_column: ADD CONSTRAINT shared_column_org_id_code_valid_uniq UNIQUE (org_id, code, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT shared_column_org_id_code_valid_unit_id_pk_consistency_excl EXCLUDE USING gist (org_id WITH =, code WITH =, unit_id WITH <>)
+         add_unique_key          
+---------------------------------
+ shared_column_org_id_code_valid
+(1 row)
+
+SELECT unnest(pk_consistency_constraint_names) AS guard FROM sql_saga.unique_keys WHERE unique_key_name = 'shared_column_org_id_code_valid';
+                            guard                            
+-------------------------------------------------------------
+ shared_column_org_id_code_valid_unit_id_pk_consistency_excl
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+ROLLBACK TO SAVEPOINT s4e;
 -- Scenario 5: API Symmetry (Drop Key)
 \echo
 

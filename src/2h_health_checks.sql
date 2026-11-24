@@ -1125,8 +1125,9 @@ BEGIN
     END LOOP;
 
     /* The era synchronization trigger is enabled (1.14, hug a5sdk3): disabled, valid_from and valid_until stop following
-     * the range column. DISABLE TRIGGER stays allowed (it is not a drop, doc/design/drop-protection.md); ENABLE ALWAYS
-     * and ENABLE REPLICA keep synchronizing. Its existence and shape are checked above. */
+     * the range column. DISABLE TRIGGER stays allowed (it is not a drop, doc/design/drop-protection.md). ENABLE ALWAYS
+     * and ENABLE REPLICA are a site's choice for replication (REPLICA fires only in replica sessions), as for the
+     * foreign key and provenance triggers below. Its existence and shape are checked above. */
     FOR r IN
         SELECT e.table_schema, e.table_name, e.era_name, e.sync_temporal_trg_name
         FROM sql_saga.era AS e

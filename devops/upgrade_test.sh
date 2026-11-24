@@ -2168,7 +2168,7 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
     check "$label: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "$label: refusal is atomic" "$before" "$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
     # Follow the hints the update actually returns, literally. Each replaced routine has its own check (1.2:
-    # add_system_versioning, 1.9: add_era), so a site whose default privileges changed is refused once per routine:
+    # add_system_versioning, 1.9: add_era, 1.14: add_unique_key and its guard generator), so a site whose default privileges changed is refused once per routine:
     # run each hint's statements before ALTER EXTENSION, retry, and once the update succeeds run the statements after.
     local pre post posts='' refusals=1 next_hint=$hint
     while :; do
@@ -2181,7 +2181,7 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
         printf '%s\n' "$out" | grep -q '^ERROR' || { out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$posts" | sql "$db"); break; }
         refusals=$((refusals + 1))
         next_hint=$(printf '%s\n' "$out" | grep -m1 '^HINT:' | sed 's/^HINT:  *//')
-        [ "$refusals" -le 3 ] || break
+        [ "$refusals" -le 6 ] || break
     done
     check "$label: following the hint succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
     check "$label: refusals before the update, one per replaced routine with changed privileges" "$want_refusals" "$refusals"
@@ -2214,8 +2214,11 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
     # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
     # site removed. Refused as well, so the new routine never silently gets broader access. From 1.9 add_era, which
     # the update also replaces, would gain the same grants: a second refusal, with its own hint.
+    # One refusal per replaced routine that keeps PUBLIC EXECUTE: 1.2 add_system_versioning, 1.9 add_era, 1.14
+    # add_unique_key and its guard generator (their workers are private, so default privileges change nothing there).
     ASV_DEFAULT_REFUSALS=1
     version_lt "$NEW_VERSION" 1.9 || ASV_DEFAULT_REFUSALS=2
+    version_lt "$NEW_VERSION" 1.14 || ASV_DEFAULT_REFUSALS=4
     asv_case new_default \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
@@ -3720,17 +3723,21 @@ UPDATE pj SET name = 'a2' WHERE id = 1;
 CREATE FUNCTION pj_user_trigger() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RAISE EXCEPTION 'user trigger fired'; END \$f\$;
 CREATE TRIGGER pj_user AFTER UPDATE ON pj FOR EACH ROW EXECUTE FUNCTION pj_user_trigger();
 ALTER TABLE pj ENABLE REPLICA TRIGGER pj_user;
+-- A table inheriting from it is not sql_saga's: its rows and triggers are left alone.
+CREATE TABLE pj_child () INHERITS (pj);
+INSERT INTO pj_child (id, name, valid_range, valid_from, valid_until, edit, tag) VALUES (9, 'child', '[2020-01-01,)', '2020-01-01', 'infinity', to_jsonb('{\"by\": \"child\"}'::text), '\"x\"');
+CREATE TRIGGER pj_child_user BEFORE UPDATE ON pj_child FOR EACH ROW EXECUTE FUNCTION pj_user_trigger();
 DO \$as_1_9\$ BEGIN
     IF (SELECT extversion FROM pg_extension WHERE extname = 'sql_saga') <> '1.9' THEN
         -- What 1.9 wrote (only 1.9 did): the DEFAULT evaluated as text, stored as a JSON string.
         ALTER TABLE pj DISABLE TRIGGER USER;
-        UPDATE pj SET edit = to_jsonb(edit::text), tag = to_jsonb(tag::text);
+        UPDATE ONLY pj SET edit = to_jsonb(edit::text), tag = to_jsonb(tag::text);
         ALTER TABLE pj ENABLE TRIGGER USER;
         ALTER TABLE pj ENABLE REPLICA TRIGGER pj_user;
         UPDATE pj_history SET edit = to_jsonb(edit::text), tag = to_jsonb(tag::text);
     END IF;
 END \$as_1_9\$;"
-    PROV_STATE="SELECT (SELECT count(*) FROM pj_history) || '|' || (SELECT string_agg(id || ':' || edit::text || ':' || tag::text, ' ' ORDER BY id) FROM pj) || '|' || (SELECT string_agg(edit::text, ' ') FROM pj_history) || '|' || (SELECT string_agg(tgname::text || '=' || tgenabled::text, ',' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'pj'::regclass AND tgname IN ('pj_user', 'valid_provenance'))"
+    PROV_STATE="SELECT (SELECT count(*) FROM pj_history) || '|' || (SELECT string_agg(id || ':' || edit::text || ':' || tag::text, ' ' ORDER BY id) FROM ONLY pj) || '|' || (SELECT string_agg(edit::text, ' ') FROM pj_history) || '|' || (SELECT string_agg(tgname::text || '=' || tgenabled::text, ',' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'pj'::regclass AND tgname IN ('pj_user', 'valid_provenance'))"
     check "fixture holds the strings 1.9 wrote" \
         '1|1:"{\"by\": \"writer\"}":"\"hello\"" 2:"{\"by\": \"writer\"}":"\"hello\""|"{\"by\": \"writer\"}"|pj_user=R,valid_provenance=O' \
         "$(q "$PROV_DB" "$PROV_STATE")"
@@ -3739,6 +3746,7 @@ END \$as_1_9\$;"
     check "base and history hold objects; the plain string, history count and trigger modes are unchanged" \
         '1|1:{"by": "writer"}:"\"hello\"" 2:{"by": "writer"}:"\"hello\""|{"by": "writer"}|pj_user=R,valid_provenance=O' \
         "$(q "$PROV_DB" "$PROV_STATE")"
+    check "an inheriting table's row is left as it is" '"{\"by\": \"child\"}"' "$(q "$PROV_DB" "SELECT edit::text FROM ONLY pj_child")"
     assert_integrity "$PROV_DB"
 fi
 
