@@ -38,7 +38,7 @@ Owner's three areas (2026-11-24):
 
 ## Acceptance
 - [x] A document lists what PostgreSQL already has, what is in progress upstream (with links), and which parts of temporal_merge are not covered
-- [ ] A recommendation names the smallest proposal with the best chance upstream, with its cost to prepare, for the owner to decide
+- [x] A recommendation names the smallest proposal with the best chance upstream, with its cost to prepare, for the owner to decide
 - [ ] The three areas each have a section: the problem with a concrete example, what sql_saga does, what PostgreSQL offers and is working on
 
 ## Notes
