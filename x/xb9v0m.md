@@ -1,0 +1,32 @@
+---
+id: xb9v0m
+title: "make test-native aborts on macOS before running any test"
+state: todo
+type: bug
+priority: "low"
+assignee: []
+labels: []
+group: ""
+rank: "zzzzzx"
+created: 2026-11-24
+updated: 2026-11-24
+---
+
+## Goal
+make test-native runs the native planner's unit tests on macOS as it does on Linux.
+
+## Purpose
+Found while fixing 2hxkwx: on macOS the test executable aborts at load ('symbol not found in flat namespace _CurrentMemoryContext'); the Makefile only sets the lazy-binding link flags for Linux. Unit tests of the sweep planner (the default planner) can then only run in CI, so a developer on macOS gets no fast feedback.
+
+## Principle
+Same tests on both platforms; no skipped tests. Keep the installed library free of test link flags (own target dir, as on Linux).
+
+## Details
+Makefile lines ~113-121 (NATIVE_TEST_ENV only for PORTNAME linux). macOS candidates: -C link-arg=-undefined -C link-arg=dynamic_lookup, or -Wl,-flat_namespace with lazy binding; the data symbols the test module defines may need the same on macOS. Reproduced on 1.14 code (not caused by 1.15 changes). CI (ubuntu) runs it: 7 passed.
+
+## Depends on
+
+## Acceptance
+- [ ] make test-native passes on macOS (Postgres.app 18) and in CI
+
+## Notes
