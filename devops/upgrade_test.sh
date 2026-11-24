@@ -3677,6 +3677,28 @@ INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 2, 'a'
     assert_integrity "$NK_BAD_DB"
 fi
 
+# 1.14: a disabled era synchronization trigger (valid_from/valid_until stop following the range column) refuses the
+# update by name, with its repair; the preflight lists it. Before, check_integrity said nothing.
+if ! version_lt "$NEW_VERSION" 1.14; then
+    section "$BASELINE_VERSION disabled synchronization trigger refuses the update to $NEW_VERSION" "expected RED"
+    SYNC_DB=${PREFIX}_syncdis114
+    v13_db "$SYNC_DB" "CREATE TABLE sd (id integer NOT NULL, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('sd', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT format('ALTER TABLE sd DISABLE TRIGGER %I', sync_temporal_trg_name) FROM sql_saga.era WHERE table_name = 'sd' \\gexec"
+    SYNC_TRG=$(q "$SYNC_DB" "SELECT sync_temporal_trg_name FROM sql_saga.era WHERE table_name = 'sd'")
+    check "preflight lists the disabled synchronization trigger with its repair" "ALTER TABLE public.sd ENABLE TRIGGER $SYNC_TRG;" \
+        "$(run_preflight "$SYNC_DB" | grep -m1 '^ALTER TABLE public.sd ENABLE TRIGGER')"
+    v13_restart "$SYNC_DB"
+    check "the update is refused by name, with the repair" \
+        "ERROR:  sql_saga: integrity violation for era \"valid\" on table \"public.sd\": synchronization trigger $SYNC_TRG is disabled; repair with ALTER TABLE public.sd ENABLE TRIGGER $SYNC_TRG" \
+        "$(q "$SYNC_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "the refused update leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" \
+        "$(q "$SYNC_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "after the named repair the update succeeds" "" \
+        "$(q "$SYNC_DB" "ALTER TABLE public.sd ENABLE TRIGGER $SYNC_TRG; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    assert_integrity "$SYNC_DB"
+fi
+
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")

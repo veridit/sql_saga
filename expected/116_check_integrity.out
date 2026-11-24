@@ -40,6 +40,9 @@ NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__between_symmetri
 NOTICE:  sql_saga: Created function "integrity_test.sv_trigger__from_to(timestamp with time zone,timestamp with time zone)" for system-versioned table "integrity_test.sv_trigger"
 SYSTEM_TIME trigger tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
 missing trigger rollback restores integrity | ok
+disabled era synchronization trigger | P0001: sql_saga: integrity violation for era "valid" on table "integrity_test.period_child": synchronization trigger period_child_valid_sync_temporal_trg is disabled; repair with ALTER TABLE integrity_test.period_child ENABLE TRIGGER period_child_valid_sync_temporal_trg
+synchronization trigger enabled ALWAYS | ok
+synchronization trigger enabled REPLICA | ok
 excluded column valid before damage | ok
 excluded_column | unrelated DDL ok
 

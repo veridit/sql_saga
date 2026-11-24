@@ -285,6 +285,21 @@ BEGIN
                   HINT = 'Move each policy to its base table, drop it from history, and rerun preflight.';
     END IF;
 
+    /* Disabled era synchronization triggers: from 1.14 the update's final integrity check refuses them. */
+    SELECT pg_catalog.string_agg(pg_catalog.format('ALTER TABLE %I.%I ENABLE TRIGGER %I;', e.table_schema, e.table_name, e.sync_temporal_trg_name),
+               E'\n' ORDER BY e.table_schema, e.table_name, e.era_name)
+    INTO policy_list
+    FROM sql_saga.era AS e
+    JOIN pg_catalog.pg_namespace AS n ON n.nspname = e.table_schema
+    JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, e.table_name)
+    JOIN pg_catalog.pg_trigger AS t ON (t.tgrelid, t.tgname) = (c.oid, e.sync_temporal_trg_name)
+    WHERE t.tgenabled = 'D';
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: disabled era synchronization triggers prevent upgrade; enable them:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'A disabled synchronization trigger leaves valid_from and valid_until behind the range column; check those columns after enabling it.';
+    END IF;
+
     /* Natural keys the 1.14 update binds to their primary key (an earlier release left them unbound): a natural key
        value held by more than one primary key value refuses the update. The query mirrors the guard: equal values
        (a NULL is equal to nothing), one guard per column of a mutually exclusive key, on the rows where only that

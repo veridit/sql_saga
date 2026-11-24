@@ -174,7 +174,9 @@ ALTER TABLE pk_consistency.unguarded DROP CONSTRAINT unguarded_natural_key_valid
 UPDATE sql_saga.unique_keys SET pk_consistency_constraint_names = NULL WHERE unique_key_name = 'unguarded_natural_key_valid';
 RESET session_replication_role;
 SAVEPOINT expect_error;
+\set VERBOSITY terse
 SELECT sql_saga.check_integrity(); -- fails
+\set VERBOSITY default
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4d;
 

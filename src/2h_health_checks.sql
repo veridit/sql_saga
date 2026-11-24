@@ -1124,6 +1124,23 @@ BEGIN
         END IF;
     END LOOP;
 
+    /* The era synchronization trigger is enabled (1.14, hug a5sdk3): disabled, valid_from and valid_until stop following
+     * the range column. DISABLE TRIGGER stays allowed (it is not a drop, doc/design/drop-protection.md); ENABLE ALWAYS
+     * and ENABLE REPLICA keep synchronizing. Its existence and shape are checked above. */
+    FOR r IN
+        SELECT e.table_schema, e.table_name, e.era_name, e.sync_temporal_trg_name
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_namespace AS n ON n.nspname = e.table_schema
+        JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, e.table_name)
+        JOIN pg_catalog.pg_trigger AS t ON (t.tgrelid, t.tgname) = (c.oid, e.sync_temporal_trg_name)
+        WHERE t.tgenabled = 'D'
+        ORDER BY e.table_schema COLLATE "C", e.table_name COLLATE "C", e.era_name COLLATE "C"
+    LOOP
+        RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": synchronization trigger % is disabled; repair with ALTER TABLE % ENABLE TRIGGER %',
+            r.era_name, pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.sync_temporal_trg_name),
+            pg_catalog.format('%I.%I', r.table_schema, r.table_name), pg_catalog.quote_ident(r.sync_temporal_trg_name);
+    END LOOP;
+
     /* Provenance columns (1.9, doc/design/provenance.md): the managed trigger exists and is enabled. */
     FOR r IN
         SELECT e.table_schema, e.table_name, e.era_name, t.tgenabled,
