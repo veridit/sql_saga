@@ -33,11 +33,12 @@ PL/pgSQL (src/2k): v_keys_for_filtering and v_source_rows_exists_join_expr use o
 ## Depends on
 
 ## Acceptance
-- [ ] Test 165: the 9-row grid (identity only, natural key only, both agreeing, both conflicting, new identity with known natural key, ...) in PATCH_FOR_PORTION_OF, MERGE_ENTITY_PATCH and INSERT_NEW_ENTITIES gives identical, hand-written feedback and rows from both planners
+- [x] Test 165: the 9-row grid (identity only, natural key only, both agreeing, both conflicting, new identity with known natural key, ...) in PATCH_FOR_PORTION_OF, MERGE_ENTITY_PATCH and INSERT_NEW_ENTITIES gives identical, hand-written feedback and rows from both planners
 - [ ] make test fast passes; StatBus call shapes (primary_identity_columns with discovered or given natural keys) checked against the new rule
 
 ## Notes
 
 
+check 1: Test 165 (8 cases x 3 modes; id=1 code=Z moved to 40nwvn): native matches the hand-written table (tmp/165_tables.out), PL/pgSQL differs in 0 rows; 7ae460c4
 ## History
 - 2026-11-24T16:30 todo -> doing/active (take)
