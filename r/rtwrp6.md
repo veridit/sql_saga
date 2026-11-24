@@ -35,3 +35,5 @@ Repro: doc/upstream/repro/delete_missing_timeline_interior.sql (psql against a *
 ## Notes
 
 Native planner only: the PL/pgSQL planner (use_plpgsql_planner) deletes the uncovered head and tail correctly. Cause: native/src/sweep.rs resolve_payloads keeps target-only segments of an entity that has sources; the uncovered part of a partly covered target row coalesces with its ancestor and becomes SHRINK/INSERT. PL/pgSQL drops them (v_final_data_payload_expr := 's_data_payload' under DMT). Fix: under deletes_timeline, skip target-only segments when the entity has active sources; fully uncovered rows still become DELETE in compute_diff.
+
+a1ed54c6: test 163 covers inside/boundary/gap/hole edges, REPLACE/UPSERT/PATCH, DMT and DMTE, both planners; RED on 1.14 (native kept head and tail), GREEN after. Fix: native/src/sweep.rs resolve_payloads drops target-only segments of a source entity under deletes_timeline.
