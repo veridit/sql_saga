@@ -41,6 +41,7 @@ Repro: doc/upstream/repro/delete_missing_entities_upsert.sql. Cause: src/2k_temp
 
 Grid of all 8 modes x 4 delete modes on both planners (doc/upstream/repro/mode_delete_mode_grid.sql), 1.14: (1) UPSERT ignores DELETE_MISSING_ENTITIES in both planners (scan rule mode IN (PATCH, REPLACE) is copied in src/2k_temporal_merge_plan.sql:1075 and twice in native/src/reader.rs). (2) Delete modes with non-MERGE_ENTITY modes are arbitrary: INSERT_NEW_ENTITIES + DELETE_MISSING_TIMELINE deletes existing entity 1 entirely (both planners); DELETE_FOR_PORTION_OF + DMT/DMTE crashes the PL/pgSQL planner (jsonpath wildcard error); INSERT_NEW_ENTITIES + DME deletes entity 1 in PL/pgSQL but not native; *_FOR_PORTION_OF + DMT deletes uncovered time in PL/pgSQL, not native. Decision: delete modes apply to MERGE_ENTITY_* only (schema comment: 'deletion behavior for replace modes'; README); any other mode with delete_mode <> NONE is refused (22023) by both planner entry points. Entity deletion scans the whole target for every MERGE_ENTITY_* mode; the rule lives once per language (DeleteMode/MergeMode methods in Rust).
 a1ed54c6: test 163 RED on 1.14 (UPSERT keeps entity 2; refusals ran) and GREEN after; grid 32/32 planners agree; make test fast 148/148.
+landed a1ed54c on master 2026-11-24: Delete modes: one rule in both planners (hug rtwrp6, 2hxkwx)
 ## History
 - 2026-11-24T14:08 todo -> doing/active (take)
 - 2026-11-24T14:33 doing/active -> done (done); was doing_since: 2026-11-24T14:08
