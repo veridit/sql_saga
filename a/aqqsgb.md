@@ -1,7 +1,7 @@
 ---
 id: aqqsgb
 title: "Native planner takes 6 s per 1,000 rows when a natural key is discovered"
-state: "doing"
+state: "done"
 type: bug
 priority: "medium"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzy"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T15:55"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T16:25"
 ---
 
 ## Goal
@@ -41,5 +40,7 @@ Repro: doc/upstream/repro/native_planner_natural_key_slow.sql (psql -f against a
 
 check 1: Repro doc/upstream/repro/native_planner_natural_key_slow.sql: PLAN phase 6.0-7.6 s before, 84-165 ms after (PL/pgSQL planner 356 ms); d04b7b42
 check 2: make test fast 149/149 (tmp/fast_115_j.log); 101 and 102 benchmarks pass (tmp/bench_115_j.log); d04b7b42
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T15:55 todo -> doing/active (take)
+- 2026-11-24T16:25 doing/active -> done (done); was doing_since: 2026-11-24T15:55
