@@ -1,16 +1,21 @@
 ---
 id: 9fxqkc
 title: "Explore upstream PostgreSQL support for temporal_merge, regular-to-temporal FKs"
-state: todo
+state: "doing"
 type: spike
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzh"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
+doing_since: "2026-11-24T14:03"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -39,3 +44,7 @@ Owner's three areas (2026-11-24):
 ## Notes
 
 Mapping modes surfaced two more bugs: rtwrp6 (DELETE_MISSING_TIMELINE with interior source edges) and 2hxkwx (UPSERT ignores DELETE_MISSING_ENTITIES); repros in doc/upstream/repro/.
+
+
+## History
+- 2026-11-24T14:03 todo -> doing/active (take)
