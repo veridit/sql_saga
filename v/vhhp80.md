@@ -1,16 +1,21 @@
 ---
 id: vhhp80
 title: "Study the FOR PORTION OF revert and test temporal_merge for it"
-state: todo
+state: "doing"
 type: spike
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzz8"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
+doing_since: "2026-11-24T13:29"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -33,3 +38,7 @@ Revert commit a9d2f728240 (Peter Eisentraut, 2026-09-15, 23 commits; its message
 - [ ] Any sql_saga failure found has its own hug task with the reproducer
 
 ## Notes
+
+
+## History
+- 2026-11-24T13:29 todo -> doing/active (take)
