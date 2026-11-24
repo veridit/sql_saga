@@ -29,7 +29,9 @@ Provenance values come only from the column DEFAULT via sql_saga.provenance_trig
 
 - qnzn33
 ## Acceptance
-- [ ] A 1.9 database with such rows, updated to 1.14, has objects in those columns and a NOTICE with the count; a jsonb provenance value that is a plain string not encoding an object is untouched
+- [x] A 1.9 database with such rows, updated to 1.14, has objects in those columns and a NOTICE with the count; a jsonb provenance value that is a plain string not encoding an object is untouched
 - [ ] The upgrade matrix gate fails on the v1.13 binaries and passes on 1.14
 
 ## Notes
+
+check 1: Upgrade gate from 1.9 and 1.13 (fixture writes the 1.9 strings): base and history converted to objects, plain-string value untouched, history count and REPLICA trigger mode unchanged; NOTICE 'Converted the jsonb provenance values of N rows' (c03b7b9). Manual probe on real 1.9 binaries: 2 rows + history converted
