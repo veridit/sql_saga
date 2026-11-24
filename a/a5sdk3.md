@@ -1,7 +1,7 @@
 ---
 id: a5sdk3
 title: "check_integrity reports a disabled era synchronization trigger"
-state: "doing"
+state: "done"
 type: bug
 priority: "medium"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzq"
 created: 2026-11-22
 updated: 2026-11-22
 parent: "2q5nvf"
-doing_since: "2026-11-24T05:00"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T05:00"
 ---
 
 ## Goal
@@ -44,5 +43,7 @@ check 1: 116 case 'disabled era synchronization trigger': expected written first
 check 2: 116: ENABLE ALWAYS and ENABLE REPLICA pass; make test fast 147/147; upgrade gate RED on 1.13 health checks, GREEN from 1.0/1.13
 
 
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T05:00 todo -> doing/active (take)
+- 2026-11-24T05:00 doing/active -> done (done); was doing_since: 2026-11-24T05:00
