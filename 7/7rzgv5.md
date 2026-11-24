@@ -43,3 +43,4 @@ Cause: the planner reads the target with one snapshot; the executor then matches
 
 ## History
 - 2026-11-24T14:02 request 1 by sabertooth
+- 2026-11-24T14:02 request 1 not delivered: no coordinator set (hug task coordinator NAME)
