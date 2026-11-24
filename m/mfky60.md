@@ -10,6 +10,7 @@ group: ""
 rank: "zzzzzz"
 created: 2026-11-24
 updated: 2026-11-24
+parent: "pj849j"
 ---
 
 ## Goal
