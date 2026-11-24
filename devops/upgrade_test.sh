@@ -3539,7 +3539,9 @@ INSERT INTO pj (id, payload, valid_from, valid_until) VALUES (1, 'before', '2024
     check "update succeeds" "" "$(q "$PROV10_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     check "after the update a write stores the jsonb DEFAULT as an object" "object" \
         "$(q "$PROV10_DB" "INSERT INTO pj (id, payload, valid_from, valid_until) VALUES (2, 'after', '2024-01-01', 'infinity'); SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 2")"
-    check "the update does not rewrite existing rows" "string" "$(q "$PROV10_DB" "SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 1")"
+    # 1.10 to 1.13 left the strings 1.9 wrote in place; from 1.14 the update converts them (hug k5zndr, below).
+    if version_lt "$NEW_VERSION" 1.14; then PROV10_KEPT=string; else PROV10_KEPT=object; fi
+    check "existing rows after the update ($PROV10_KEPT: converted from 1.14)" "$PROV10_KEPT" "$(q "$PROV10_DB" "SELECT jsonb_typeof(edit_info) FROM pj WHERE id = 1")"
     q "$PROV10_DB" "ALTER TABLE pj ALTER COLUMN edit_note DROP DEFAULT" >/dev/null
     check "a provenance column that lost its DEFAULT refuses the write" \
         'ERROR:  sql_saga: provenance column "edit_note" of table "public.pj" has no DEFAULT' \
@@ -3697,6 +3699,47 @@ SELECT format('ALTER TABLE sd DISABLE TRIGGER %I', sync_temporal_trg_name) FROM 
     check "after the named repair the update succeeds" "" \
         "$(q "$SYNC_DB" "ALTER TABLE public.sd ENABLE TRIGGER $SYNC_TRG; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     assert_integrity "$SYNC_DB"
+fi
+
+# 1.14: jsonb provenance values that 1.9 stored as JSON strings are converted to the objects they encode, in the base
+# table and its history, without firing triggers (no new history row, provenance not rewritten) and keeping each
+# trigger's firing mode; a string that does not encode an object is left as it is. Only a 1.9 database can hold them
+# (1.10 fixed the trigger); from older sources the fixture writes them as 1.9 did.
+if ! version_lt "$NEW_VERSION" 1.14 && ! version_lt "$BASELINE_VERSION" 1.9; then
+    section "$BASELINE_VERSION jsonb provenance strings become objects in the update to $NEW_VERSION" "expected RED"
+    PROV_DB=${PREFIX}_provjson114
+    v13_db "$PROV_DB" "CREATE TABLE pj (id integer NOT NULL, name text, valid_range daterange NOT NULL, valid_from date, valid_until date,
+    edit jsonb DEFAULT jsonb_build_object('by', 'writer'), tag jsonb DEFAULT to_jsonb('hello'::text));
+SELECT sql_saga.add_era('pj', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('pj', ARRAY['id']::name[], key_type => 'primary');
+SELECT sql_saga.set_era_ephemeral_columns('pj', 'valid', ARRAY['edit', 'tag']::name[]);
+SELECT sql_saga.set_era_provenance_columns('pj', 'valid', ARRAY['edit', 'tag']::name[]);
+SELECT sql_saga.add_system_versioning('pj');
+INSERT INTO pj (id, name, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', 'infinity'), (2, 'b', '2020-01-01', 'infinity');
+UPDATE pj SET name = 'a2' WHERE id = 1;
+CREATE FUNCTION pj_user_trigger() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RAISE EXCEPTION 'user trigger fired'; END \$f\$;
+CREATE TRIGGER pj_user AFTER UPDATE ON pj FOR EACH ROW EXECUTE FUNCTION pj_user_trigger();
+ALTER TABLE pj ENABLE REPLICA TRIGGER pj_user;
+DO \$as_1_9\$ BEGIN
+    IF (SELECT extversion FROM pg_extension WHERE extname = 'sql_saga') <> '1.9' THEN
+        -- What 1.9 wrote (only 1.9 did): the DEFAULT evaluated as text, stored as a JSON string.
+        ALTER TABLE pj DISABLE TRIGGER USER;
+        UPDATE pj SET edit = to_jsonb(edit::text), tag = to_jsonb(tag::text);
+        ALTER TABLE pj ENABLE TRIGGER USER;
+        ALTER TABLE pj ENABLE REPLICA TRIGGER pj_user;
+        UPDATE pj_history SET edit = to_jsonb(edit::text), tag = to_jsonb(tag::text);
+    END IF;
+END \$as_1_9\$;"
+    PROV_STATE="SELECT (SELECT count(*) FROM pj_history) || '|' || (SELECT string_agg(id || ':' || edit::text || ':' || tag::text, ' ' ORDER BY id) FROM pj) || '|' || (SELECT string_agg(edit::text, ' ') FROM pj_history) || '|' || (SELECT string_agg(tgname::text || '=' || tgenabled::text, ',' ORDER BY tgname) FROM pg_trigger WHERE tgrelid = 'pj'::regclass AND tgname IN ('pj_user', 'valid_provenance'))"
+    check "fixture holds the strings 1.9 wrote" \
+        '1|1:"{\"by\": \"writer\"}":"\"hello\"" 2:"{\"by\": \"writer\"}":"\"hello\""|"{\"by\": \"writer\"}"|pj_user=R,valid_provenance=O' \
+        "$(q "$PROV_DB" "$PROV_STATE")"
+    v13_restart "$PROV_DB"
+    check "update succeeds" "" "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "base and history hold objects; the plain string, history count and trigger modes are unchanged" \
+        '1|1:{"by": "writer"}:"\"hello\"" 2:{"by": "writer"}:"\"hello\""|{"by": "writer"}|pj_user=R,valid_provenance=O' \
+        "$(q "$PROV_DB" "$PROV_STATE")"
+    assert_integrity "$PROV_DB"
 fi
 
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
