@@ -35,7 +35,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 - qnzn33
 ## Acceptance
 - [x] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
-- [ ] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
+- [x] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
 - [ ] add_unique_key has no enforce_consistency_with_primary_key parameter; doc/api.md, README and tests updated
 - [ ] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
 - [ ] check_integrity reports a natural key without its guard (missing pk_consistency constraint, or NULL/empty state while a primary key exists); test hand-written first
@@ -47,5 +47,6 @@ Owner decided (a), 2026-11-23: refuse in both orders. Reason: a natural key that
 check 1: Owner decided 2026-11-23: no opt-out at all; recorded in notes, goal and principle. 016 4a is covered by check 2.
 
 
+check 2: 016 4a (PK then NK) and 4b (NK then composite PK) both succeed; both refuse NK1 on another unit (and 4a on another org) with the per-column guard; 9d5f52d
 ## History
 - 2026-11-23T13:51 todo -> doing/active (take)
