@@ -700,10 +700,11 @@ fn opt_json(v: &Option<serde_json::Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     // `cargo test --lib` builds a standalone executable. pgrx references these PostgreSQL server
-    // globals, which the server provides when it loads the library; on Linux the loader resolves data
-    // symbols at start-up, so the test executable defines inert stand-ins. The pure-Rust tests below
-    // never call into PostgreSQL. This module is not compiled into the shared library.
-    #[cfg(target_os = "linux")]
+    // globals, which the server provides when it loads the library; the loader resolves data symbols at
+    // start-up (on Linux, and on macOS with the flat namespace the Makefile links with), so the test
+    // executable defines inert stand-ins. The pure-Rust tests below never call into PostgreSQL. This
+    // module is not compiled into the shared library.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     mod server_globals {
         #[no_mangle]
         pub static mut CurrentMemoryContext: *mut std::ffi::c_void = std::ptr::null_mut();

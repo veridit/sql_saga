@@ -155,7 +155,9 @@ and a natural key, a 1,000-row `MERGE_ENTITY_UPSERT` batch, median of 10 calls a
 | the lock statements alone | | 9 ms advisory, 3 + 6 ms row locks |
 
 The difference is within the run-to-run spread. With the natural key discovered (the default), the native planner
-itself takes 6 to 7.6 s per call in both releases; that is a separate problem (hug aqqsgb).
+took 6 to 7.6 s per call in 1.14: its target read ORed the key sets in one WHERE, which PostgreSQL served with a
+BitmapOr over the GiST exclusion index. 1.15 reads each key set as its own index-served branch and combines them by
+`ctid` (hug aqqsgb); the planning phase then takes 84 to 165 ms.
 
 ## Alternatives considered
 

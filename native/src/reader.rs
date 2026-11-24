@@ -328,7 +328,7 @@ fn build_target_sql_template(
 
     // Try parameterized filter first (enables prepared statement caching)
     if let Some((where_clause, params)) =
-        try_build_parameterized_filter(target_col_types, target_col_notnull, source_cols, ctx)
+        try_build_parameterized_filter(target_ident, target_col_types, target_col_notnull, source_cols, ctx)
     {
         let sql = format!(
             "SELECT lower(t.{rc})::text, upper(t.{rc})::text{cols} \
@@ -561,6 +561,7 @@ fn read_source_ordinals(
 /// Returns None only if any column type is unknown.
 /// Returns Some(("", [])) for full-scan modes (no WHERE clause needed).
 fn try_build_parameterized_filter(
+    target_ident: &str,
     target_col_types: &std::collections::HashMap<String, String>,
     target_col_notnull: &std::collections::HashMap<String, bool>,
     source_cols: &[String],
@@ -698,7 +699,17 @@ fn try_build_parameterized_filter(
         }
     }
 
-    let where_clause = format!(" WHERE {}", where_parts.join(" OR "));
+    // One branch per key set, combined by ctid: OR'ing the key sets in one WHERE made PostgreSQL build a BitmapOr over
+    // the GiST exclusion index for every branch, 450,000 buffer reads for 1,000 keys on a 200,000-row table (6 s, hug
+    // aqqsgb), where each branch alone uses its own index (3,000 reads). A single key set needs no UNION.
+    if where_parts.len() == 1 {
+        return Some((format!(" WHERE {}", where_parts[0]), params));
+    }
+    let branches: Vec<String> = where_parts
+        .iter()
+        .map(|w| format!("SELECT t.ctid FROM {target_ident} AS t WHERE {w}"))
+        .collect();
+    let where_clause = format!(" WHERE t.ctid = ANY (ARRAY({}))", branches.join(" UNION "));
     Some((where_clause, params))
 }
 

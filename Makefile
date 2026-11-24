@@ -117,6 +117,11 @@ uninstall-native:
 ifeq ($(PORTNAME),linux)
 NATIVE_TEST_ENV = RUSTFLAGS='-Crelro-level=off -Clink-arg=-Wl,--unresolved-symbols=ignore-all -Clink-arg=-Wl,-z,lazy' CARGO_TARGET_DIR=target/test-native
 endif
+# On macOS the same: undefined server symbols are looked up at run time in the flat namespace, where the test module's
+# stand-ins satisfy the data symbols (hug xb9v0m).
+ifeq ($(PORTNAME),darwin)
+NATIVE_TEST_ENV = RUSTFLAGS='-Clink-arg=-Wl,-undefined,dynamic_lookup -Clink-arg=-Wl,-flat_namespace' CARGO_TARGET_DIR=target/test-native
+endif
 test-native:
 	cd $(NATIVE_DIR) && $(NATIVE_TEST_ENV) PGRX_PG_CONFIG_PATH='$(NATIVE_PG_CONFIG)' $(CARGO) test --lib --locked
 
