@@ -35,7 +35,7 @@ Design: doc/design/update-chain.md. Committed ed7d9c8 (chain, 142 MB -> 17 MB in
 ## Acceptance
 - [ ] ~~doc/design/update-assembly.md reviewed by an independent agent; every blocking finding resolved in the document~~ (not relevant: it named update-assembly.md, the rejected design; replaced by check 4 (update-chain.md), sabertooth, 2026-11-24)
 - [ ] ~~make builds every sql_saga--<source>--1.14.sql from the template, with no per-release generator or signature list~~ (not relevant: direct scripts replaced by the chain; replaced by check 5, sabertooth, 2026-11-24)
-- [ ] The upgrade matrix passes for every released source; the 1.14 add_unique_key signature change needs no hand-written entry
+- [ ] ~~The upgrade matrix passes for every released source; the 1.14 add_unique_key signature change needs no hand-written entry~~ (not relevant: restated for the chain as check 6, sabertooth, 2026-11-24)
 - [ ] doc/design/update-chain.md reviewed by an independent agent; every blocking finding resolved in the document
 - [ ] make builds sql_saga--1.13--1.14.sql with devops/update_step.py; versions/ holds the released steps exactly as devops/chain_steps.py derives them from the tags
 - [ ] The upgrade matrix passes for every released source through the chain, locally and in CI
