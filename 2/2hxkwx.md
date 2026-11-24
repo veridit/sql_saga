@@ -1,16 +1,21 @@
 ---
 id: 2hxkwx
 title: "MERGE_ENTITY_UPSERT ignores DELETE_MISSING_ENTITIES"
-state: todo
+state: "doing"
 type: bug
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzq"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
+doing_since: "2026-11-24T14:08"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -33,3 +38,7 @@ Repro: doc/upstream/repro/delete_missing_entities_upsert.sql. Cause: src/2k_temp
 - [ ] make test fast passes
 
 ## Notes
+
+
+## History
+- 2026-11-24T14:08 todo -> doing/active (take)
