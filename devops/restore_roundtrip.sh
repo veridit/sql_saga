@@ -1289,6 +1289,14 @@ if [ "${1:-}" = --self-test ]; then
     exit $?
 fi
 
+# old_dump_layout runs inside $( ) where its exit only leaves the subshell: check every
+# version it will be asked about here, where a missing layout stops the harness.
+PACKAGE_VERSION=$(sed -n "s/^default_version = '\(.*\)'$/\1/p" "$REPO_ROOT/sql_saga.control")
+[ -n "$PACKAGE_VERSION" ] || { echo "HARNESS ERROR: no default_version in $REPO_ROOT/sql_saga.control" >&2; exit 2; }
+for layout_version in "$PACKAGE_VERSION" $(printf '%s\n' $OLD_DUMP_TAGS | cut -d'|' -f2); do
+    old_dump_layout "$layout_version" >/dev/null || exit 2
+done
+
 select_cases "$@"
 if [ ${#CASES[@]} -eq 0 ]; then
     echo "no case to run: ${SKIPPED[*]-}" >&2
