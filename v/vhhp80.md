@@ -1,7 +1,7 @@
 ---
 id: vhhp80
 title: "Study the FOR PORTION OF revert and test temporal_merge for it"
-state: "doing"
+state: "done"
 type: spike
 priority: ""
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzz8"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
-doing_since: "2026-11-24T13:29"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T14:03"
 ---
 
 ## Goal
@@ -42,5 +41,7 @@ Revert commit a9d2f728240 (Peter Eisentraut, 2026-09-15, 23 commits; its message
 
 Six RC scenarios (+3 RR) via isolationtester on 1.14/PG18.3, tmp/upstream/iso. Silent loss: B (note lost), C (deleted entity resurrected), E (view, as B). Loud: A, D, F (exclusion error), RR always 40001. Prototype entity advisory lock + FOR UPDATE before planning: all six serial. Bug: 7rzgv5.
 Report: doc/upstream/for-portion-of-revert.md (871987de), discussion table with links to all 13 messages; fact-checked by an independent agent.
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T13:29 todo -> doing/active (take)
+- 2026-11-24T14:03 doing/active -> done (done); was doing_since: 2026-11-24T13:29
