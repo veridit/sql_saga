@@ -33,7 +33,7 @@ Repro: tmp/nkchange.sql and tmp/nkchange2.sql (copy into doc/upstream/repro or t
 ## Depends on
 
 ## Acceptance
-- [ ] Owner decision recorded: natural key as identifier or as time-varying data
+- [x] Owner decision recorded: natural key as identifier or as time-varying data
 - [ ] Test for id=1 code=Z and for a natural key that changes over time gives the same hand-written result from both planners
 
 ## Notes
@@ -44,5 +44,6 @@ CORRECTION of the previous note: the 'PL/pgSQL plans DELETE of the Q row' result
 
 
 Owner decision 2026-11-24 (conversation): (a). Natural keys do not change over time; replacing an identifier means another natural key column (or a separate non-temporal table keyed to the base id), with an overlap where one row carries old and new key, so every point in time resolves to one entity. NULL before/after allowed.
+check 1: Owner chose (a), recorded in principle and notes, 2026-11-24
 ## History
 - 2026-11-24T17:02 todo -> doing/active (take)
