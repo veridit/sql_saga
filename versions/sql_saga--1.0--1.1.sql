@@ -1,4 +1,629 @@
 \echo Use "ALTER EXTENSION sql_saga UPDATE TO '1.1'" to load this file. \quit
+SELECT pg_catalog.set_config('sql_saga.upgrade_from', '1.0', true);
+/*
+ * sql_saga 1.3 update preamble (fragment P of devops/generate_update_scripts.py; tmp/v13_upgrade_integration_plan.md).
+ *
+ * The generator places this fragment right after the header and the trusted source-version line
+ *   SELECT pg_catalog.set_config('sql_saga.upgrade_from', '<1.0|1.1|1.2>', true);
+ * and before the frozen historical update (1.0 and 1.1 sources only). Inside ALTER EXTENSION ... UPDATE,
+ * pg_extension.extversion already holds the target version, so nothing here branches on it.
+ *
+ * Nothing in this fragment changes the database before the precise refusals have run, except the
+ * transaction-local settings, the transient disabling of sql_saga_rename_following (restored at the end of
+ * the repairs fragment) and the bootstrap of the 1k pairing routines (members of the extension, replaced again
+ * with the other routines later). A refusal rolls the whole update back.
+ */
+
+/* The source version the generator wrote into this script, checked against the catalog it is about to update. */
+DO $upgrade_source$
+DECLARE
+    source text := pg_catalog.current_setting('sql_saga.upgrade_from', true);
+    has_installation boolean := pg_catalog.to_regclass('sql_saga.installation') IS NOT NULL;
+    has_sync_guard boolean := pg_catalog.to_regclass('sql_saga.history_policy_sync_guard') IS NOT NULL;
+    has_catalog_format boolean := EXISTS (
+        SELECT FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = 'sql_saga.era'::pg_catalog.regclass AND a.attname = 'catalog_format' AND NOT a.attisdropped);
+    found text;
+BEGIN
+    found := CASE
+        WHEN NOT has_installation AND NOT has_sync_guard AND NOT has_catalog_format THEN '1.0'
+        WHEN has_installation AND NOT has_sync_guard AND NOT has_catalog_format THEN '1.1'
+        WHEN has_installation AND has_sync_guard AND NOT has_catalog_format THEN '1.2'
+    END;
+    IF source IS NULL OR source NOT IN ('1.0', '1.1', '1.2') OR found IS DISTINCT FROM source THEN
+        RAISE EXCEPTION 'sql_saga: this update script is for sql_saga %, but the installed catalog has the layout of %',
+            coalesce(source, '(unknown)'), coalesce(found, 'no released version')
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Run ALTER EXTENSION sql_saga UPDATE without changing the installed extension scripts.';
+    END IF;
+END;
+$upgrade_source$;
+
+CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
+DO $native_guard_1_3$
+BEGIN
+    IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x) < (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array('1.1', '.')) AS x) THEN
+        RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version()
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.';
+    END IF;
+END;
+$native_guard_1_3$;
+
+SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('sql_saga 1.3 upgrade'));
+
+/* check_integrity and the mispairing report give the upgrade sequence in their hints (src/1k). */
+SELECT pg_catalog.set_config('sql_saga.integrity_context', 'update', true);
+
+/*
+ * sql_saga 1.0, 1.1 and 1.2 rename_following rewrite the catalog list of every XOR unique key sorted by name
+ * on any ALTER TABLE (1.0: also on GRANT and REVOKE), and the update scripts below issue such statements. So
+ * it is disabled for the duration of the update, before any catalog repair, and its recorded state is put back
+ * exactly at the end of the repairs fragment, after the 1.3 definition is in place. A disabled trigger stays
+ * disabled, and the final integrity gate refuses it with its repair. The state is kept in a transaction-local
+ * setting and only ever read back through a fixed list of codes.
+ */
+DO $record_rename_following$
+DECLARE
+    state "char";
+BEGIN
+    SELECT et.evtenabled INTO state FROM pg_catalog.pg_event_trigger AS et WHERE et.evtname = 'sql_saga_rename_following';
+    PERFORM pg_catalog.set_config('sql_saga.upgrade_rename_following_state', coalesce(state::text, 'missing'), true);
+    IF state IS NOT NULL AND state <> 'D' THEN
+        ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
+    END IF;
+END;
+$record_rename_following$;
+
+/*
+ * From 1.0 only: 1.0's event triggers act on every GRANT and REVOKE (its __internal_ddl_command_affects_managed_object
+ * answers true for them), and health_checks then re-validates managed view privileges, which refuses a base table
+ * granted before its views were created. The bootstrap below issues REVOKEs, so the 1.0 guard is replaced first with
+ * exactly the definition the frozen 1.0 to 1.1 part installs as its own first step (versions/sql_saga--1.0--1.1.sql:105);
+ * that part replaces it again with its real definition.
+ */
+DO $neutralize_1_0_event_triggers$
+BEGIN
+    IF pg_catalog.current_setting('sql_saga.upgrade_from', true) IS DISTINCT FROM '1.0' THEN
+        RETURN;
+    END IF;
+    CREATE OR REPLACE FUNCTION sql_saga.__internal_ddl_command_affects_managed_object()
+    RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog
+    AS $upgrade_guard$ SELECT false $upgrade_guard$;
+END;
+$neutralize_1_0_event_triggers$;
+
+/*
+ * Foreign key column pairing (tmp/fable_audit_v13.md W11, C2, C3, C4).
+ *
+ * A foreign key pairs its i-th child column (foreign_keys.column_names[i]) with the i-th column of the referenced
+ * unique key, in the order of the key's native constraint (conkey without the range column). These helpers give
+ * that order, read the pairing the managed objects actually implement (native temporal foreign key, or the
+ * referenced-side trigger arguments and the helper/CHECK of a regular foreign key), and build the diagnostic
+ * check_integrity reports when the two differ: sql_saga 1.0/1.1 sorted the catalog list of XOR keys, forced users
+ * to pass that sorted list to add_foreign_key, and paired their child columns with it.
+ */
+
+/*
+ * The stable columns (range column excluded) of a unique key in the order of its native constraint, or of its
+ * unique index for a predicated key; the catalog list when neither exists.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_unique_key_constraint_columns(unique_key_name name)
+RETURNS name[]
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_constraint_columns$
+    SELECT coalesce(
+        (SELECT pg_catalog.array_agg(a.attname ORDER BY k.n)
+         FROM pg_catalog.unnest(coalesce(
+                  (SELECT c.conkey FROM pg_catalog.pg_constraint AS c
+                   WHERE c.conrelid = t.oid AND c.conname = uk.unique_constraint AND c.contype IN ('p', 'u')),
+                  (SELECT i.indkey::smallint[] FROM pg_catalog.pg_index AS i
+                   JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+                   WHERE uk.key_type = 'predicated' AND i.indrelid = t.oid
+                     AND ic.relnamespace = t.relnamespace AND ic.relname = uk.unique_constraint)))
+              WITH ORDINALITY AS k (attnum, n)
+         JOIN pg_catalog.pg_attribute AS a ON a.attrelid = t.oid AND a.attnum = k.attnum
+         WHERE a.attname OPERATOR(pg_catalog.<>) e.range_column_name),
+        uk.column_names)
+    FROM sql_saga.unique_keys AS uk
+    LEFT JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    LEFT JOIN pg_catalog.pg_class AS t
+      ON t.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+    WHERE uk.unique_key_name = $1;
+$__internal_unique_key_constraint_columns$;
+
+/*
+ * The arguments of a trigger, from pg_trigger.tgargs: NUL-terminated byte strings, split while still bytea (text
+ * cannot hold NUL) and decoded one by one. Raises when tgargs is not in that format.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_trigger_arguments(tgargs bytea)
+RETURNS text[]
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_trigger_arguments$
+DECLARE
+    rest bytea := tgargs;
+    pos integer;
+    result text[] := ARRAY[]::text[];
+BEGIN
+    IF tgargs IS NULL THEN
+        RETURN NULL;
+    END IF;
+    WHILE pg_catalog.length(rest) > 0 LOOP
+        pos := 0;
+        FOR i IN 1 .. pg_catalog.length(rest) LOOP
+            IF pg_catalog.get_byte(rest, i - 1) = 0 THEN
+                pos := i;
+                EXIT;
+            END IF;
+        END LOOP;
+        IF pos = 0 THEN
+            RAISE EXCEPTION 'sql_saga: trigger arguments are not NUL-terminated';
+        END IF;
+        result := result || pg_catalog.convert_from(pg_catalog.substr(rest, 1, pos - 1), pg_catalog.getdatabaseencoding());
+        rest := pg_catalog.substr(rest, pos + 1);
+    END LOOP;
+    RETURN result;
+END;
+$__internal_trigger_arguments$;
+
+/*
+ * The referenced-key attnums (stable columns, then the range column) of the native foreign key that sql_saga 1.0
+ * and 1.1 created against an XOR unique key after their rename_following had rewritten its catalog list sorted by
+ * name: versions/sql_saga--1.0.sql:4986-5012 and --1.1.sql:6107-6133, "array_agg(DISTINCT a.attname ORDER BY
+ * a.attname)" over the constraint's columns, only for keys with mutually_exclusive_columns. attname is of type
+ * name, whose collation is "C". NULL for any other key: no other permutation was ever generated by sql_saga.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_historical_xor_confkey(unique_key_name name)
+RETURNS smallint[]
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_historical_xor_confkey$
+    SELECT (SELECT pg_catalog.array_agg(a.attnum ORDER BY a.attname)
+            FROM pg_catalog.pg_attribute AS a
+            WHERE a.attrelid = t.oid AND a.attname = ANY (uk.column_names) AND a.attnum > 0 AND NOT a.attisdropped)
+           || (SELECT a.attnum FROM pg_catalog.pg_attribute AS a
+               WHERE a.attrelid = t.oid AND a.attname = e.range_column_name AND a.attnum > 0 AND NOT a.attisdropped)
+    FROM sql_saga.unique_keys AS uk
+    JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
+    JOIN pg_catalog.pg_class AS t
+      ON t.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))
+    WHERE uk.unique_key_name = $1 AND uk.mutually_exclusive_columns IS NOT NULL;
+$__internal_historical_xor_confkey$;
+
+/*
+ * The (child column, referenced column) pairs a foreign key's managed objects implement, in the order of the
+ * child columns as the objects list them. Temporal: the native constraint (range columns excluded). Regular: the
+ * referenced-side update trigger's arguments (child and referenced column lists), else the child CHECK's helper
+ * call (its i-th argument goes to the helper's $i, which the helper body compares with one referenced column).
+ * Empty when the objects are missing or not in the shape sql_saga creates; check_integrity then reports them as
+ * noncanonical as before.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_foreign_key_implemented_pairs(foreign_key_name name)
+RETURNS TABLE (n integer, child_column name, referenced_column name, source text)
+LANGUAGE plpgsql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_foreign_key_implemented_pairs$
+#variable_conflict use_column
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    fk_era sql_saga.era;
+    uk_era sql_saga.era;
+    child_oid oid;
+    parent_oid oid;
+    con pg_catalog.pg_constraint;
+    trigger_args bytea;
+    args text[];
+    child_list name[];
+    parent_list name[];
+    helper oid;
+    helper_source text;
+    check_bin text;
+BEGIN
+    SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = $1;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    SELECT e.* INTO uk_era FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+    child_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name));
+    parent_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+    IF child_oid IS NULL OR parent_oid IS NULL THEN
+        RETURN;
+    END IF;
+
+    IF fk.type = 'temporal_to_temporal' THEN
+        SELECT e.* INTO fk_era FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name, e.era_name) = (fk.table_schema, fk.table_name, fk.fk_era_name);
+        SELECT c.* INTO con FROM pg_catalog.pg_constraint AS c
+        WHERE c.conrelid = child_oid AND c.conname = fk.foreign_key_name AND c.contype = 'f' AND c.confrelid = parent_oid;
+        IF NOT FOUND OR pg_catalog.cardinality(con.conkey) IS DISTINCT FROM pg_catalog.cardinality(con.confkey) THEN
+            RETURN;
+        END IF;
+        /* Only a pairing sql_saga created is read: the canonical one, or the historical XOR one. */
+        IF con.confkey IS DISTINCT FROM sql_saga.__internal_historical_xor_confkey(uk.unique_key_name) THEN
+            RETURN;
+        END IF;
+        RETURN QUERY
+            SELECT k.n::integer, ca.attname, pa.attname, 'native foreign key'::text
+            FROM unnest(con.conkey, con.confkey) WITH ORDINALITY AS k (child_attnum, parent_attnum, n)
+            JOIN pg_catalog.pg_attribute AS ca ON ca.attrelid = child_oid AND ca.attnum = k.child_attnum
+            JOIN pg_catalog.pg_attribute AS pa ON pa.attrelid = parent_oid AND pa.attnum = k.parent_attnum
+            WHERE ca.attname OPERATOR(pg_catalog.<>) fk_era.range_column_name
+              AND pa.attname OPERATOR(pg_catalog.<>) uk_era.range_column_name
+            ORDER BY k.n;
+        RETURN;
+    END IF;
+
+    /* Regular: the referenced-side update trigger pairs its child and referenced lists by position. */
+    SELECT t.tgargs INTO trigger_args FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = parent_oid AND t.tgname = fk.uk_update_trigger
+      AND t.tgfoid = 'sql_saga.uk_update_check_c()'::regprocedure;
+    IF trigger_args IS NOT NULL THEN
+        args := sql_saga.__internal_trigger_arguments(trigger_args);
+        child_list := args[4]::name[];
+        parent_list := args[10]::name[];
+        IF pg_catalog.cardinality(child_list) = pg_catalog.cardinality(parent_list) THEN
+            RETURN QUERY
+                SELECT k.n::integer, k.c, k.p, 'referenced-side trigger'::text
+                FROM unnest(child_list, parent_list) WITH ORDINALITY AS k (c, p, n)
+                ORDER BY k.n;
+        END IF;
+    END IF;
+
+    /* Regular (1.3): the referencing-side constraint trigger carries the same paired lists. */
+    SELECT t.tgargs INTO trigger_args FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = child_oid AND t.tgname = fk.fk_check_constraint
+      AND t.tgfoid = pg_catalog.to_regprocedure('sql_saga.regular_fk_check_c()');
+    IF trigger_args IS NOT NULL THEN
+        args := sql_saga.__internal_trigger_arguments(trigger_args);
+        child_list := args[4]::name[];
+        parent_list := args[10]::name[];
+        IF pg_catalog.cardinality(child_list) = pg_catalog.cardinality(parent_list) THEN
+            RETURN QUERY
+                SELECT k.n::integer, k.c, k.p, 'referencing-side trigger'::text
+                FROM unnest(child_list, parent_list) WITH ORDINALITY AS k (c, p, n)
+                ORDER BY k.n;
+        END IF;
+    END IF;
+
+    /* Regular (pre-1.3): the child CHECK passes its i-th column to the helper's $i; the helper compares $i with one column. */
+    helper := pg_catalog.to_regprocedure(fk.fk_helper_function);
+    SELECT p.prosrc INTO helper_source FROM pg_catalog.pg_proc AS p WHERE p.oid = helper;
+    SELECT c.conbin::text INTO check_bin FROM pg_catalog.pg_constraint AS c
+    WHERE c.conrelid = child_oid AND c.conname = fk.fk_check_constraint AND c.contype = 'c';
+    IF helper_source IS NULL OR check_bin IS NULL OR check_bin NOT LIKE '%:funcid ' || helper::text || ' %' THEN
+        RETURN;
+    END IF;
+    RETURN QUERY
+        WITH args AS (
+            SELECT a.n::integer AS n, ca.attname
+            FROM pg_catalog.regexp_matches(check_bin, ':varattno ([0-9]+)', 'g') WITH ORDINALITY AS a (m, n)
+            JOIN pg_catalog.pg_attribute AS ca ON ca.attrelid = child_oid AND ca.attnum = a.m[1]::smallint
+        ), body AS (
+            SELECT b.m[2]::integer AS n,
+                   CASE WHEN pg_catalog.left(b.m[1], 1) = '"'
+                        THEN pg_catalog.replace(pg_catalog.substr(b.m[1], 2, pg_catalog.length(b.m[1]) - 2), '""', '"')
+                        ELSE b.m[1] END::name AS attname
+            -- 1.0: "uk.<col> = $i"; 1.1 and later: "uk.<col> OPERATOR(<schema>.=) $i". Identifiers as %I quotes them.
+            FROM pg_catalog.regexp_matches(helper_source,
+                     'uk\.("(?:[^"]|"")*"|[^\s"=()]+)\s*(?:=|OPERATOR\((?:"(?:[^"]|"")*"|[^\s"()]+)\.=\))\s*\$([0-9]+)', 'g') AS b (m)
+        )
+        SELECT args.n, args.attname, body.attname, 'child check and helper'::text
+        FROM args JOIN body USING (n)
+        ORDER BY args.n;
+END;
+$__internal_foreign_key_implemented_pairs$;
+
+/*
+ * When a foreign key's managed objects pair a child column with another referenced column than the unique key's
+ * constraint order pairs it with, the first such child column (in foreign_keys.column_names order), the column it
+ * is paired with, and the column it should be paired with. Only reported when the objects reference exactly the
+ * key's columns and the foreign key's child columns (otherwise they are noncanonical, not mispaired).
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_foreign_key_mispairing(foreign_key_name name)
+RETURNS TABLE (child_column name, implemented_column name, expected_column name)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_foreign_key_mispairing$
+    WITH fk AS (
+        SELECT f.*, sql_saga.__internal_unique_key_constraint_columns(f.unique_key_name) AS key_columns
+        FROM sql_saga.foreign_keys AS f
+        WHERE f.foreign_key_name = $1
+    ), expected AS (
+        SELECT e.n, e.c AS child_column, e.k AS expected_column
+        FROM fk, unnest(fk.column_names, fk.key_columns) WITH ORDINALITY AS e (c, k, n)
+    ), implemented AS (
+        SELECT p.source,
+               pg_catalog.array_agg(p.child_column ORDER BY p.n) AS children,
+               pg_catalog.array_agg(p.referenced_column ORDER BY p.n) AS parents
+        FROM sql_saga.__internal_foreign_key_implemented_pairs($1) AS p
+        GROUP BY p.source
+    )
+    SELECT x.child_column, pairs.parent, x.expected_column
+    FROM fk
+    JOIN implemented AS i ON true
+    CROSS JOIN LATERAL unnest(i.children, i.parents) AS pairs (child, parent)
+    JOIN expected AS x ON x.child_column = pairs.child
+    WHERE pg_catalog.cardinality(fk.column_names) = pg_catalog.cardinality(fk.key_columns)
+      AND ARRAY(SELECT c FROM pg_catalog.unnest(i.children) AS c ORDER BY c COLLATE "C")
+        = ARRAY(SELECT c FROM pg_catalog.unnest(fk.column_names) AS c ORDER BY c COLLATE "C")
+      AND ARRAY(SELECT c FROM pg_catalog.unnest(i.parents) AS c ORDER BY c COLLATE "C")
+        = ARRAY(SELECT c FROM pg_catalog.unnest(fk.key_columns) AS c ORDER BY c COLLATE "C")
+      AND pairs.parent IS DISTINCT FROM x.expected_column
+    ORDER BY CASE i.source WHEN 'native foreign key' THEN 0 WHEN 'referenced-side trigger' THEN 1 ELSE 2 END, x.n
+    LIMIT 1;
+$__internal_foreign_key_mispairing$;
+
+/*
+ * The repair of a mispaired foreign key: drop it by name, then add it again with the same name, era, match type,
+ * actions and object names, its child columns paired by position with the unique key's columns in constraint order.
+ * An option is only spelled out when it differs from what add_foreign_key would use by default (computed with the
+ * same naming code), so the add part recreates the same foreign key. A name equal to the default sql_saga 1.0/1.1
+ * derived from the sorted catalog list of an XOR key also counts as default. Custom object names exist only for
+ * regular foreign keys and are passed to add_regular_foreign_key (add_foreign_key has no parameters for them).
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_foreign_key_repair_sql(foreign_key_name name)
+RETURNS text
+LANGUAGE plpgsql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_foreign_key_repair_sql$
+#variable_conflict use_variable
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    key_columns name[];
+    child_name text;
+    parent_name text;
+    child_list text;
+    options text := '';
+    custom_names text := '';
+    needs_regular_form boolean := false;
+BEGIN
+    SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = __internal_foreign_key_repair_sql.foreign_key_name;
+    SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    key_columns := sql_saga.__internal_unique_key_constraint_columns(uk.unique_key_name);
+    child_name := pg_catalog.format('%I.%I', fk.table_schema, fk.table_name);
+    parent_name := pg_catalog.format('%I.%I', uk.table_schema, uk.table_name);
+    child_list := (SELECT pg_catalog.string_agg(pg_catalog.quote_literal(c), ', ' ORDER BY o)
+                   FROM pg_catalog.unnest(fk.column_names) WITH ORDINALITY AS u (c, o));
+
+    IF fk.type = 'temporal_to_temporal' THEN
+        options := options || pg_catalog.format(', fk_era_name => %L', fk.fk_era_name);
+    END IF;
+    IF fk.match_type IS DISTINCT FROM 'SIMPLE' THEN
+        options := options || pg_catalog.format(', match_type => %L', fk.match_type);
+    END IF;
+    IF fk.update_action IS DISTINCT FROM 'NO ACTION' THEN
+        options := options || pg_catalog.format(', update_action => %L', fk.update_action);
+    END IF;
+    IF fk.delete_action IS DISTINCT FROM 'NO ACTION' THEN
+        options := options || pg_catalog.format(', delete_action => %L', fk.delete_action);
+    END IF;
+    options := options || pg_catalog.format(', foreign_key_name => %L', fk.foreign_key_name);
+
+    IF fk.type = 'regular_to_temporal' THEN
+        IF fk.fk_check_constraint IS DISTINCT FROM sql_saga.__internal_make_name(ARRAY[fk.table_name] || fk.column_names || ARRAY['check']::name[]) THEN
+            custom_names := custom_names || pg_catalog.format(', fk_check_constraint => %L', fk.fk_check_constraint);
+        END IF;
+        /* No fk_helper_function option: since 1.3 add_regular_foreign_key creates no helper and refuses the argument. */
+        IF fk.uk_update_trigger IS DISTINCT FROM sql_saga.__internal_make_name(ARRAY[fk.foreign_key_name], 'uk_update') THEN
+            custom_names := custom_names || pg_catalog.format(', uk_update_trigger => %L', fk.uk_update_trigger);
+        END IF;
+        IF fk.uk_delete_trigger IS DISTINCT FROM sql_saga.__internal_make_name(ARRAY[fk.foreign_key_name], 'uk_delete') THEN
+            custom_names := custom_names || pg_catalog.format(', uk_delete_trigger => %L', fk.uk_delete_trigger);
+        END IF;
+    END IF;
+    IF fk.type = 'regular_to_temporal' AND custom_names <> '' THEN
+        needs_regular_form := true;
+    END IF;
+    /* No index recorded: none was created (create_index => false, or an existing index served the key). */
+    IF fk.fk_index_name IS NULL THEN
+        custom_names := custom_names || ', create_index => false';
+    END IF;
+
+    IF needs_regular_form THEN
+        RETURN pg_catalog.format(
+            'SELECT sql_saga.drop_foreign_key_by_name(%L, %L); SELECT sql_saga.add_regular_foreign_key(%L, ARRAY[%s], unique_key_name => %L%s%s)',
+            child_name, fk.foreign_key_name, child_name, child_list, uk.unique_key_name, options, custom_names);
+    END IF;
+    RETURN pg_catalog.format(
+        'SELECT sql_saga.drop_foreign_key_by_name(%L, %L); SELECT sql_saga.add_foreign_key(%L, ARRAY[%s], %L, ARRAY[%s]%s%s)',
+        child_name, fk.foreign_key_name, child_name, child_list, parent_name,
+        (SELECT pg_catalog.string_agg(pg_catalog.quote_literal(c), ', ' ORDER BY o) FROM pg_catalog.unnest(key_columns) WITH ORDINALITY AS u (c, o)),
+        options, custom_names);
+END;
+$__internal_foreign_key_repair_sql$;
+
+/*
+ * The integrity report for a mispaired foreign key: message (with the drop/add repair, which pairs by position
+ * against the key's constraint order) and hint. In the update's final gate (sql_saga.integrity_context = 'update',
+ * set locally by the extension update script) the hint gives the upgrade sequence instead, because the add part
+ * can only run on the new version. NULL when the foreign key is not mispaired.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_foreign_key_mispairing_report(foreign_key_name name, OUT message text, OUT hint text)
+LANGUAGE plpgsql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_foreign_key_mispairing_report$
+#variable_conflict use_variable
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    m record;
+    key_columns name[];
+    child_name text;
+    parent_name text;
+    repair text;
+    scan text;
+BEGIN
+    SELECT * INTO m FROM sql_saga.__internal_foreign_key_mispairing(foreign_key_name);
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    SELECT f.* INTO fk FROM sql_saga.foreign_keys AS f WHERE f.foreign_key_name = __internal_foreign_key_mispairing_report.foreign_key_name;
+    SELECT u.* INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    key_columns := sql_saga.__internal_unique_key_constraint_columns(uk.unique_key_name);
+    child_name := pg_catalog.format('%I.%I', fk.table_schema, fk.table_name);
+    parent_name := pg_catalog.format('%I.%I', uk.table_schema, uk.table_name);
+
+    repair := sql_saga.__internal_foreign_key_repair_sql(fk.foreign_key_name);
+
+    message := pg_catalog.format(
+        'sql_saga: integrity violation for foreign key %s: pairs child column %s with referenced column %s, but unique key %s pairs it with referenced column %s; repair with %s',
+        pg_catalog.quote_ident(fk.foreign_key_name), pg_catalog.quote_ident(m.child_column), pg_catalog.quote_ident(m.implemented_column),
+        pg_catalog.quote_ident(uk.unique_key_name), pg_catalog.quote_ident(m.expected_column), repair);
+
+    hint := 'The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding.';
+    IF pg_catalog.current_setting('sql_saga.integrity_context', true) IS NOT DISTINCT FROM 'update' THEN
+        hint := hint || ' To upgrade: on the current version run the drop_foreign_key_by_name statement, then ALTER EXTENSION sql_saga UPDATE, then run the add_foreign_key statement on the new version. Repeat the drop for every other mispaired foreign key the update reports.';
+    END IF;
+    IF fk.type = 'regular_to_temporal' THEN
+        scan := pg_catalog.format('SELECT fk.* FROM %s AS fk WHERE %s AND NOT EXISTS (SELECT FROM %s AS uk WHERE %s)',
+            child_name,
+            (SELECT pg_catalog.string_agg(pg_catalog.format('fk.%I IS NOT NULL', c), ' AND ' ORDER BY o)
+             FROM pg_catalog.unnest(fk.column_names) WITH ORDINALITY AS u (c, o)),
+            parent_name,
+            (SELECT pg_catalog.string_agg(pg_catalog.format('uk.%I = fk.%I', k, c), ' AND ' ORDER BY o)
+             FROM unnest(fk.column_names, key_columns) WITH ORDINALITY AS u (c, k, o)));
+        hint := hint || ' The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with ' || scan;
+    ELSE
+        hint := hint || ' The foreign key may have accepted rows that reference a missing key; add_foreign_key creates and validates the replacement native foreign key and refuses while they exist.';
+    END IF;
+END;
+$__internal_foreign_key_mispairing_report$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_constraint_columns(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_trigger_arguments(bytea) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_historical_xor_confkey(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_foreign_key_implemented_pairs(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_foreign_key_mispairing(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_foreign_key_repair_sql(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_foreign_key_mispairing_report(name) FROM PUBLIC;
+
+/*
+ * Foreign keys whose managed objects pair child columns with other referenced columns than the unique key's
+ * constraint order (sql_saga 1.0/1.1 created them against a catalog list of an XOR key it had sorted, or a
+ * child CHECK got its arguments in another order, W11) are refused here, while every object that shows the
+ * pairing is untouched, with the exact repair and the upgrade sequence. The intended pairing cannot be known,
+ * so nothing is re-paired automatically. Same order as check_integrity.
+ */
+DO $refuse_mispaired_foreign_keys$
+DECLARE
+    fk record;
+    report record;
+BEGIN
+    FOR fk IN
+        SELECT f.foreign_key_name
+        FROM sql_saga.foreign_keys AS f
+        ORDER BY f.table_schema COLLATE "C", f.table_name COLLATE "C", f.foreign_key_name COLLATE "C"
+    LOOP
+        SELECT * INTO report FROM sql_saga.__internal_foreign_key_mispairing_report(fk.foreign_key_name);
+        IF report.message IS NOT NULL THEN
+            RAISE EXCEPTION USING MESSAGE = report.message, HINT = report.hint, ERRCODE = 'object_not_in_prerequisite_state';
+        END IF;
+    END LOOP;
+END;
+$refuse_mispaired_foreign_keys$;
+
+/*
+ * The catalog list of an XOR unique key back in the order of its constraint, where an earlier rename_following
+ * only re-sorted it (same set of names). A list whose names differ from the constraint's (a rename that was
+ * not followed) is left alone: check_integrity reports it.
+ */
+DO $restore_xor_key_order$
+DECLARE
+    k record;
+BEGIN
+    FOR k IN
+        SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.column_names AS catalog_columns,
+               sql_saga.__internal_unique_key_constraint_columns(uk.unique_key_name) AS constraint_columns
+        FROM sql_saga.unique_keys AS uk
+        WHERE uk.mutually_exclusive_columns IS NOT NULL
+        ORDER BY uk.unique_key_name COLLATE "C"
+    LOOP
+        CONTINUE WHEN k.constraint_columns IS NULL OR k.catalog_columns = k.constraint_columns
+                   OR pg_catalog.cardinality(k.catalog_columns) <> pg_catalog.cardinality(k.constraint_columns)
+                   OR NOT (k.catalog_columns @> k.constraint_columns AND k.constraint_columns @> k.catalog_columns);
+        UPDATE sql_saga.unique_keys AS uk
+        SET column_names = k.constraint_columns
+        WHERE uk.unique_key_name = k.unique_key_name;
+        RAISE NOTICE 'sql_saga: Restored the column order of unique key % on table % to its constraint order (%), from (%)',
+            pg_catalog.quote_ident(k.unique_key_name), pg_catalog.format('%I.%I', k.table_schema, k.table_name),
+            pg_catalog.array_to_string(k.constraint_columns, ', '), pg_catalog.array_to_string(k.catalog_columns, ', ');
+    END LOOP;
+END;
+$restore_xor_key_order$;
+
+/*
+ * From 1.0 only: the frozen 1.0 to 1.1 part drops and recreates every managed view ($reconcile_updatable_views$).
+ * An object of the user's that depends on one (a view, a rule, a function using its row type) would be lost or
+ * make that DROP fail obscurely, so the update refuses first, naming it. sql_saga never rebuilds user objects.
+ */
+DO $refuse_view_dependents_1_0$
+DECLARE
+    v record;
+BEGIN
+    IF pg_catalog.current_setting('sql_saga.upgrade_from', true) IS DISTINCT FROM '1.0' THEN
+        RETURN;
+    END IF;
+    FOR v IN
+        WITH managed AS (
+            SELECT uv.view_type, pg_catalog.to_regclass(pg_catalog.format('%I.%I', uv.view_schema, uv.view_name))::oid AS view_oid
+            FROM sql_saga.updatable_view AS uv
+        ), own_type AS (
+            SELECT m.view_oid, t.oid AS type_oid FROM managed AS m JOIN pg_catalog.pg_type AS t ON t.typrelid = m.view_oid
+            UNION ALL
+            SELECT m.view_oid, ta.oid FROM managed AS m
+            JOIN pg_catalog.pg_type AS t ON t.typrelid = m.view_oid
+            JOIN pg_catalog.pg_type AS ta ON ta.oid = t.typarray
+        )
+        SELECT m.view_type, m.view_oid, dep.dependent
+        FROM managed AS m
+        CROSS JOIN LATERAL (
+            SELECT pg_catalog.pg_describe_object(
+                       CASE WHEN d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass THEN 'pg_catalog.pg_class'::pg_catalog.regclass ELSE d.classid END,
+                       CASE WHEN d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass THEN rw.ev_class ELSE d.objid END,
+                       CASE WHEN d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass THEN 0 ELSE d.objsubid END) AS dependent
+            FROM pg_catalog.pg_depend AS d
+            LEFT JOIN pg_catalog.pg_rewrite AS rw ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND rw.oid = d.objid
+            WHERE ((d.refclassid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.refobjid = m.view_oid)
+                   OR (d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                       AND d.refobjid IN (SELECT ot.type_oid FROM own_type AS ot WHERE ot.view_oid = m.view_oid)))
+              AND d.deptype NOT IN ('i', 'a', 'e', 'x')
+              AND NOT (d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND rw.ev_class = m.view_oid)
+              AND NOT (d.classid = 'pg_catalog.pg_trigger'::pg_catalog.regclass
+                       AND EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.oid = d.objid AND t.tgrelid = m.view_oid))
+              AND NOT (d.classid = 'pg_catalog.pg_attrdef'::pg_catalog.regclass
+                       AND EXISTS (SELECT FROM pg_catalog.pg_attrdef AS ad WHERE ad.oid = d.objid AND ad.adrelid = m.view_oid))
+              AND NOT (d.classid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                       AND d.objid IN (SELECT ot.type_oid FROM own_type AS ot WHERE ot.view_oid = m.view_oid))
+              AND NOT (d.classid = 'pg_catalog.pg_class'::pg_catalog.regclass AND d.objid = m.view_oid)
+            UNION ALL
+            SELECT pg_catalog.pg_describe_object('pg_catalog.pg_rewrite'::pg_catalog.regclass, r.oid, 0)
+            FROM pg_catalog.pg_rewrite AS r
+            WHERE r.ev_class = m.view_oid AND r.rulename <> '_RETURN'
+        ) AS dep
+        WHERE m.view_oid IS NOT NULL
+        ORDER BY m.view_oid::pg_catalog.regclass::text COLLATE "C", dep.dependent COLLATE "C"
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'sql_saga: cannot update from 1.0: the update drops and recreates the managed % view %, and % depends on that view',
+            v.view_type, v.view_oid::pg_catalog.regclass, v.dependent
+            USING ERRCODE = 'dependent_objects_still_exist',
+                  HINT = 'Drop the dependent object, run ALTER EXTENSION sql_saga UPDATE, then recreate the dependent object.';
+    END LOOP;
+END;
+$refuse_view_dependents_1_0$;
 /*
  * Validate every cataloged regular-FK helper before the update mutates any function, cache object,
  * owner, security property, ACL, or managed family. Only the exact released 1.0 state and the exact
@@ -20,7 +645,7 @@ BEGIN
     FOR h IN
         SELECT fk.fk_helper_function, uk.table_schema, uk.table_name,
                pg_catalog.array_agg(c.name ORDER BY c.ordinality) AS stable_columns
-        FROM sql_saga.foreign_keys AS fk
+        FROM (SELECT DISTINCT f.fk_helper_function, f.unique_key_name, f.type FROM sql_saga.foreign_keys AS f) AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         JOIN sql_saga.era AS e
           ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
@@ -100,7 +725,7 @@ BEGIN
 END;
 $validate_fk_helpers$;
 CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
-DO $native_guard$ BEGIN IF sql_saga.native_library_version() <> '1.1' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; $native_guard$;
+DO $native_guard$ BEGIN IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x) < (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array('1.1', '.')) AS x) THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; $native_guard$;
 SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('sql_saga 1.0 to 1.1 upgrade'));
 CREATE OR REPLACE FUNCTION sql_saga.__internal_ddl_command_affects_managed_object()
 RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog
@@ -10139,6 +10764,63 @@ $function$;
  * call these routines as the caller, whose rights on the base table decide what happens; so the
  * routines themselves must stay executable by PUBLIC (tmp/design_final.md section 5).
  */
+DO $acl_guard_1_0$
+DECLARE
+    r record;
+BEGIN
+    -- The historical DO block that follows selects routines by name. Refuse any routine it would reach beyond the
+    -- six released ones: it would get PUBLIC EXECUTE recorded as its initial privileges.
+    FOR r IN
+        SELECT p.oid::pg_catalog.regprocedure AS routine
+        FROM pg_catalog.pg_proc AS p
+        WHERE p.pronamespace = 'sql_saga'::pg_catalog.regnamespace
+          AND p.proname IN ('temporal_merge', 'temporal_merge_plan', 'temporal_merge_plan_native',
+                            'temporal_merge_execute', 'temporal_merge_drop_temp_tables',
+                            'temporal_merge_executor_introspect')
+          AND p.oid <> ALL (ARRAY[
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_drop_temp_tables()'),
+            pg_catalog.to_regprocedure('sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)')]::pg_catalog.oid[])
+        ORDER BY 1
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'sql_saga: routine % is not part of sql_saga 1.0, but the update from 1.0 would grant EXECUTE on it to PUBLIC', r.routine
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'The update grants EXECUTE to PUBLIC on every routine in schema sql_saga with this name and records it as the extension''s initial privileges. If you choose to, rename or move this routine, run ALTER EXTENSION sql_saga UPDATE, then rename or move it back. doc/upgrade.md has examples.';
+    END LOOP;
+    FOR r IN
+        SELECT s.routine, p.proacl
+        FROM pg_catalog.unnest(ARRAY[
+            'sql_saga.for_portion_of_trigger()',
+            'sql_saga.current_view_trigger()',
+            'sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)',
+            'sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean)',
+            'sql_saga.temporal_merge_plan_native(oid,oid,text,text,text[],text,text,text,jsonb,text[],boolean,boolean)',
+            'sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean)',
+            'sql_saga.temporal_merge_drop_temp_tables()',
+            'sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],text,text)'
+        ]) WITH ORDINALITY AS s(routine, ord)
+        LEFT JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(s.routine)
+        WHERE p.oid IS NULL
+           OR (SELECT pg_catalog.array_agg(ROW(a.grantor = p.proowner, a.grantee, a.privilege_type, a.is_grantable)::text
+                                           ORDER BY a.grantee, a.privilege_type)
+               FROM pg_catalog.aclexplode(COALESCE(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a)
+              IS DISTINCT FROM
+              (SELECT pg_catalog.array_agg(ROW(true, g, 'EXECUTE', false)::text ORDER BY g)
+               FROM pg_catalog.unnest(ARRAY[0::pg_catalog.oid, p.proowner]) AS g)
+        ORDER BY s.ord
+        LIMIT 1
+    LOOP
+        RAISE EXCEPTION 'sql_saga: routine % has privileges % that differ from the standard sql_saga privileges (EXECUTE for its owner and PUBLIC); the update from 1.0 cannot carry them over',
+            r.routine, COALESCE(r.proacl::text, '<missing>')
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'The update would record the current privileges as the extension''s initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE, then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples.';
+    END LOOP;
+END;
+$acl_guard_1_0$;
 GRANT EXECUTE ON FUNCTION sql_saga.for_portion_of_trigger() TO PUBLIC;
 GRANT EXECUTE ON FUNCTION sql_saga.current_view_trigger() TO PUBLIC;
 DO $grant_temporal_merge$
@@ -10360,3 +11042,19 @@ BEGIN
     END LOOP;
 END;
 $detach_dynamic$;
+/* 3. sql_saga_rename_following back in the state the preamble recorded (a disabled one stays disabled). */
+DO $restore_rename_following$
+DECLARE
+    state text := pg_catalog.current_setting('sql_saga.upgrade_rename_following_state', true);
+BEGIN
+    CASE state
+        WHEN 'O' THEN ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
+        WHEN 'A' THEN ALTER EVENT TRIGGER sql_saga_rename_following ENABLE ALWAYS;
+        WHEN 'R' THEN ALTER EVENT TRIGGER sql_saga_rename_following ENABLE REPLICA;
+        WHEN 'D', 'missing' THEN NULL; -- the final integrity gate refuses it, with its repair
+        ELSE
+            RAISE EXCEPTION 'sql_saga: the update lost the recorded state of event trigger sql_saga_rename_following'
+                USING ERRCODE = 'internal_error';
+    END CASE;
+END;
+$restore_rename_following$;

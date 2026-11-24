@@ -126,7 +126,7 @@ is covered by these two *contiguous* `establishment` rows:
 You can build `sql_saga` from source within your own Docker image. `sql_saga` requires PostgreSQL 18.
 `make install` installs the `sql_saga` extension and its two internal shared libraries (`sql_saga` in C
 and `sql_saga_native` in Rust). Building needs a Rust toolchain, libclang and Python 3 (standard library
-only, to generate the extension update SQL scripts); `cargo-pgrx` is not required. Only
+only, to generate the current release's update step); `cargo-pgrx` is not required. Only
 `CREATE EXTENSION sql_saga;` is used: `sql_saga_native` is not an extension. A multi-stage
 build keeps the toolchains out of the runtime image:
 
@@ -1140,7 +1140,7 @@ privileges were changed is refused with the exact statements to re-apply them; s
 
 For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./doc/api.md).
 
-Operators upgrading an existing 1.0 or 1.1 installation should follow the [sql_saga 1.2 upgrade runbook](./doc/upgrade.md).
+Operators upgrading an existing installation (any release from 1.0) should follow the [upgrade guide](./doc/upgrade.md).
 
 ## Usage
 

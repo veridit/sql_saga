@@ -78,19 +78,18 @@ assert_no_cascading_ddl "$body"
         self.assertEqual(self.scan(sql.replace('END $migration$',
                          'TRUNCATE x CASCADE; END $migration$')).returncode, 1)
 
-    def test_all_actual_generated_scripts(self):
-        # Every direct update the current release ships, from sql_saga.control's default_version.
+    def test_all_actual_update_steps(self):
+        # Every update step the package ships: the released steps in versions/ and the new one built from src/.
         target = re.search(r"default_version\s*=\s*'([^']+)'", (ROOT / 'sql_saga.control').read_text()).group(1)
-        sources = [p.name.split('--')[1] for p in sorted((ROOT / 'versions').glob('sql_saga--[0-9]*.[0-9]*.sql'))
-                   if p.name.count('--') == 1]
-        sources = [s[:-len('.sql')] for s in sources]
-        self.assertIn('1.0', sources)
-        subprocess.run(['make', 'sql_saga--%s.sql' % target] + [
-            'sql_saga--%s--%s.sql' % (v, target) for v in sources],
-            cwd=ROOT, check=True, capture_output=True, text=True)
-        for version in sources:
-            with self.subTest(version=version):
-                sql = (ROOT / ('sql_saga--%s--%s.sql' % (version, target))).read_text()
+        subprocess.run(['make', 'sql_saga--%s.sql' % target], cwd=ROOT, check=True, capture_output=True, text=True)
+        built = subprocess.run(['make', '-s', '--no-print-directory', 'print-UPDATE_STEP'], cwd=ROOT, check=True,
+                               capture_output=True, text=True).stdout.strip()
+        subprocess.run(['make', built], cwd=ROOT, check=True, capture_output=True, text=True)
+        steps = sorted((ROOT / 'versions').glob('sql_saga--*--*.sql')) + [ROOT / built]
+        self.assertIn('sql_saga--1.0--1.1.sql', [p.name for p in steps])
+        for path in steps:
+            with self.subTest(step=path.name):
+                sql = path.read_text()
                 result = self.scan(sql)
                 self.assertEqual(result.returncode, 0, result)
                 self.assertIn('PASS:', result.stdout)
@@ -111,8 +110,8 @@ assert_no_cascading_ddl "$body"
         self.assertEqual(result.returncode, 2, result)
         self.assertNotIn('PASS:', result.stdout)
 
-    def test_both_harness_paths_use_checked_dispatch(self):
-        self.assertEqual(HARNESS.count('assert_no_cascading_ddl "$body"'), 2)
+    def test_harness_uses_checked_dispatch(self):
+        self.assertEqual(HARNESS.count('assert_no_cascading_ddl "$body"'), 1)
         self.assertNotIn('[[:<:]]', HARNESS)
 
 

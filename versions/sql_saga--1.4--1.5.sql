@@ -2,7 +2,7 @@
 CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
 DO $native_guard_1_5$
 BEGIN
-    IF sql_saga.native_library_version() <> '1.5' THEN
+    IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x) < (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array('1.5', '.')) AS x) THEN
         RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.5', sql_saga.native_library_version()
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Install the sql_saga 1.5 native library and restart PostgreSQL before retrying ALTER EXTENSION.';
@@ -328,4 +328,12 @@ BEGIN
     RETURN NEW;
 END;
 $for_portion_of_trigger$;
-SELECT sql_saga.check_integrity();
+DO $last_step_gate$
+BEGIN
+    IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x)
+       = (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(
+              (SELECT e.extversion FROM pg_catalog.pg_extension AS e WHERE e.extname = 'sql_saga'), '.')) AS x) THEN
+        PERFORM sql_saga.check_integrity();
+    END IF;
+END;
+$last_step_gate$;

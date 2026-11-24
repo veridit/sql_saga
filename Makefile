@@ -2,28 +2,19 @@ MODULE_big = sql_saga
 EXTENSION = sql_saga
 EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-# The current install script and the update scripts to it are generated. Released install scripts and
-# hand-written update scripts are immutable release artifacts kept in versions/. Never modify an artifact
-# after release.
-# Python 3 (standard library only) runs the update-script generator. PGXS's Makefile.global sets PYTHON to the
-# interpreter PostgreSQL was configured with, which may not exist here, so this has its own name.
+# The current install script and the update step to it are generated; every released install script and update step
+# is kept in versions/ and never modified after release (doc/design/update-chain.md). ALTER EXTENSION sql_saga UPDATE
+# runs the steps from the installed version to EXTVERSION in sequence, in one transaction.
+# Python 3 (standard library only) runs the step generator. PGXS's Makefile.global sets PYTHON to the interpreter
+# PostgreSQL was configured with, which may not exist here, so this has its own name.
 SQL_SAGA_PYTHON ?= python3
-# Each released tag carries its own Makefile, so only the current version's rules live here (the upgrade test and
-# released_tree.py build older releases from their tags with `git archive`).
-ifeq ($(EXTVERSION),1.13)
-# Direct single-hop updates from every release: devops/generate_update_scripts_1_13.py holds the 1.13 release data
-# (SHA-256 of the frozen 1.12 artifacts and the routines changed since 1.12, devops/upgrade_1_13_repairs.sql), and
-# devops/direct_update.py builds the scripts.
-DIRECT_UPDATE = $(foreach v,1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10 1.11 1.12,$(EXTENSION)--$(v)--1.13.sql)
-UPDATE_GENERATOR = devops/generate_update_scripts_1_13.py
-UPDATE_GENERATOR_INPUTS = $(UPDATE_GENERATOR) devops/direct_update.py devops/generate_update_scripts_1_4.py devops/generate_update_scripts.py devops/upgrade_1_13_repairs.sql $(wildcard versions/*.sql src/[0-9][a-z]_*.sql)
-DATA = $(wildcard versions/*.sql) $(DIRECT_UPDATE) $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
-else
-$(error no update-script generation rule for EXTVERSION $(EXTVERSION))
-endif
+# The previous release: the newest install script in versions/ (the version itself lives only in sql_saga.control).
+PREVIOUS_VERSION = $(shell ls versions | sed -n 's/^$(EXTENSION)--\([0-9.]*\)\.sql$$/\1/p' | sort -t. -k1,1n -k2,2n | grep -vx '$(EXTVERSION)' | tail -1)
+UPDATE_STEP = $(EXTENSION)--$(PREVIOUS_VERSION)--$(EXTVERSION).sql
+DATA = $(wildcard versions/*.sql) $(UPDATE_STEP) $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
 
 # Add generated scripts to EXTRA_CLEAN so they are removed by `make clean`. Frozen versions/ files never are.
-EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE) .update_scripts_$(EXTVERSION).stamp
+EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql $(UPDATE_STEP)
 
 DOCS = README.md
 #README.html: README.md
@@ -65,12 +56,19 @@ include $(PGXS)
 
 # Redefine the `all` target to build both the C library (SHLIB) and our
 # generated SQL script. PGXS provides the rule to build SHLIB.
-all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE)
+all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql $(UPDATE_STEP)
 
 # Add the generated SQL file as a direct dependency of the `install` target.
 # This ensures it is always rebuilt if its source files have changed before
 # tests are run.
-install: $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE)
+install: $(EXTENSION)--$(EXTVERSION).sql $(UPDATE_STEP) remove-stale-scripts
+
+# Until 1.13 every release installed direct update scripts (sql_saga--1.0--1.13.sql, ...). Left behind by an earlier
+# `make install`, one would give PostgreSQL a shorter update path than the chain, through a script that refuses the
+# newer native library. Install exactly this package's scripts (a package manager removes them the same way).
+.PHONY: remove-stale-scripts
+remove-stale-scripts:
+	rm -f '$(DESTDIR)$(datadir)/extension/$(EXTENSION)--'*.sql
 
 # ---------------------------------------------------------------------------
 # Native (Rust/pgrx) planner library: an INTERNAL part of sql_saga.
@@ -131,36 +129,23 @@ clean-native:
 $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][a-z]_*.sql)
 	cat $^ > $@
 
-# One generator run validates and builds every update script before publishing any, then replaces each file
-# atomically; the stamp is written only on success. The stamp makes that a single recipe
-# under GNU make 3.81, which lacks grouped targets. If any generated script is missing when make starts, the
-# stamp is forced out of date, so all are regenerated together by that one recipe (parallel safe).
-UPDATE_SCRIPTS_MISSING = $(filter-out $(wildcard $(DIRECT_UPDATE)),$(DIRECT_UPDATE))
-$(DIRECT_UPDATE): .update_scripts_$(EXTVERSION).stamp
-	@test -f '$@'
-.update_scripts_$(EXTVERSION).stamp: $(UPDATE_GENERATOR_INPUTS) $(if $(UPDATE_SCRIPTS_MISSING),update_scripts_force)
-	$(SQL_SAGA_PYTHON) $(UPDATE_GENERATOR) --src src --versions versions --devops devops --outdir . --extversion $(EXTVERSION)
-	touch '$@'
-	@# GNU make 4 compares sub-second mtimes: the scripts, written before the stamp, would look stale.
-	touch -r '$@' $(DIRECT_UPDATE)
-.PHONY: update_scripts_force
-update_scripts_force:
+# The update step from the previous release: the routines that changed between its install script and src/, and
+# devops/update_step.sql for everything else (devops/update_step.py).
+$(UPDATE_STEP): versions/$(EXTENSION)--$(PREVIOUS_VERSION).sql $(wildcard src/[0-9][a-z]_*.sql) $(wildcard devops/update_step.sql) devops/update_step.py devops/sql_statements.py $(EXTENSION).control
+	$(SQL_SAGA_PYTHON) devops/update_step.py --root . --outdir .
 
-# Unit tests of the update-script generator (no database needed).
+# No-database checks of the update tooling: the step generator, the released steps in versions/ against the tags that
+# shipped them, and the migration-safety scanner.
 .PHONY: test-generator
 test-generator:
+	$(SQL_SAGA_PYTHON) devops/test_update_step.py
+	$(SQL_SAGA_PYTHON) devops/chain_steps.py --check versions
 	$(SQL_SAGA_PYTHON) devops/test_upgrade_migration_safety.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_13.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_12.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_11.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_10.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_9.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_8.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_7.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_6.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_5.py
-	$(SQL_SAGA_PYTHON) devops/test_generate_update_scripts_1_4.py
-	devops/test_update_scripts_make.sh
+
+# A released step creates C functions bound to symbols of the installed libraries; none may go missing.
+.PHONY: test-native-symbols
+test-native-symbols: all
+	$(SQL_SAGA_PYTHON) devops/check_native_symbols.py $(MODULE_big)$(DLSUFFIX) $(NATIVE_BUILT) $(wildcard versions/*.sql) $(EXTENSION)--$(EXTVERSION).sql $(UPDATE_STEP)
 
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`
@@ -342,3 +327,7 @@ compile_commands.json:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
 #
 #.PHONY: release
+
+# make print-VAR: the value of a make variable (used by the update tooling tests).
+print-%:
+	@echo $($*)

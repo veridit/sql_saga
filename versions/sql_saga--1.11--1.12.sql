@@ -2,7 +2,7 @@
 CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
 DO $native_guard_1_12$
 BEGIN
-    IF sql_saga.native_library_version() <> '1.12' THEN
+    IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x) < (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array('1.12', '.')) AS x) THEN
         RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.12', sql_saga.native_library_version()
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Install the sql_saga 1.12 native library and restart PostgreSQL before retrying ALTER EXTENSION.';
@@ -2892,4 +2892,12 @@ $temporal_merge_plan$;
  * sql_saga 1.12 update: data repairs that need the 1.12 definitions. None: rows written by the PL/pgSQL planner under
  * MERGE_ENTITY_PATCH lost nulls nested inside jsonb values, which cannot be told apart from values written that way.
  */
-SELECT sql_saga.check_integrity();
+DO $last_step_gate$
+BEGIN
+    IF (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(sql_saga.native_library_version(), '.')) AS x)
+       = (SELECT pg_catalog.array_agg(x::int) FROM pg_catalog.unnest(pg_catalog.string_to_array(
+              (SELECT e.extversion FROM pg_catalog.pg_extension AS e WHERE e.extname = 'sql_saga'), '.')) AS x) THEN
+        PERFORM sql_saga.check_integrity();
+    END IF;
+END;
+$last_step_gate$;

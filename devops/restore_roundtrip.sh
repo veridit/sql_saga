@@ -44,8 +44,8 @@
 # fail the run; if they all succeed (PostgreSQL fixed), the summary says so.
 #
 # Old-dump cases (old_dump_10, old_dump_11, old_dump_12, old_dump_17, old_dump_18, old_dump_19, old_dump_110,
-# old_dump_111, old_dump_112; doc/design/restore.md): a database made by the RELEASED v1.0 / v1.1 / v1.2 / v1.7 / v1.8 /
-# v1.9 / v1.10 / v1.11 / v1.12 build (tag built in a scratch dir, with its own C and native libraries, selected per
+# old_dump_111, old_dump_112, old_dump_113; doc/design/restore.md): a database made by the RELEASED v1.0 / v1.1 / v1.2 /
+# v1.7 / v1.8 / v1.9 / v1.10 / v1.11 / v1.12 / v1.13 build (tag built in a scratch dir, with its own C and native libraries, selected per
 # database through extension_control_path / dynamic_library_path) is dumped and restored into the
 # candidate package with the procedure documented in doc/upgrade.md between "<!-- BEGIN old-dump-restore -->"
 # and "<!-- END old-dump-restore -->": the ```bash block there is extracted at run time and executed in
@@ -57,7 +57,7 @@
 # data first (old_dump_refusal: the catalog_format CHECK "restore old sql_saga dumps per doc/upgrade.md", or from 1.8
 # for an older dump the era COPY naming a dropped column), not a later
 # incidental error, and a --single-transaction attempt must leave no extension and no rows behind.
-# OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, ..., <dir>/v1.12) instead of building.
+# OLD_DUMP_BUILD_DIR (optional) reuses prebuilt tag trees (<dir>/v1.0, ..., <dir>/v1.13) instead of building.
 #
 # Usage:   devops/restore_roundtrip.sh [case ...]      (default: all cases)
 #          make test-restore
@@ -78,7 +78,7 @@ KNOWN=()
 SKIPPED=()
 SPLIT_RESULTS=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure old_dump_10 old_dump_11 old_dump_12 old_dump_17 old_dump_18 old_dump_19 old_dump_110 old_dump_111 old_dump_112)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names regular_fk_order parallel_known_failure old_dump_10 old_dump_11 old_dump_12 old_dump_17 old_dump_18 old_dump_19 old_dump_110 old_dump_111 old_dump_112 old_dump_113)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -594,7 +594,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # (rust-lang/rust#157750); unstripped builds of the same sources load. No effect on Linux.
 export CARGO_PROFILE_RELEASE_STRIP=none
 OLD_DUMP_DOC_PATH=${OLD_DUMP_DOC_PATH:-$REPO_ROOT/doc/upgrade.md}
-OLD_DUMP_TAGS="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d"
+OLD_DUMP_TAGS="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf"
 
 # The doc's old-dump procedure: the ```bash block between the old-dump-restore markers, fences excluded.
 old_dump_block() {
@@ -712,7 +712,7 @@ old_dump_normalized_dump() {
 
 # old_dump_strict <dump version> <candidate version>: true when the candidate's catalog layout (catalog_format) is
 # newer than the dump's, so a plain restore must be refused. Layouts: 1.3, 1.4 (1.4 to 1.7), 1.8 and 1.9 (1.9 to 1.13).
-old_dump_layout() { case "$1" in 1.0|1.1|1.2) echo 0 ;; 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.9|1.10|1.11|1.12|1.13) echo 1.9 ;; *) echo "$1" ;; esac; }
+old_dump_layout() { case "$1" in 1.0|1.1|1.2) echo 0 ;; 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.9|1.10|1.11|1.12|1.13|1.14) echo 1.9 ;; *) echo "$1" ;; esac; }
 # old_dump_refusal <dump version> <candidate version>: the first error of a plain restore. A dump made before 1.8 copies
 # into sql_saga.era the audit columns 1.8 dropped, so a 1.8+ candidate refuses its era COPY by the missing column
 # before any row reaches the catalog_format check; otherwise the named check refuses the first era row.
@@ -728,7 +728,7 @@ old_dump_strict() { case "$2" in 1.0|1.1|1.2|'') return 1 ;; esac; [ "$(old_dump
 
 run_old_dump_case() {
     local case=$1 spec tag version commit rest root src ref dst dump block dir out ok=1 v want=''
-    case "$case" in old_dump_10) want=1.0 ;; old_dump_11) want=1.1 ;; old_dump_12) want=1.2 ;; old_dump_17) want=1.7 ;; old_dump_18) want=1.8 ;; old_dump_19) want=1.9 ;; old_dump_110) want=1.10 ;; old_dump_111) want=1.11 ;; old_dump_112) want=1.12 ;; esac
+    case "$case" in old_dump_10) want=1.0 ;; old_dump_11) want=1.1 ;; old_dump_12) want=1.2 ;; old_dump_17) want=1.7 ;; old_dump_18) want=1.8 ;; old_dump_19) want=1.9 ;; old_dump_110) want=1.10 ;; old_dump_111) want=1.11 ;; old_dump_112) want=1.12 ;; old_dump_113) want=1.13 ;; esac
     for spec in $OLD_DUMP_TAGS; do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         [ "$version" = "$want" ] && break

@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 #
 # upgrade_test.sh - prove that databases created with each released sql_saga baseline reach the
-# candidate design with one ALTER EXTENSION command. Target: the candidate's default_version
-# (UPGRADE_NEW_VERSION overrides). Every released baseline older than the target takes its own direct
-# single-hop script <baseline>--<target>, never a chain of older scripts, whose final integrity gates would
-# run before the newer repairs. Design: doc/upgrade.md, doc/design/drop-protection.md and the retained 1.1
-# upgrade assertions.
+# candidate with one ALTER EXTENSION command. Target: the candidate's default_version (UPGRADE_NEW_VERSION
+# overrides). PostgreSQL runs the chain of single-release steps from the baseline to the target, in one transaction
+# (doc/design/update-chain.md). Design: doc/upgrade.md, doc/design/drop-protection.md and the retained 1.1 upgrade
+# assertions.
 #
 # What it does
 #   1. Builds each selected released baseline from its tag, including its install SQL and old binaries.
 #   2. Assembles a private extension directory containing that tag-built baseline plus the candidate's
-#      files (control, fresh install SQL, and the direct update scripts) from UPGRADE_CANDIDATE_DIR
+#      files (control, fresh install SQL, and the update steps) from UPGRADE_CANDIDATE_DIR
 #      (default: the installed extension dir, i.e. what `make install` deployed). Every scratch database
 #      gets `ALTER DATABASE .. SET extension_control_path = '<private dir>:$system'`, so it sees
 #      exactly these scripts. NOTHING is written into the global extension directory. Released
@@ -26,7 +25,8 @@
 # Usage:   devops/upgrade_test.sh            or   make test-upgrade
 # Environment:
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
-#   UPGRADE_NEW_VERSION        default 1.13: the candidate version every baseline must reach
+#   UPGRADE_NEW_VERSION        default: the repository's default_version, the candidate version every baseline must reach
+#   UPGRADE_ONLY_BASELINES     optional space-separated list of baseline versions to run (default: all)
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -59,70 +59,32 @@ PG_CONFIG=${PG_CONFIG:-pg_config}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
 CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
-NEW_VERSION=${UPGRADE_NEW_VERSION:-1.13}
+NEW_VERSION=${UPGRADE_NEW_VERSION:-$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$REPO/sql_saga.control")}
 # The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
-catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf"
+chain_path() {  # chain_path <from> <to>: the released versions from <from> to <to>, joined by --
+    local spec v on=0 out=""
+    for spec in $RELEASED_BASELINES "x|$NEW_VERSION|x"; do
+        v=${spec#*|}; v=${v%%|*}
+        [ "$v" = "$1" ] && on=1
+        [ $on = 1 ] && out="${out:+$out--}$v"
+        [ "$v" = "$2" ] && break
+    done
+    echo "$out"
+}
 version_lt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n | head -1)" = "$1" ]; }
 baseline_specs() {  # the released baselines older than NEW_VERSION
     local spec v
     for spec in $RELEASED_BASELINES; do
         v=${spec#*|}; v=${v%%|*}
-        version_lt "$v" "$NEW_VERSION" && echo "$spec"
+        version_lt "$v" "$NEW_VERSION" || continue
+        [ -z "${UPGRADE_ONLY_BASELINES:-}" ] || case " $UPGRADE_ONLY_BASELINES " in *" $v "*) ;; *) continue ;; esac
+        echo "$spec"
     done
 }
-# Every frozen release artifact the candidate package must still ship, byte-identical to versions/.
-frozen_artifacts() {
-    local spec v
-    for spec in $RELEASED_BASELINES; do
-        v=${spec#*|}; v=${v%%|*}
-        version_lt "$v" "$NEW_VERSION" && echo "sql_saga--$v.sql"
-    done
-    echo "sql_saga--1.0--1.1.sql"
-    if version_lt 1.2 "$NEW_VERSION"; then echo "sql_saga--1.0--1.2.sql"; echo "sql_saga--1.1--1.2.sql"; fi
-    for target in 1.3 1.4; do
-        version_lt "$target" "$NEW_VERSION" || continue
-        for source in 1.0 1.1 1.2 1.3; do
-            version_lt "$source" "$target" && echo "sql_saga--$source--$target.sql"
-        done
-    done
-    if version_lt 1.5 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4; do echo "sql_saga--$source--1.5.sql"; done
-    fi
-    if version_lt 1.6 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5; do echo "sql_saga--$source--1.6.sql"; done
-    fi
-    if version_lt 1.7 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6; do echo "sql_saga--$source--1.7.sql"; done
-    fi
-    if version_lt 1.8 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7; do echo "sql_saga--$source--1.8.sql"; done
-    fi
-    if version_lt 1.9 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8; do echo "sql_saga--$source--1.9.sql"; done
-    fi
-    if version_lt 1.10 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9; do echo "sql_saga--$source--1.10.sql"; done
-    fi
-    if version_lt 1.11 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10; do echo "sql_saga--$source--1.11.sql"; done
-    fi
-    if version_lt 1.12 "$NEW_VERSION"; then
-        for source in 1.0 1.1 1.2 1.3 1.4 1.5 1.6 1.7 1.8 1.9 1.10 1.11; do echo "sql_saga--$source--1.12.sql"; done
-    fi
-}
-# The candidate's update scripts: one direct hop from every released baseline.
-update_artifacts() {
-    local spec v
-    for spec in $(baseline_specs); do
-        v=${spec#*|}; v=${v%%|*}
-        [ "$v" = 1.0 ] && [ "$NEW_VERSION" = 1.1 ] && continue
-        echo "sql_saga--$v--$NEW_VERSION.sql"
-    done
-}
-
 # The public entry point first verifies the complete candidate artifact set, then runs the same
 # assertion suite independently from each released baseline. Keeping each path in a child process
 # gives it a unique database/role prefix and cleanup trap without requiring bash newer than 3.2.
@@ -287,19 +249,6 @@ SQL
             echo "HARNESS ERROR: building $tag install script (see $ARTIFACT_WORK/$version.build.log)" >&2
             exit 2
         }
-        if [ "$version" = 1.4 ] || [ "$version" = 1.5 ] || [ "$version" = 1.6 ]; then
-            case "$version" in 1.4) sources="1.0 1.1 1.2 1.3" ;; 1.5) sources="1.0 1.1 1.2 1.3 1.4" ;; *) sources="1.0 1.1 1.2 1.3 1.4 1.5" ;; esac
-            for source in $sources; do
-                artifact="sql_saga--$source--$version.sql"
-                make -C "$tag_dir" PG_CONFIG="$PG_CONFIG" "$artifact" >>"$ARTIFACT_WORK/$version.build.log" 2>&1 || exit 2
-                if cmp -s "$tag_dir/$artifact" "$RELEASE_ARTIFACT_DIR/$artifact"; then
-                    echo "    ok    versions/$artifact is byte-identical to $tag generator output"
-                else
-                    echo "    FAIL [prerequisite] versions/$artifact differs from $tag generator output"
-                    artifact_fails=$((artifact_fails + 1))
-                fi
-            done
-        fi
         frozen="$RELEASE_ARTIFACT_DIR/sql_saga--$version.sql"
         if [ -f "$frozen" ] && cmp -s "$tag_dir/sql_saga--$version.sql" "$frozen"; then
             echo "    ok    versions/sql_saga--$version.sql is byte-identical to $tag"
@@ -312,31 +261,50 @@ SQL
         fi
     done
 
-    # Released scripts are immutable: the candidate ships every frozen install and update script exactly
-    # as versions/ holds it (the old-dump procedure installs the dump's own version from the package).
-    for artifact in $(frozen_artifacts); do
-        if [ ! -f "$CANDIDATE_DIR/$artifact" ]; then
-            echo "    FAIL [expected RED] candidate ships frozen $artifact (missing in $CANDIDATE_DIR)"
-            artifact_fails=$((artifact_fails + 1))
-        elif [ ! -f "$RELEASE_ARTIFACT_DIR/$artifact" ]; then
-            echo "    FAIL [prerequisite] versions/$artifact is missing"
-            artifact_fails=$((artifact_fails + 1))
-        elif cmp -s "$CANDIDATE_DIR/$artifact" "$RELEASE_ARTIFACT_DIR/$artifact"; then
-            echo "    ok    candidate frozen $artifact is byte-identical to versions/"
+    # Chain package (doc/design/update-chain.md): every released install script byte-identical to versions/; exactly
+    # one update step per release and no other update script; the released steps byte-identical to versions/, which
+    # holds exactly the documented transformation of the steps the tags shipped (devops/chain_steps.py).
+    for spec in $RELEASED_BASELINES; do
+        v=${spec#*|}; v=${v%%|*}
+        version_lt "$v" "$NEW_VERSION" || continue
+        if cmp -s "$CANDIDATE_DIR/sql_saga--$v.sql" "$RELEASE_ARTIFACT_DIR/sql_saga--$v.sql"; then
+            echo "    ok    candidate install sql_saga--$v.sql is byte-identical to versions/"
         else
-            echo "    FAIL [prerequisite] candidate frozen $artifact differs from versions/ (released scripts are immutable)"
-            artifact_fails=$((artifact_fails + 1))
+            echo "    FAIL [prerequisite] candidate install sql_saga--$v.sql differs from versions/ (released scripts are immutable)"; artifact_fails=$((artifact_fails + 1))
         fi
     done
-
-    for artifact in "sql_saga--$NEW_VERSION.sql" $(update_artifacts); do
-        if [ -f "$CANDIDATE_DIR/$artifact" ]; then
-            echo "    ok    candidate ships $artifact"
-        else
-            echo "    FAIL [expected RED] candidate ships $artifact (missing in $CANDIDATE_DIR)"
-            artifact_fails=$((artifact_fails + 1))
+    expected_steps=""
+    prev=""
+    for spec in $RELEASED_BASELINES "x|$NEW_VERSION|x"; do
+        v=${spec#*|}; v=${v%%|*}
+        version_lt "$v" "$NEW_VERSION" || [ "$v" = "$NEW_VERSION" ] || continue
+        if [ -n "$prev" ]; then
+            step="sql_saga--$prev--$v.sql"
+            expected_steps="$expected_steps $step"
+            if [ ! -f "$CANDIDATE_DIR/$step" ]; then
+                echo "    FAIL [expected RED] candidate ships update step $step"; artifact_fails=$((artifact_fails + 1))
+            elif [ "$v" = "$NEW_VERSION" ]; then
+                echo "    ok    candidate ships the new update step $step"
+            elif cmp -s "$CANDIDATE_DIR/$step" "$RELEASE_ARTIFACT_DIR/$step"; then
+                echo "    ok    candidate update step $step is byte-identical to versions/"
+            else
+                echo "    FAIL [prerequisite] candidate update step $step differs from versions/ (released steps are immutable)"; artifact_fails=$((artifact_fails + 1))
+            fi
         fi
+        prev=$v
     done
+    shipped_steps=$(cd "$CANDIDATE_DIR" && ls sql_saga--*--*.sql 2>/dev/null | sort | tr '\n' ' ')
+    wanted_steps=$(printf '%s\n' $expected_steps | sort | tr '\n' ' ')
+    if [ "$shipped_steps" = "$wanted_steps" ]; then
+        echo "    ok    candidate ships no update script other than the chain steps"
+    else
+        echo "    FAIL [expected RED] candidate update scripts (expected '$wanted_steps', got '$shipped_steps')"; artifact_fails=$((artifact_fails + 1))
+    fi
+    if "${SQL_SAGA_PYTHON:-python3}" "$REPO/devops/chain_steps.py" --check "$RELEASE_ARTIFACT_DIR" >"$ARTIFACT_WORK/chain_steps.log" 2>&1; then
+        echo "    ok    versions/ steps are the documented transformation of the steps v1.0 to v1.13 shipped"
+    else
+        echo "    FAIL [prerequisite] versions/ steps: $(head -1 "$ARTIFACT_WORK/chain_steps.log")"; artifact_fails=$((artifact_fails + 1))
+    fi
 
     if [ "$artifact_fails" -ne 0 ]; then
         echo
@@ -1585,7 +1553,7 @@ sql_saga.temporal_merge_executor_introspect(oid,oid,text[],text[],text,text[],te
 canon10_grants() { local r; printf '%s\n' "$CANON10_ROUTINES" | while IFS= read -r r; do echo "GRANT EXECUTE ON ROUTINE $r TO PUBLIC;"; done; }
 # acl10_refusal <db> <label> <routine named first>: the 1.0 update refuses a noncanonical routine ACL, atomically,
 # with the frozen guard text of the released 1.0 to 1.3 update (versions/sql_saga--1.0--1.3.sql).
-ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION', then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
+ACL10_HINT="The update would record the current privileges as the extension's initial privileges, so pg_dump would no longer dump them. Check each of the eight routines listed in doc/upgrade.md. In one transaction, as the routine owner: note the exact current grants, change EXECUTE so that only the routine owner and PUBLIC hold it (without grant option), run ALTER EXTENSION sql_saga UPDATE, then reapply the noted site changes outside the extension in the same transaction. doc/upgrade.md has examples."
 acl10_refusal() {
     local db=$1 label=$2 routine=$3 before out acl
     acl=$(q "$db" "SELECT coalesce(proacl::text, '<missing>') FROM pg_proc WHERE oid = to_regprocedure('$routine')")
@@ -1693,7 +1661,7 @@ else
     fail "no sql_saga.control in $CANDIDATE_DIR"; CANDIDATE_OK=0
     cp "$BASELINE_BUILD/sql_saga.control" "$EXT/"
 fi
-for f in "sql_saga--$NEW_VERSION.sql" $(update_artifacts) $(frozen_artifacts); do
+for f in "sql_saga--$NEW_VERSION.sql" $(cd "$CANDIDATE_DIR" && ls sql_saga--*.sql); do
     [ "$f" = "sql_saga--$BASELINE_VERSION.sql" ] && continue
     if [ -f "$CANDIDATE_DIR/$f" ]; then cp "$CANDIDATE_DIR/$f" "$EXT/"; ok "candidate ships $f"
     else fail "candidate ships $f (missing in $CANDIDATE_DIR)"; CANDIDATE_OK=0; fi
@@ -1707,67 +1675,6 @@ if [ -f "$CANDIDATE_DIR/sql_saga--$BASELINE_VERSION.sql" ]; then
 else
     fail "candidate does not ship frozen sql_saga--$BASELINE_VERSION.sql"
 fi
-if [ "$NEW_VERSION" = 1.2 ]; then
-UPD="$EXT/sql_saga--1.1--$NEW_VERSION.sql"
-DIRECT_UPD="$EXT/sql_saga--1.0--$NEW_VERSION.sql"
-if [ -f "$UPD" ]; then
-    body=$(sed -e 's/--.*$//' "$UPD")
-    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "update script contains BEGIN/COMMIT"; else ok "update script has no BEGIN/COMMIT"; fi
-    if printf '%s\n' "$body" | grep -qiw 'CASCADE'; then fail "update script uses CASCADE (never cascade into user objects)"; else ok "update script uses no CASCADE"; fi
-    if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
-        fail "update script disables event triggers or changes session_replication_role"
-    else ok "update script keeps event triggers on"; fi
-fi
-if [ -f "$DIRECT_UPD" ] && [ -f "$EXT/sql_saga--1.0--1.1.sql" ] && [ -f "$UPD" ]; then
-    FROZEN_GUARD="DO \$native_guard\$ BEGIN IF sql_saga.native_library_version() <> '1.1' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$native_guard\$;"
-    DIRECT_GUARD="DO \$native_guard\$ BEGIN IF sql_saga.native_library_version() <> '1.2' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.2', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.2 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$native_guard\$;"
-    guard_count=$(grep -Fxc "$FROZEN_GUARD" "$EXT/sql_saga--1.0--1.1.sql" || true)
-    check "frozen 1.0--1.1 script has exactly one retargetable native guard" "1" "$guard_count"
-    awk -v old="$FROZEN_GUARD" -v new="$DIRECT_GUARD" '{ if ($0 == old) print new; else print }' "$EXT/sql_saga--1.0--1.1.sql" >"$WORK/direct.retargeted"
-    diff -u "$EXT/sql_saga--1.0--1.1.sql" "$WORK/direct.retargeted" >"$WORK/direct.guard.diff" || true
-    guard_diff_lines=$(grep -c '^[-+]DO \$native_guard\$' "$WORK/direct.guard.diff" || true)
-    other_diff_lines=$(grep '^[-+]' "$WORK/direct.guard.diff" | grep -vE '^(---|\+\+\+|[-+]DO \$native_guard\$)' | wc -l | tr -d ' ')
-    check "retargeting changes exactly the old and new native-guard lines" "2|0" "$guard_diff_lines|$other_diff_lines"
-    # The frozen validate_fk_helpers aggregates key columns once per FK; the direct script reads one row
-    # per helper and key instead (exactly one line, right after its unique stable_columns line).
-    FK_ANCHOR='               pg_catalog.array_agg(c.name ORDER BY c.ordinality) AS stable_columns'
-    FK_OLD='        FROM sql_saga.foreign_keys AS fk'
-    FK_NEW='        FROM (SELECT DISTINCT f.fk_helper_function, f.unique_key_name, f.type FROM sql_saga.foreign_keys AS f) AS fk'
-    check "frozen 1.0--1.1 script has exactly one shared-helper validator anchor" "1" \
-        "$(grep -Fxc "$FK_ANCHOR" "$EXT/sql_saga--1.0--1.1.sql" || true)"
-    awk -v anchor="$FK_ANCHOR" -v old="$FK_OLD" -v new="$FK_NEW" '{ if (prev == anchor && $0 == old) print new; else print; prev = $0 }' \
-        "$WORK/direct.retargeted" >"$WORK/direct.fkfixed"
-    diff -u "$WORK/direct.retargeted" "$WORK/direct.fkfixed" >"$WORK/direct.fk.diff" || true
-    check "the shared-helper validator fix changes exactly one frozen line" "-$FK_OLD|+$FK_NEW|2" \
-        "$(grep -E '^[-+] ' "$WORK/direct.fk.diff" | paste -sd'|' -)|$(grep -cE '^[-+][^-+]' "$WORK/direct.fk.diff" || true)"
-    cp "$WORK/direct.fkfixed" "$WORK/direct.expected"
-    sed '1d' "$UPD" >>"$WORK/direct.expected"
-    if cmp -s "$WORK/direct.expected" "$DIRECT_UPD"; then
-        ok "direct 1.0--1.2 script is the frozen hop with only its native guard retargeted and its shared-helper validator line fixed, followed by the headerless 1.1--1.2 body"
-    else
-        fail "direct 1.0--1.2 script differs from the exact approved composition"
-    fi
-    body=$(sed -e 's/--.*$//' "$DIRECT_UPD")
-    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
-    # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
-    # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
-    assert_no_cascading_ddl "$body"
-    if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
-        fail "direct update script disables event triggers or changes session_replication_role"
-    else ok "direct update script keeps event triggers on"; fi
-fi
-if [ "$BASELINE_VERSION" = 1.0 ]; then
-    EXPECTED_PATH='1.0--1.2'
-else
-    EXPECTED_PATH='1.1--1.2'
-fi
-else
-# 1.3 and later: one direct single-hop script per released baseline (plan section 0.1). A chained
-# 1.1 -> 1.2 -> 1.3 would run the frozen 1.2 integrity gate before any 1.3 repair.
-# Contract change (coordinator, plan section 0.3): the 1.3 scripts disable sql_saga_rename_following for
-# the duration of the update, so old following code cannot re-sort XOR keys, and put back the recorded
-# state. The 1.2 rule "keeps event triggers on" becomes: no session_replication_role, no other event
-# trigger disabled, the one DISABLE is sql_saga_rename_following's and the state is restored afterwards.
 # executable_migration_sql <file>: the update script's migration statements, with comments, string
 # literals and routine bodies (CREATE FUNCTION/PROCEDURE dollar-quoted text) removed. DO blocks stay:
 # they run during the update. Used by the static safety scans (CASCADE etc.).
@@ -1788,38 +1695,14 @@ executable_migration_sql() {
         }
         print $o;' "$1"
 }
-DIRECT_UPD="$EXT/sql_saga--$BASELINE_VERSION--$NEW_VERSION.sql"
-if [ -f "$DIRECT_UPD" ]; then
-    body=$(executable_migration_sql "$DIRECT_UPD") || die "scanning $DIRECT_UPD"
-    check "direct $BASELINE_VERSION--$NEW_VERSION header line is the ALTER EXTENSION guard"         "\\echo Use \"ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'\" to load this file. \\quit" "$(head -1 "$DIRECT_UPD")"
-    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
-    # A cascading DROP/TRUNCATE would reach user objects. The scan removes string literals, so the 1.4 catalog values
-    # 'CASCADE' (a delete_action) never match; an identifier containing the word does not either (whole word only).
+# Chain (doc/design/update-chain.md): PostgreSQL runs every released step from the baseline, in one transaction.
+# Every step: no transaction control, no cascading DROP/TRUNCATE into user objects.
+for step in $(ls "$EXT"/sql_saga--*--*.sql); do
+    body=$(executable_migration_sql "$step") || die "scanning $step"
+    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "$(basename "$step") contains BEGIN/COMMIT"; fi
     assert_no_cascading_ddl "$body"
-    if printf '%s\n' "$body" | grep -qi 'session_replication_role'; then fail "direct update script changes session_replication_role"
-    else ok "direct update script leaves session_replication_role alone"; fi
-    other_disable=$(printf '%s\n' "$body" | grep -iE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE' | grep -vc 'sql_saga_rename_following' || true)
-    check "direct update script disables no event trigger other than sql_saga_rename_following" "0" "$other_disable"
-    # The embedded 1.0-1.2 update to 1.3 disables rename_following (their versions rewrote XOR key lists); from 1.3
-    # the 1.4 delta never disables it.
-    if version_lt "$BASELINE_VERSION" 1.3; then rf_disables=1; else rf_disables=0; fi
-    check "direct update script disables sql_saga_rename_following exactly $rf_disables time(s)" "$rf_disables" \
-        "$(printf '%s\n' "$body" | grep -ciE 'ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[[:space:]]+sql_saga_rename_following[[:space:]]+DISABLE' || true)"
-    if [ "$rf_disables" = 1 ]; then
-    check "direct update script records the rename_following state before disabling it" "t" \
-        "$(awk 'tolower($0) ~ /evtenabled/ && !s { s = NR } tolower($0) ~ /alter event trigger sql_saga_rename_following disable/ && !d { d = NR } END { print (s && d && s < d) ? "t" : "f" }' "$DIRECT_UPD")"
-    fi
-    check "direct update script ends with the $NEW_VERSION integrity gate" "SELECT sql_saga.check_integrity();" \
-        "$(printf '%s\n' "$body" | grep -v '^[[:space:]]*$' | tail -1)"
-    check "direct update script carries no frozen 1.2 integrity gate before the 1.3 repairs" "1" \
-        "$(grep -Fxc 'SELECT sql_saga.check_integrity();' "$DIRECT_UPD" || true)"
-    if [ "$BASELINE_VERSION" != 1.2 ]; then
-        check "direct $BASELINE_VERSION--$NEW_VERSION script targets no intermediate version" "0" \
-            "$(grep -cE "UPDATE TO ''?1\.[12]''?|extension update version 1\.[12]'" "$DIRECT_UPD" || true)"
-    fi
-fi
-EXPECTED_PATH="$BASELINE_VERSION--$NEW_VERSION"
-fi
+done
+EXPECTED_PATH=$(chain_path "$BASELINE_VERSION" "$NEW_VERSION")
 ACTUAL_PATH=$(q postgres "SET extension_control_path = '$EXT_ROOT:\$system'; SELECT path FROM pg_extension_update_paths('sql_saga') WHERE source = '$BASELINE_VERSION' AND target = '$NEW_VERSION';")
 check "PostgreSQL chooses the approved $BASELINE_VERSION to $NEW_VERSION update path" "$EXPECTED_PATH" "$ACTUAL_PATH"
 if [ -f "$PREFLIGHT" ]; then ok "preflight script present ($PREFLIGHT)"; else fail "preflight script missing ($PREFLIGHT)"; fi
@@ -1991,11 +1874,16 @@ else
     CREATED_DBS+=("$HOP_REFUSAL")
     v13_restart "$HOP_REFUSAL"
     psql -X -q -d postgres -c "ALTER DATABASE $HOP_REFUSAL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $HOP_REFUSAL"
+    # A step accepts a newer library, so an update may stop at an intermediate release; a plain update resumes there.
     out=$(q "$HOP_REFUSAL" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
-    check "explicit 1.0 to 1.1 hop with the $NEW_VERSION libraries is refused by the frozen native guard" \
-        "ERROR:  sql_saga: native library version $NEW_VERSION does not match extension update version 1.1" "$out"
-    check "refused explicit intermediate hop leaves extversion 1.0" "1.0" \
+    check "explicit 1.0 to 1.1 step with the $NEW_VERSION libraries succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "explicit intermediate step stops at 1.1" "1.1" \
         "$(q "$HOP_REFUSAL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    out=$(q "$HOP_REFUSAL" "ALTER EXTENSION sql_saga UPDATE")
+    check "a plain update resumes from the intermediate stop" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "the resumed update reaches $NEW_VERSION" "$NEW_VERSION" \
+        "$(q "$HOP_REFUSAL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    assert_integrity "$HOP_REFUSAL"
 fi
 query_function_snapshot "$QUERY_ANCHOR" >"$WORK/query_functions.before"
 if grep -q '^ERROR' "$WORK/query_functions.before"; then
@@ -2284,8 +2172,8 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
     # run each hint's statements before ALTER EXTENSION, retry, and once the update succeeds run the statements after.
     local pre post posts='' refusals=1 next_hint=$hint
     while :; do
-        pre=$(printf '%s\n' "$next_hint" | sed -e 's/^.*Run: //' -e "s/ ALTER EXTENSION sql_saga UPDATE TO '[0-9.]*';.*\$//")
-        post=$(printf '%s\n' "$next_hint" | sed -n -e "s/^.* ALTER EXTENSION sql_saga UPDATE TO '[0-9.]*'; //p")
+        pre=$(printf '%s\n' "$next_hint" | sed -e 's/^.*Run: //' -e "s/ ALTER EXTENSION sql_saga UPDATE;.*\$//")
+        post=$(printf '%s\n' "$next_hint" | sed -n -e "s/^.* ALTER EXTENSION sql_saga UPDATE; //p")
         posts="$posts $post"
         out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$pre" | sql "$db")
         printf '%s\n' "$out" | grep -q '^ERROR' && break
@@ -2314,13 +2202,13 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
     asv_case revoke_public \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;" \
         "$ASV_ERR" \
-        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;" 1
     asv_case grant_option \
         "GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "$ASV_ERR" \
-        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "PUBLIC,$ASV_OWNER,${PREFIX}_asv*" \
         "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;" 1
     # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
@@ -2332,7 +2220,7 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
         "$ASV_ERR" \
-        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;" "$ASV_DEFAULT_REFUSALS"
     # Delegation plus changed defaults (G4 R2.1): A holds EXECUTE WITH GRANT OPTION and granted it to B;
@@ -2350,7 +2238,7 @@ GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B;
 RESET ROLE;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
         "$ASV_ERR" \
-        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
         "$ASV_A*,PUBLIC,$ASV_OWNER,$ASV_B" \
         "GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_A WITH GRANT OPTION;|GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_B;" \
         "$ASV_DEFAULT_REFUSALS"
@@ -3617,7 +3505,7 @@ REVOKE EXECUTE ON FUNCTION $ADD_ERA_13 FROM PUBLIC;"
         "ERROR:  sql_saga: the privileges on $ADD_ERA_13 differ from those its 1.9 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
         "$(q "$PROV_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     check "revoked add_era: the hint carries the revoke to the new signature" "1" \
-        "$(sql "$PROV_DB" -c "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^HINT:  ' | grep -cF "Run: GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'; REVOKE ALL ON FUNCTION sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC CASCADE;")"
+        "$(sql "$PROV_DB" -c "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^HINT:  ' | grep -cF "Run: GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE; REVOKE ALL ON FUNCTION sql_saga.add_era(regclass, name, name, boolean, name, name, name, boolean, boolean, boolean, regtype, name, name[], name[]) FROM PUBLIC CASCADE;")"
     check "revoked add_era: extension still $BASELINE_VERSION, no provenance column, no probe left" "$BASELINE_VERSION|0|0" \
         "$(q "$PROV_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$PROV_DB" "$prov_cols_sql")|$(q "$PROV_DB" "SELECT count(*) FROM pg_proc WHERE proname LIKE '%acl_probe%'")"
     q "$PROV_DB" "GRANT EXECUTE ON FUNCTION $ADD_ERA_13 TO PUBLIC" >/dev/null
