@@ -1,15 +1,20 @@
 ---
 id: 2q5nvf
 title: "Release 1.14: clean up what 1.9 to 1.13 deferred"
-state: todo
+state: "doing"
 type: chore
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzx"
 created: 2026-11-23
 updated: 2026-11-23
+doing_since: "2026-11-24T05:00"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -31,3 +36,7 @@ Children: a5sdk3 (check_integrity reports a disabled sync trigger), mnntde (natu
 - [ ] v1.14 tagged on a CI-verified master commit; todo.md records it
 
 ## Notes
+
+
+## History
+- 2026-11-24T05:00 todo -> doing/active (take)
