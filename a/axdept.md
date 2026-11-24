@@ -1,16 +1,21 @@
 ---
 id: axdept
 title: "Explore candidate SQL syntaxes for temporal merge and foreign keys"
-state: todo
+state: "doing"
 type: spike
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzl"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
+doing_since: "2026-11-24T14:03"
+stage: "active"
+model: "claude-opus-5-5"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -34,3 +39,7 @@ Inputs: the revert study (vhhp80, concurrency must be answerable in the syntax) 
 - [ ] A comparison table gives each candidate's fit with the standard, effort to implement and open questions
 
 ## Notes
+
+
+## History
+- 2026-11-24T14:03 todo -> doing/active (take)
