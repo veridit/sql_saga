@@ -1,16 +1,21 @@
 ---
 id: a5sdk3
 title: "check_integrity reports a disabled era synchronization trigger"
-state: todo
+state: "doing"
 type: bug
 priority: "medium"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzq"
 created: 2026-11-22
 updated: 2026-11-22
 parent: "2q5nvf"
+doing_since: "2026-11-24T05:00"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -37,3 +42,7 @@ Found in the 1.13 review of p60d2m (probe on 1.12/1.13: ALTER TABLE dp DISABLE T
 check 1: 116 case 'disabled era synchronization trigger': expected written first, showed 'unexpected success' on 1.13 code; named error with ALTER TABLE ... ENABLE TRIGGER repair (5f7c71e)
 
 check 2: 116: ENABLE ALWAYS and ENABLE REPLICA pass; make test fast 147/147; upgrade gate RED on 1.13 health checks, GREEN from 1.0/1.13
+
+
+## History
+- 2026-11-24T05:00 todo -> doing/active (take)
