@@ -566,16 +566,10 @@ fn try_build_parameterized_filter(
     source_cols: &[String],
     ctx: &PlannerContext,
 ) -> Option<(String, Vec<FilterParam>)> {
-    use crate::types::{DeleteMode, MergeMode};
-
-    // Full scan modes: no WHERE clause needed, SQL is already static
-    let needs_full_scan = matches!(
-        (&ctx.mode, &ctx.delete_mode),
-        (
-            MergeMode::MergeEntityPatch | MergeMode::MergeEntityReplace,
-            DeleteMode::DeleteMissingEntities | DeleteMode::DeleteMissingTimelineAndEntities
-        )
-    );
+    // Full scan: no WHERE clause needed, SQL is already static.
+    // Deleting the entities the source does not name needs every target entity (any MERGE_ENTITY_* mode; the other
+    // modes refuse a delete mode, hug 2hxkwx).
+    let needs_full_scan = ctx.delete_mode.deletes_entities();
     if needs_full_scan {
         return Some((String::new(), vec![]));
     }
@@ -958,15 +952,9 @@ fn build_target_filter(
     source_cols: &[String],
     ctx: &PlannerContext,
 ) -> String {
-    use crate::types::{DeleteMode, MergeMode};
-
-    let needs_full_scan = matches!(
-        (&ctx.mode, &ctx.delete_mode),
-        (
-            MergeMode::MergeEntityPatch | MergeMode::MergeEntityReplace,
-            DeleteMode::DeleteMissingEntities | DeleteMode::DeleteMissingTimelineAndEntities
-        )
-    );
+    // Deleting the entities the source does not name needs every target entity (any MERGE_ENTITY_* mode; the other
+    // modes refuse a delete mode, hug 2hxkwx).
+    let needs_full_scan = ctx.delete_mode.deletes_entities();
     if needs_full_scan {
         return String::new();
     }

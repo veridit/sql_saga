@@ -97,10 +97,25 @@ fn temporal_merge_plan_native(
     // referencing the old table OID is stale.
     EMIT_STMT.with(|cell| { *cell.borrow_mut() = None; });
 
-    let mode = MergeMode::from_str(mode)
+    let merge_mode = MergeMode::from_str(mode)
         .unwrap_or_else(|| pgrx::error!("Invalid merge mode: {}", mode));
     let delete_mode = DeleteMode::from_str(delete_mode)
         .unwrap_or_else(|| pgrx::error!("Invalid delete mode: {}", delete_mode));
+    // A delete mode belongs to the MERGE_ENTITY_* modes (hug 2hxkwx); same refusal as sql_saga.temporal_merge_plan.
+    if delete_mode != DeleteMode::None && !merge_mode.is_merge_entity() {
+        pgrx::pg_sys::panic::ErrorReport::new(
+            pgrx::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+            format!(
+                "sql_saga: delete_mode {} applies to the MERGE_ENTITY_* modes, not to {}",
+                delete_mode.as_str(),
+                mode
+            ),
+            pgrx::function_name!(),
+        )
+        .set_hint("Use delete_mode => 'NONE', or a MERGE_ENTITY_* mode.")
+        .report(pgrx::PgLogLevel::ERROR);
+    }
+    let mode = merge_mode;
 
     // Parse lookup_keys JSONB into flat list + individual key sets
     let (all_lookup_cols, lookup_key_sets) = parse_lookup_keys(lookup_keys);

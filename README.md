@@ -838,10 +838,10 @@ A regular foreign key references a primary or natural key; a predicated key is r
   - `founding_id_column`: The name of a column used to group multiple source rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If `NULL`, the `row_id_column` is used as the default.
     - **Important:** The scope of a correlation identifier is limited to a single `temporal_merge` call. All rows belonging to a single "founding event" *must* be processed within the same source table in a single call.
   - `update_source_with_identity`: If `true`, the procedure will update the source table with any generated identity key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
-  - `delete_mode`: Provides optional, destructive overrides.
+  - `delete_mode`: Provides optional, destructive overrides for the `MERGE_ENTITY_*` modes, which state an entity's whole timeline. The other modes act on a portion of time or on new entities only and refuse any value but `'NONE'` (since 1.15).
     - `'NONE'` (Default): No destructive operations occur.
-    - `'DELETE_MISSING_TIMELINE'`: Enables "source-as-truth" timeline replacement. For any entity present in the source, any part of its timeline in the target that is **not** covered by the source's timeline will be **deleted**.
-    - `'DELETE_MISSING_ENTITIES'`: Deletes entire entities. When used with `MERGE_ENTITY_*` modes, any entity in the target that is not present in the source is completely deleted.
+    - `'DELETE_MISSING_TIMELINE'`: Enables "source-as-truth" timeline replacement. For any entity present in the source, any part of its timeline in the target that is **not** covered by the source's timeline will be **deleted**, wherever the source rows start and end.
+    - `'DELETE_MISSING_ENTITIES'`: Deletes entire entities: any entity in the target that is not present in the source is completely deleted.
     - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A combination of both destructive behaviors.
   - `update_source_with_feedback`: If `true`, the procedure will update the source table with status and error feedback for each source row. Requires either status or error feedback columns to be set.
   - `feedback_status_column`: The name of the `jsonb` column in the source table to write status messages to. If provided, `feedback_status_key` must also be set.

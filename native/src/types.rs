@@ -62,13 +62,11 @@ impl MergeMode {
         )
     }
 
-    pub fn is_entity_scope(&self) -> bool {
+    /// The MERGE_ENTITY_* modes state an entity's whole timeline; only they take a delete mode (hug 2hxkwx).
+    pub fn is_merge_entity(&self) -> bool {
         matches!(
             self,
-            Self::MergeEntityUpsert
-                | Self::MergeEntityPatch
-                | Self::MergeEntityReplace
-                | Self::InsertNewEntities
+            Self::MergeEntityUpsert | Self::MergeEntityPatch | Self::MergeEntityReplace
         )
     }
 }
@@ -91,6 +89,15 @@ impl DeleteMode {
             "DELETE_MISSING_ENTITIES" => Some(Self::DeleteMissingEntities),
             "DELETE_MISSING_TIMELINE_AND_ENTITIES" => Some(Self::DeleteMissingTimelineAndEntities),
             _ => Option::None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "NONE",
+            Self::DeleteMissingTimeline => "DELETE_MISSING_TIMELINE",
+            Self::DeleteMissingEntities => "DELETE_MISSING_ENTITIES",
+            Self::DeleteMissingTimelineAndEntities => "DELETE_MISSING_TIMELINE_AND_ENTITIES",
         }
     }
 

@@ -59,7 +59,7 @@ This document is automatically generated from the database schema by the `80_gen
 
 ### temporal_merge_delete_mode
 
-> Controls deletion behavior for `replace` modes.
+> Controls deletion for the MERGE_ENTITY_* modes; the other modes refuse any value but NONE.
 > - NONE (default): No deletions occur.
 > - DELETE_MISSING_TIMELINE: For entities in the source, any part of their target timeline not covered by the source is deleted.
 > - DELETE_MISSING_ENTITIES: Any entity in the target that is not present in the source is completely deleted.

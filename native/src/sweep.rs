@@ -829,6 +829,13 @@ fn resolve_payloads(
         if data_payload.is_none() && covering_target.is_none() {
             continue;
         }
+        // DELETE_MISSING_TIMELINE: the source states this entity's whole timeline, so target time no source row covers
+        // is not kept. Dropping the segment here leaves its target row partly or wholly unmatched, which becomes a
+        // SHRINK or a DELETE (hug rtwrp6). Entities absent from the source have no active sources and are handled by
+        // DELETE_MISSING_ENTITIES in classify_operations.
+        if covering_sources.is_empty() && !active_sources.is_empty() && ctx.delete_mode.deletes_timeline() {
+            continue;
+        }
         // *_FOR_PORTION_OF modes: skip source-covered segments with no target coverage.
         // PL/pgSQL: WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
         // These modes only affect the "portion of" the target that already exists.

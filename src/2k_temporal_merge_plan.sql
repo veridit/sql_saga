@@ -109,6 +109,14 @@ BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
 
+    -- A delete mode removes target time or entities the source does not name: it belongs to the MERGE_ENTITY_* modes,
+    -- which state an entity's whole timeline. The other modes act on a portion or on new entities only (hug 2hxkwx).
+    IF delete_mode <> 'NONE' AND mode NOT IN ('MERGE_ENTITY_UPSERT', 'MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') THEN
+        RAISE EXCEPTION 'sql_saga: delete_mode % applies to the MERGE_ENTITY_* modes, not to %', delete_mode, mode
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Use delete_mode => ''NONE'', or a MERGE_ENTITY_* mode.';
+    END IF;
+
     IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
         CREATE TEMP TABLE temporal_merge_plan_cache (
             cache_key TEXT PRIMARY KEY,
@@ -1072,8 +1080,8 @@ BEGIN
                 v_keys_for_filtering := jsonb_build_array(to_jsonb(identity_columns));
             END IF;
     
-            IF mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
-                -- For modes that might delete entities not in the source, we must scan the entire target table.
+            IF delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+                -- Deleting the entities the source does not name: scan the entire target (every MERGE_ENTITY_* mode).
                 v_target_rows_filter := v_target_table_ident || ' t';
             ELSE
                 -- By default, we optimize by only scanning target entities that are present in the source.

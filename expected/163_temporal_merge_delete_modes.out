@@ -1,0 +1,406 @@
+\set ECHO none
+\set QUIET 0
+\set VERBOSITY terse
+BEGIN;
+BEGIN
+\echo '==== native planner (default)'
+==== native planner (default)
+\i sql/include/163_delete_modes_scenario.sql
+-- Run once per planner by sql/163_temporal_merge_delete_modes.sql. Each block resets the target, merges, and shows the
+-- target. Target: entity 1 'a' over [2020,2023), entity 2 'z' over [2020,2023).
+-- rtwrp6: DELETE_MISSING_TIMELINE removes every part of a source entity's timeline the source does not cover,
+-- wherever the source edges fall (inside a target row, on a boundary, across a gap).
+\echo '-- DMT, source inside one target row: only the source time remains'
+-- DMT, source inside one target row: only the source time remains
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+  2 | z | 2020-01-01 | 2023-01-01
+(2 rows)
+
+\echo '-- DMT, source starts on a boundary and ends inside a row'
+-- DMT, source starts on a boundary and ends inside a row
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2021-01-01'), (1, 'b', '2021-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+\echo '-- DMT, source spans a target gap with both edges inside rows'
+-- DMT, source spans a target gap with both edges inside rows
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2021-01-01'), (1, 'b', '2022-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2020-06-01', '2022-06-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2020-06-01 | 2022-06-01
+(1 row)
+
+\echo '-- DMT, two source rows with a hole between them: the hole is deleted too'
+-- DMT, two source rows with a hole between them: the hole is deleted too
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2020-01-01', '2021-01-01'), (2, 1, 'Y', '2022-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2020-01-01 | 2021-01-01
+  1 | Y | 2022-01-01 | 2023-01-01
+(2 rows)
+
+\echo '-- DMT with UPSERT and PATCH, source equal to the target values inside a row: nothing outside the source survives'
+-- DMT with UPSERT and PATCH, source equal to the target values inside a row: nothing outside the source survives
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'a', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2021-01-01 | 2022-01-01
+(1 row)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2021-01-01 | 2022-01-01
+(1 row)
+
+\echo '-- DMT leaves entities absent from the source alone; DMTE also deletes them'
+-- DMT leaves entities absent from the source alone; DMTE also deletes them
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+-- 2hxkwx: DELETE_MISSING_ENTITIES deletes the entities absent from the source with every MERGE_ENTITY_* mode.
+\echo '-- DME with UPSERT, PATCH and REPLACE: entity 2 is deleted, entity 1 keeps its untouched time'
+-- DME with UPSERT, PATCH and REPLACE: entity 2 is deleted, entity 1 keeps its untouched time
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+\echo '-- DMTE with UPSERT: entity 2 deleted, entity 1 reduced to the source time'
+-- DMTE with UPSERT: entity 2 deleted, entity 1 reduced to the source time
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+-- Delete modes apply to the MERGE_ENTITY_* modes only; any other mode refuses them, and nothing changes.
+\echo '-- the other modes refuse a delete mode'
+-- the other modes refuse a delete mode
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+SAVEPOINT refuse;
+SAVEPOINT
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'INSERT_NEW_ENTITIES', delete_mode => 'DELETE_MISSING_TIMELINE');
+psql:sql/include/163_delete_modes_scenario.sql:59: ERROR:  sql_saga: delete_mode DELETE_MISSING_TIMELINE applies to the MERGE_ENTITY_* modes, not to INSERT_NEW_ENTITIES
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF', delete_mode => 'DELETE_MISSING_ENTITIES');
+psql:sql/include/163_delete_modes_scenario.sql:61: ERROR:  sql_saga: delete_mode DELETE_MISSING_ENTITIES applies to the MERGE_ENTITY_* modes, not to UPDATE_FOR_PORTION_OF
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'DELETE_FOR_PORTION_OF', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+psql:sql/include/163_delete_modes_scenario.sql:63: ERROR:  sql_saga: delete_mode DELETE_MISSING_TIMELINE_AND_ENTITIES applies to the MERGE_ENTITY_* modes, not to DELETE_FOR_PORTION_OF
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2023-01-01
+  2 | z | 2020-01-01 | 2023-01-01
+(2 rows)
+
+\echo '==== PL/pgSQL planner (sql_saga.temporal_merge.use_plpgsql_planner)'
+==== PL/pgSQL planner (sql_saga.temporal_merge.use_plpgsql_planner)
+SET LOCAL sql_saga.temporal_merge.use_plpgsql_planner = true;
+SET
+\i sql/include/163_delete_modes_scenario.sql
+-- Run once per planner by sql/163_temporal_merge_delete_modes.sql. Each block resets the target, merges, and shows the
+-- target. Target: entity 1 'a' over [2020,2023), entity 2 'z' over [2020,2023).
+-- rtwrp6: DELETE_MISSING_TIMELINE removes every part of a source entity's timeline the source does not cover,
+-- wherever the source edges fall (inside a target row, on a boundary, across a gap).
+\echo '-- DMT, source inside one target row: only the source time remains'
+-- DMT, source inside one target row: only the source time remains
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+  2 | z | 2020-01-01 | 2023-01-01
+(2 rows)
+
+\echo '-- DMT, source starts on a boundary and ends inside a row'
+-- DMT, source starts on a boundary and ends inside a row
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2021-01-01'), (1, 'b', '2021-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+\echo '-- DMT, source spans a target gap with both edges inside rows'
+-- DMT, source spans a target gap with both edges inside rows
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2021-01-01'), (1, 'b', '2022-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2020-06-01', '2022-06-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2020-06-01 | 2022-06-01
+(1 row)
+
+\echo '-- DMT, two source rows with a hole between them: the hole is deleted too'
+-- DMT, two source rows with a hole between them: the hole is deleted too
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2020-01-01', '2021-01-01'), (2, 1, 'Y', '2022-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2020-01-01 | 2021-01-01
+  1 | Y | 2022-01-01 | 2023-01-01
+(2 rows)
+
+\echo '-- DMT with UPSERT and PATCH, source equal to the target values inside a row: nothing outside the source survives'
+-- DMT with UPSERT and PATCH, source equal to the target values inside a row: nothing outside the source survives
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'a', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2021-01-01 | 2022-01-01
+(1 row)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_TIMELINE');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2021-01-01 | 2022-01-01
+(1 row)
+
+\echo '-- DMT leaves entities absent from the source alone; DMTE also deletes them'
+-- DMT leaves entities absent from the source alone; DMTE also deletes them
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+TRUNCATE src; INSERT INTO src VALUES (1, 1, 'X', '2021-01-01', '2022-01-01');
+TRUNCATE TABLE
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+-- 2hxkwx: DELETE_MISSING_ENTITIES deletes the entities absent from the source with every MERGE_ENTITY_* mode.
+\echo '-- DME with UPSERT, PATCH and REPLACE: entity 2 is deleted, entity 1 keeps its untouched time'
+-- DME with UPSERT, PATCH and REPLACE: entity 2 is deleted, entity 1 keeps its untouched time
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_PATCH', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_REPLACE', delete_mode => 'DELETE_MISSING_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2021-01-01
+  1 | X | 2021-01-01 | 2022-01-01
+  1 | a | 2022-01-01 | 2023-01-01
+(3 rows)
+
+\echo '-- DMTE with UPSERT: entity 2 deleted, entity 1 reduced to the source time'
+-- DMTE with UPSERT: entity 2 deleted, entity 1 reduced to the source time
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'MERGE_ENTITY_UPSERT', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+CALL
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | X | 2021-01-01 | 2022-01-01
+(1 row)
+
+-- Delete modes apply to the MERGE_ENTITY_* modes only; any other mode refuses them, and nothing changes.
+\echo '-- the other modes refuse a delete mode'
+-- the other modes refuse a delete mode
+TRUNCATE g; INSERT INTO g (id, v, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2023-01-01'), (2, 'z', '2020-01-01', '2023-01-01');
+TRUNCATE TABLE
+INSERT 0 2
+SAVEPOINT refuse;
+SAVEPOINT
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'INSERT_NEW_ENTITIES', delete_mode => 'DELETE_MISSING_TIMELINE');
+psql:sql/include/163_delete_modes_scenario.sql:59: ERROR:  sql_saga: delete_mode DELETE_MISSING_TIMELINE applies to the MERGE_ENTITY_* modes, not to INSERT_NEW_ENTITIES
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'UPDATE_FOR_PORTION_OF', delete_mode => 'DELETE_MISSING_ENTITIES');
+psql:sql/include/163_delete_modes_scenario.sql:61: ERROR:  sql_saga: delete_mode DELETE_MISSING_ENTITIES applies to the MERGE_ENTITY_* modes, not to UPDATE_FOR_PORTION_OF
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+CALL sql_saga.temporal_merge(target_table => 'g', source_table => 'src', primary_identity_columns => ARRAY['id'], mode => 'DELETE_FOR_PORTION_OF', delete_mode => 'DELETE_MISSING_TIMELINE_AND_ENTITIES');
+psql:sql/include/163_delete_modes_scenario.sql:63: ERROR:  sql_saga: delete_mode DELETE_MISSING_TIMELINE_AND_ENTITIES applies to the MERGE_ENTITY_* modes, not to DELETE_FOR_PORTION_OF
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+SELECT id, v, valid_from, valid_until FROM g ORDER BY id, valid_from;
+ id | v | valid_from | valid_until 
+----+---+------------+-------------
+  1 | a | 2020-01-01 | 2023-01-01
+  2 | z | 2020-01-01 | 2023-01-01
+(2 rows)
+
+ROLLBACK;
+ROLLBACK
+\set ECHO none
