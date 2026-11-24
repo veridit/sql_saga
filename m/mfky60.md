@@ -1,7 +1,7 @@
 ---
 id: mfky60
 title: "Planners disagree when a source row has both an identity and a natural key"
-state: "doing"
+state: "done"
 type: bug
 priority: ""
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzz"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T16:30"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T16:53"
 ---
 
 ## Goal
@@ -43,3 +42,4 @@ check 1: Test 165 (8 cases x 3 modes; id=1 code=Z moved to 40nwvn): native match
 check 2: make test fast 150/150 (tmp/fast_115_l.log), isolation 2/2. StatBus: location/activity/contact/stat imports pass id from a prior lookup by the same natural key, so the keys agree; power_root passes id from existing_pr joined on power_group_id, also agreeing; 7ae460c4
 ## History
 - 2026-11-24T16:30 todo -> doing/active (take)
+- 2026-11-24T16:53 doing/active -> done (done); was doing_since: 2026-11-24T16:30
