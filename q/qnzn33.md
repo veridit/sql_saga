@@ -1,7 +1,7 @@
 ---
 id: qnzn33
 title: "Updates as a chain of single-release steps instead of direct scripts"
-state: "doing"
+state: "done"
 type: feature
 priority: "high"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzz"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
-doing_since: "2026-11-24T02:12"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T05:00"
 ---
 
 ## Goal
@@ -46,5 +45,7 @@ Design: doc/design/update-chain.md. Committed ed7d9c8 (chain, 142 MB -> 17 MB in
 check 5: make builds sql_saga--1.13--1.14.sql via devops/update_step.py (13 unit tests OK); chain_steps.py --check versions exit 0; versions/ 142 MB -> 17 MB; 34/34 C symbols (ed7d9c8)
 check 4: Independent agent (cat) reviewed design + code: tmp/review_update_chain.md. Blocking B1 (DROP ROUTINE) and B2 (dependency refusal) fixed with tests, N1/N4/N5 addressed, design doc updated (commit 69fcfe2).
 check 6: Local upgrade matrix 14/14 GREEN (5408 checks) at 87085d0; CI 45314858890 green on every step incl. the matrix; tag v1.14
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T02:12 todo -> doing/active (take)
+- 2026-11-24T05:00 doing/active -> done (done); was doing_since: 2026-11-24T02:12

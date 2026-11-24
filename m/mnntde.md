@@ -12,7 +12,7 @@ created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
 doing_since: "2026-11-23T13:51"
-stage: "depends"
+stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
@@ -53,3 +53,4 @@ check 4: devops/update_step.sql bind_natural_keys; upgrade gate GREEN from 1.0/1
 check 5: check_integrity: 'natural key is not bound to the primary key' (src/2h); 016 scenario 4d, expected written first
 ## History
 - 2026-11-23T13:51 todo -> doing/active (take)
+- 2026-11-24T05:00 doing/depends -> doing/active (dependency qnzn33)
