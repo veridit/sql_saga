@@ -452,7 +452,7 @@ NOTICE:  sql_saga: Added constraints to table patch_extend.legal_unit: ALTER COL
 (1 row)
 
 SELECT sql_saga.add_unique_key('patch_extend.legal_unit', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table patch_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table patch_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT legal_unit_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
     add_unique_key     
 -----------------------
  legal_unit_name_valid
@@ -580,7 +580,7 @@ NOTICE:  sql_saga: Added constraints to table replace_extend.legal_unit: ALTER C
 (1 row)
 
 SELECT sql_saga.add_unique_key('replace_extend.legal_unit', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table replace_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table replace_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT legal_unit_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
     add_unique_key     
 -----------------------
  legal_unit_name_valid
@@ -706,7 +706,7 @@ NOTICE:  sql_saga: Added constraints to table delete_extend.legal_unit: ALTER CO
 (1 row)
 
 SELECT sql_saga.add_unique_key('delete_extend.legal_unit', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table delete_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table delete_extend.legal_unit: ADD CONSTRAINT legal_unit_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT legal_unit_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
     add_unique_key     
 -----------------------
  legal_unit_name_valid

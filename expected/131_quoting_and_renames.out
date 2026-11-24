@@ -65,8 +65,8 @@ temporal_merge after rename | ok
 Ta'ble|{"Edited \"At\"","Edited \"At\""}
 after rename of a repeated ephemeral column | check_integrity ok
 --- 2b: unique_keys.pk_consistency_constraint_names follows RENAME CONSTRAINT ---
-nat_code|{nat_code_pk_consistency_excl}
-nat_code|{"Nat \"Code\" Excl"}
+nat_code|{nat_code_pk_consistency_excl,nat_code_nk_consistency_excl}
+nat_code|{"Nat \"Code\" Excl",nat_code_nk_consistency_excl}
 after consistency constraint rename | check_integrity ok
 code A later under another id | 23P01: conflicting key value violates exclusion constraint "Nat "Code" Excl"
 drop the renamed constraint | P0001: cannot drop constraint "Nat "Code" Excl" on table "Odd "Schema".Nat Tab" because it is used in era unique key "nat_code"

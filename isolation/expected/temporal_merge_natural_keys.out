@@ -1,0 +1,55 @@
+Parsed test spec with 3 sessions
+
+starting permutation: s1id s2w s1c s2c result
+step s1id: 
+  CREATE TEMP TABLE src1 (row_id int, id int, old_code text, new_code text, v text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO src1 VALUES (1, 1, NULL, NULL, 's1', '[2021-01-01,2022-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'nk', source_table => 'src1', mode => 'MERGE_ENTITY_PATCH');
+
+step s2w: 
+  CREATE TEMP TABLE src2 (row_id int, id int, old_code text, new_code text, v text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO src2 VALUES (1, NULL, NULL, 'W', 's2', '[2020-01-01,2026-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'nk', source_table => 'src2', mode => 'PATCH_FOR_PORTION_OF');
+ <waiting ...>
+step s1c: COMMIT;
+step s2w: <... completed>
+step s2c: COMMIT;
+step result: SELECT id, old_code, new_code, v, valid_range FROM nk ORDER BY id, valid_range;
+id|old_code|new_code|v |valid_range            
+--+--------+--------+--+-----------------------
+ 1|X       |W       |s2|[2020-01-01,2026-01-01)
+ 1|X       |W       |a |[2026-01-01,2030-01-01)
+ 2|Y       |        |a |[2020-01-01,2030-01-01)
+(3 rows)
+
+
+starting permutation: s1q s2z s1c s2c result
+step s1q: 
+  CREATE TEMP TABLE src1 (row_id int, id int, old_code text, new_code text, v text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO src1 VALUES (1, 2, NULL, 'Q', 's1', '[2022-01-01,2023-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'nk', source_table => 'src1', mode => 'MERGE_ENTITY_PATCH');
+
+step s2z: 
+  CREATE TEMP TABLE src2 (row_id int, id int, old_code text, new_code text, v text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO src2 VALUES (1, NULL, 'Y', 'Z', 's2', '[2026-01-01,2027-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'nk', source_table => 'src2', mode => 'MERGE_ENTITY_PATCH');
+  SELECT status, error_message FROM pg_temp.temporal_merge_feedback;
+ <waiting ...>
+step s1c: COMMIT;
+step s2z: <... completed>
+status|error_message                                                                                                                 
+------+------------------------------------------------------------------------------------------------------------------------------
+ERROR |Source row is inconsistent. Natural key column new_code of target entity {"id": 2} would hold more than one value: ["Q", "Z"].
+(1 row)
+
+step s2c: COMMIT;
+step result: SELECT id, old_code, new_code, v, valid_range FROM nk ORDER BY id, valid_range;
+id|old_code|new_code|v |valid_range            
+--+--------+--------+--+-----------------------
+ 1|X       |        |a |[2020-01-01,2025-01-01)
+ 1|X       |W       |a |[2025-01-01,2030-01-01)
+ 2|Y       |        |a |[2020-01-01,2022-01-01)
+ 2|Y       |Q       |s1|[2022-01-01,2023-01-01)
+ 2|Y       |        |a |[2023-01-01,2030-01-01)
+(5 rows)
+

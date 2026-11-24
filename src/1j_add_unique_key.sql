@@ -1,11 +1,15 @@
 /*
- * The guard that binds a natural key to its entity (1.14, hug mnntde): for each stable primary key column (the primary
- * key's columns without the range), EXCLUDE (natural key WITH =, that column WITH <>). Together they refuse a natural
- * key value on two rows whose primary key differs in any column, at any time. No guard is needed when the natural key
- * itself contains every stable primary key column (outside its mutually exclusive columns): then its own uniqueness
- * already binds it. There is no opt-out: a natural key that could move between entities identifies nothing.
- * Names: <key>_pk_consistency_excl for a single stable column (as before 1.14), <key>_<column>_pk_consistency_excl for
- * each column of a composite one; a mutually exclusive key adds the XOR column to the name, as before.
+ * The guards that bind a natural key to its entity, both ways.
+ * (1) 1.14, hug mnntde: a value belongs to one entity. For each stable primary key column (the primary key's columns
+ * without the range), EXCLUDE (natural key WITH =, that column WITH <>). Together they refuse a natural key value on
+ * two rows whose primary key differs in any column, at any time. Not needed when the natural key itself contains every
+ * stable primary key column (outside its mutually exclusive columns): then its own uniqueness already binds it.
+ * (2) 1.15, hug 40nwvn: an entity holds one value. For each natural key column outside the primary key,
+ * EXCLUDE (stable primary key WITH =, that column WITH <>).
+ * There is no opt-out: a natural key that could move between entities, or change for one, identifies nothing.
+ * Names (1): <key>_pk_consistency_excl for a single stable column (as before 1.14), <key>_<column>_pk_consistency_excl
+ * for each column of a composite one; a mutually exclusive key adds the XOR column to the name, as before.
+ * Names (2): <key>_nk_consistency_excl for a one-column natural key, <key>_<column>_nk_consistency_excl otherwise.
  */
 CREATE FUNCTION sql_saga.__internal_generate_pk_consistency_constraints(
     p_unique_key_name name,
@@ -33,11 +37,9 @@ BEGIN
     IF p_stable_pk_columns IS NULL OR pg_catalog.array_length(p_stable_pk_columns, 1) IS NULL THEN
         RAISE EXCEPTION 'sql_saga: a primary key without a stable column cannot bind natural key "%"', p_unique_key_name;
     END IF;
-    -- Implied by the natural key's own uniqueness: it holds every stable primary key column.
-    IF p_stable_pk_columns <@ non_xor_cols THEN
-        RETURN jsonb_build_object('cmds', '[]'::jsonb, 'names', '[]'::jsonb);
-    END IF;
-    FOREACH v_pk_column IN ARRAY p_stable_pk_columns LOOP
+    -- The first half is implied by the natural key's own uniqueness when it holds every stable primary key column; the
+    -- other half (one value per entity, below) may still be needed.
+    FOREACH v_pk_column IN ARRAY CASE WHEN p_stable_pk_columns <@ non_xor_cols THEN '{}'::name[] ELSE p_stable_pk_columns END LOOP
         IF p_mutually_exclusive_columns IS NULL THEN
             -- A primary key column that is part of the natural key binds itself: (c WITH =, c WITH <>) never conflicts.
             CONTINUE WHEN v_pk_column = ANY (p_natural_key_columns);
@@ -80,6 +82,28 @@ BEGIN
                 v_constraint_names := pg_catalog.array_append(v_constraint_names, v_constraint_name);
             END LOOP;
         END IF;
+    END LOOP;
+
+    -- The other half (1.15, hug 40nwvn): EXCLUDE (stable primary key WITH =, natural key column WITH <>) for each natural
+    -- key column outside the primary key, so an entity holds at most one non-NULL value of it over its whole timeline
+    -- (NULL before the key starts and after it is retired is allowed: an exclusion ignores NULLs). An identifier that
+    -- changes is another natural key column; the entity moves to it by a row carrying both. A mutually exclusive
+    -- column needs no WHERE: its NULL rows never conflict.
+    FOREACH v_pk_column IN ARRAY p_natural_key_columns LOOP
+        CONTINUE WHEN v_pk_column = ANY (p_stable_pk_columns);
+        v_constraint_name := CASE WHEN pg_catalog.array_length(p_natural_key_columns, 1) > 1
+            THEN sql_saga.__internal_make_name(ARRAY[p_unique_key_name, v_pk_column], 'nk_consistency_excl')
+            ELSE sql_saga.__internal_make_name(ARRAY[p_unique_key_name], 'nk_consistency_excl') END;
+        IF v_constraint_name = ANY (v_constraint_names) THEN
+            v_constraint_name := sql_saga.__internal_make_name(ARRAY[p_unique_key_name, v_pk_column],
+                pg_catalog.cardinality(v_constraint_names) + 1 || '_nk_consistency_excl');
+        END IF;
+        SELECT array_agg(pg_catalog.format('%I WITH =', col) ORDER BY o) INTO v_withs
+        FROM pg_catalog.unnest(p_stable_pk_columns) WITH ORDINALITY AS u(col, o);
+        v_withs := v_withs || pg_catalog.format('%I WITH <>', v_pk_column);
+        v_constraint_sql := pg_catalog.format('ADD CONSTRAINT %I EXCLUDE USING gist (%s)', v_constraint_name, pg_catalog.array_to_string(v_withs, ', '));
+        v_constraint_cmds := pg_catalog.array_append(v_constraint_cmds, v_constraint_sql);
+        v_constraint_names := pg_catalog.array_append(v_constraint_names, v_constraint_name);
     END LOOP;
 
     RETURN jsonb_build_object('cmds', to_jsonb(v_constraint_cmds), 'names', to_jsonb(v_constraint_names));
@@ -479,8 +503,9 @@ BEGIN
         exclude_constraint := NULL;
     END IF;
 
-    -- A natural key is bound to its entity (1.14): with a primary key the guard is built now; without one the state is
-    -- pending ('{}') until add_unique_key adds the primary key. '{}' with a primary key means the guard is implied.
+    -- A natural key is bound to its entity both ways (1.14, 1.15): with a primary key the guards are built now; without
+    -- one the state is pending ('{}') until add_unique_key adds the primary key. '{}' with a primary key means both
+    -- guards are implied (the natural key is the primary key's columns).
     IF key_type = 'natural' THEN
         DECLARE
             pk_column_names name[];

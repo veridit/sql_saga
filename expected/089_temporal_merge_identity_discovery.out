@@ -58,14 +58,14 @@ NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ALTER C
 (1 row)
 
 SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['employee_nr'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_employee_nr_valid_uniq UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_employee_nr_valid_pk_consistency_excl EXCLUDE USING gist (employee_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_employee_nr_valid_uniq UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_employee_nr_valid_pk_consistency_excl EXCLUDE USING gist (employee_nr WITH =, id WITH <>); ADD CONSTRAINT person_employee_nr_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, employee_nr WITH <>)
       add_unique_key      
 --------------------------
  person_employee_nr_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['ssn'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_ssn_valid_uniq UNIQUE (ssn, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_ssn_valid_pk_consistency_excl EXCLUDE USING gist (ssn WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_ssn_valid_uniq UNIQUE (ssn, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_ssn_valid_pk_consistency_excl EXCLUDE USING gist (ssn WITH =, id WITH <>); ADD CONSTRAINT person_ssn_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, ssn WITH <>)
   add_unique_key  
 ------------------
  person_ssn_valid
@@ -86,12 +86,14 @@ NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CON
 Indexes:
     "person_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "person_employee_nr_idx" btree (employee_nr)
+    "person_employee_nr_valid_nk_consistency_excl" EXCLUDE USING gist (id WITH =, employee_nr WITH <>)
     "person_employee_nr_valid_pk_consistency_excl" EXCLUDE USING gist (employee_nr WITH =, id WITH <>)
     "person_employee_nr_valid_range_idx" btree (employee_nr, valid_range)
     "person_employee_nr_valid_uniq" UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS)
     "person_id_idx" btree (id)
     "person_id_valid_range_idx" btree (id, valid_range)
     "person_ssn_idx" btree (ssn)
+    "person_ssn_valid_nk_consistency_excl" EXCLUDE USING gist (id WITH =, ssn WITH <>)
     "person_ssn_valid_pk_consistency_excl" EXCLUDE USING gist (ssn WITH =, id WITH <>)
     "person_ssn_valid_range_idx" btree (ssn, valid_range)
     "person_ssn_valid_uniq" UNIQUE (ssn, valid_range WITHOUT OVERLAPS)

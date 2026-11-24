@@ -1,0 +1,283 @@
+\set ECHO none
+\set QUIET 0
+\set VERBOSITY terse
+\echo '==== The schema: each natural key column is bound to the primary key both ways'
+==== The schema: each natural key column is bound to the primary key both ways
+SELECT conname, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint WHERE conrelid = 'ho'::regclass AND contype = 'x' ORDER BY conname;
+                conname                |                    definition                    
+---------------------------------------+--------------------------------------------------
+ ho_new_code_valid_nk_consistency_excl | EXCLUDE USING gist (id WITH =, new_code WITH <>)
+ ho_new_code_valid_pk_consistency_excl | EXCLUDE USING gist (new_code WITH =, id WITH <>)
+ ho_old_code_valid_nk_consistency_excl | EXCLUDE USING gist (id WITH =, old_code WITH <>)
+ ho_old_code_valid_pk_consistency_excl | EXCLUDE USING gist (old_code WITH =, id WITH <>)
+(4 rows)
+
+SELECT unique_key_name, pk_consistency_constraint_names FROM sql_saga.unique_keys
+WHERE table_name = 'ho' ORDER BY unique_key_name;
+  unique_key_name  |                        pk_consistency_constraint_names                        
+-------------------+-------------------------------------------------------------------------------
+ ho_id_valid       | 
+ ho_new_code_valid | {ho_new_code_valid_pk_consistency_excl,ho_new_code_valid_nk_consistency_excl}
+ ho_old_code_valid | {ho_old_code_valid_pk_consistency_excl,ho_old_code_valid_nk_consistency_excl}
+(3 rows)
+
+\echo '-- one entity cannot hold two values of a natural key, at any time (refused):'
+-- one entity cannot hold two values of a natural key, at any time (refused):
+BEGIN;
+BEGIN
+SAVEPOINT two_values;
+SAVEPOINT
+INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'), (1, 'Q', NULL, 'a', '[2025-01-01,2030-01-01)');
+ERROR:  conflicting key value violates exclusion constraint "ho_old_code_valid_nk_consistency_excl"
+ROLLBACK TO SAVEPOINT two_values;
+ROLLBACK
+\echo '-- a value is NULL before the key starts and after it is retired (allowed):'
+-- a value is NULL before the key starts and after it is retired (allowed):
+SAVEPOINT null_periods;
+SAVEPOINT
+INSERT INTO ho VALUES (1, NULL, NULL, 'a', '[2018-01-01,2020-01-01)'), (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'),
+                      (1, NULL, 'Y', 'a', '[2025-01-01,2030-01-01)');
+INSERT 0 3
+SELECT id, old_code, new_code, valid_range FROM ho ORDER BY valid_range;
+ id | old_code | new_code |       valid_range       
+----+----------+----------+-------------------------
+  1 |          |          | [2018-01-01,2020-01-01)
+  1 | X        |          | [2020-01-01,2025-01-01)
+  1 |          | Y        | [2025-01-01,2030-01-01)
+(3 rows)
+
+ROLLBACK TO SAVEPOINT null_periods;
+ROLLBACK
+COMMIT;
+COMMIT
+CREATE TABLE src (row_id int, id int, old_code text, new_code text, v text, valid_range daterange);
+CREATE TABLE
+CREATE TABLE grid_case (sid int, id int, old_code text, new_code text, v text, valid_range daterange, mode text);
+CREATE TABLE
+INSERT INTO grid_case VALUES
+    -- the handover: a row carrying the old key and the new one, from 2025
+    (1, NULL, 'X', 'Y', 'a', '[2025-01-01,2030-01-01)', 'PATCH_FOR_PORTION_OF'),
+    (2, NULL, 'X', 'Y', 'b', '[2025-01-01,2030-01-01)', 'PATCH_FOR_PORTION_OF'),
+    (3, NULL, 'X', 'Y', 'b', '[2025-01-01,2030-01-01)', 'MERGE_ENTITY_PATCH'),
+    (4, NULL, 'X', 'Y', 'b', '[2025-01-01,2030-01-01)', 'MERGE_ENTITY_REPLACE'),
+    -- the new key given with the identity, for part of the time: written there only
+    (5, 1, NULL, 'Y', 'b', '[2025-01-01,2026-01-01)', 'PATCH_FOR_PORTION_OF'),
+    (6, 1, NULL, 'Y', 'b', '[2025-01-01,2026-01-01)', 'MERGE_ENTITY_PATCH'),
+    (7, 1, NULL, 'Y', 'b', '[2025-01-01,2026-01-01)', 'MERGE_ENTITY_UPSERT'),
+    -- the identity alone: natural keys untouched
+    (8, 1, NULL, NULL, 'b', '[2024-01-01,2026-01-01)', 'PATCH_FOR_PORTION_OF'),
+    (9, 1, NULL, NULL, 'b', '[2024-01-01,2026-01-01)', 'MERGE_ENTITY_UPSERT'),
+    (10, 1, NULL, NULL, 'b', '[2024-01-01,2026-01-01)', 'MERGE_ENTITY_REPLACE'),
+    -- another value of a key the entity holds: refused
+    (11, 1, 'Q', NULL, 'b', '[2025-01-01,2026-01-01)', 'PATCH_FOR_PORTION_OF'),
+    (12, 1, 'Q', NULL, 'b', '[2025-01-01,2026-01-01)', 'MERGE_ENTITY_PATCH'),
+    -- a key value only the source gives, found by the other key: a handover for part of the time
+    (13, NULL, 'X', 'Q', 'b', '[2025-01-01,2026-01-01)', 'MERGE_ENTITY_PATCH'),
+    -- time before the stored key starts: the new piece takes the source's values, like any column
+    (14, 1, NULL, NULL, 'b', '[2018-01-01,2021-01-01)', 'MERGE_ENTITY_PATCH'),
+    (15, NULL, 'X', NULL, 'b', '[2018-01-01,2021-01-01)', 'MERGE_ENTITY_PATCH');
+INSERT 0 15
+\echo '==== Target: id 1, old_code X, new_code NULL, v a, [2020,2030). One source row per case, both planners.'
+==== Target: id 1, old_code X, new_code NULL, v a, [2020,2030). One source row per case, both planners.
+CREATE TEMP TABLE grid_out (planner text, sid int, status text, error text, result text);
+CREATE TABLE
+DO $grid$
+DECLARE
+    v_planner text;
+    v_case record;
+    v_status text;
+    v_error text;
+    v_result text;
+BEGIN
+    FOREACH v_planner IN ARRAY ARRAY['native', 'plpgsql'] LOOP
+        FOR v_case IN SELECT * FROM grid_case ORDER BY sid LOOP
+            BEGIN
+                INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2030-01-01)');
+                INSERT INTO src VALUES (v_case.sid, v_case.id, v_case.old_code, v_case.new_code, v_case.v, v_case.valid_range);
+                PERFORM set_config('sql_saga.temporal_merge.use_plpgsql_planner', (v_planner = 'plpgsql')::text, true);
+                CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src',
+                                             mode => v_case.mode::sql_saga.temporal_merge_mode);
+                SELECT f.status::text, f.error_message INTO v_status, v_error FROM pg_temp.temporal_merge_feedback AS f;
+                SELECT string_agg(format('%s/%s/%s %s', COALESCE(h.old_code, '-'), COALESCE(h.new_code, '-'), h.v,
+                                         h.valid_range), ' ' ORDER BY h.valid_range)
+                INTO v_result FROM ho AS h;
+                RAISE EXCEPTION 'undo the case';
+            EXCEPTION WHEN OTHERS THEN
+                IF SQLERRM <> 'undo the case' THEN
+                    v_status := 'raised';
+                    v_error := SQLERRM;
+                    v_result := NULL;
+                END IF;
+            END;
+            INSERT INTO grid_out VALUES (v_planner, v_case.sid, v_status, v_error, v_result);
+        END LOOP;
+    END LOOP;
+END;
+$grid$;
+DO
+\echo '-- The native planner (the default):'
+-- The native planner (the default):
+SELECT o.sid, c.mode, format('id=%s old=%s new=%s v=%s %s', COALESCE(c.id::text, '-'), COALESCE(c.old_code, '-'),
+       COALESCE(c.new_code, '-'), c.v, c.valid_range) AS source, o.status, o.error, o.result
+FROM grid_out AS o JOIN grid_case AS c USING (sid)
+WHERE o.planner = 'native' ORDER BY o.sid;
+ sid |         mode         |                    source                    | status  |                                                             error                                                              |                                          result                                           
+-----+----------------------+----------------------------------------------+---------+--------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------
+   1 | PATCH_FOR_PORTION_OF | id=- old=X new=Y v=a [2025-01-01,2030-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/a [2025-01-01,2030-01-01)
+   2 | PATCH_FOR_PORTION_OF | id=- old=X new=Y v=b [2025-01-01,2030-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2030-01-01)
+   3 | MERGE_ENTITY_PATCH   | id=- old=X new=Y v=b [2025-01-01,2030-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2030-01-01)
+   4 | MERGE_ENTITY_REPLACE | id=- old=X new=Y v=b [2025-01-01,2030-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2030-01-01)
+   5 | PATCH_FOR_PORTION_OF | id=1 old=- new=Y v=b [2025-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+   6 | MERGE_ENTITY_PATCH   | id=1 old=- new=Y v=b [2025-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+   7 | MERGE_ENTITY_UPSERT  | id=1 old=- new=Y v=b [2025-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Y/b [2025-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+   8 | PATCH_FOR_PORTION_OF | id=1 old=- new=- v=b [2024-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2024-01-01) X/-/b [2024-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+   9 | MERGE_ENTITY_UPSERT  | id=1 old=- new=- v=b [2024-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2024-01-01) X/-/b [2024-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+  10 | MERGE_ENTITY_REPLACE | id=1 old=- new=- v=b [2024-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2024-01-01) X/-/b [2024-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+  11 | PATCH_FOR_PORTION_OF | id=1 old=Q new=- v=b [2025-01-01,2026-01-01) | ERROR   | Source row is inconsistent. Natural key column old_code of target entity {"id": 1} would hold more than one value: ["Q", "X"]. | X/-/a [2020-01-01,2030-01-01)
+  12 | MERGE_ENTITY_PATCH   | id=1 old=Q new=- v=b [2025-01-01,2026-01-01) | ERROR   | Source row is inconsistent. Natural key column old_code of target entity {"id": 1} would hold more than one value: ["Q", "X"]. | X/-/a [2020-01-01,2030-01-01)
+  13 | MERGE_ENTITY_PATCH   | id=- old=X new=Q v=b [2025-01-01,2026-01-01) | APPLIED |                                                                                                                                | X/-/a [2020-01-01,2025-01-01) X/Q/b [2025-01-01,2026-01-01) X/-/a [2026-01-01,2030-01-01)
+  14 | MERGE_ENTITY_PATCH   | id=1 old=- new=- v=b [2018-01-01,2021-01-01) | APPLIED |                                                                                                                                | X/-/b [2018-01-01,2021-01-01) X/-/a [2021-01-01,2030-01-01)
+  15 | MERGE_ENTITY_PATCH   | id=- old=X new=- v=b [2018-01-01,2021-01-01) | APPLIED |                                                                                                                                | X/-/b [2018-01-01,2021-01-01) X/-/a [2021-01-01,2030-01-01)
+(15 rows)
+
+\echo '-- The PL/pgSQL planner gives the same result for every case (no rows):'
+-- The PL/pgSQL planner gives the same result for every case (no rows):
+SELECT n.sid, n.status AS native, p.status AS plpgsql, n.error AS native_error, p.error AS plpgsql_error,
+       n.result AS native_result, p.result AS plpgsql_result
+FROM grid_out AS n JOIN grid_out AS p USING (sid)
+WHERE n.planner = 'native' AND p.planner = 'plpgsql'
+  AND (n.status, n.error, n.result) IS DISTINCT FROM (p.status, p.error, p.result)
+ORDER BY n.sid;
+ sid | native | plpgsql | native_error | plpgsql_error | native_result | plpgsql_result 
+-----+--------+---------+--------------+---------------+---------------+----------------
+(0 rows)
+
+\echo '==== Two rows of one batch giving the entity two values of a key: both refused, nothing written'
+==== Two rows of one batch giving the entity two values of a key: both refused, nothing written
+BEGIN;
+BEGIN
+INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2030-01-01)');
+INSERT 0 1
+INSERT INTO src VALUES (1, 1, NULL, 'Y', 'b', '[2025-01-01,2026-01-01)'), (2, 1, NULL, 'Z', 'c', '[2027-01-01,2028-01-01)');
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'MERGE_ENTITY_PATCH');
+CALL
+SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | status |                                                         error_message                                                          
+---------------+--------+--------------------------------------------------------------------------------------------------------------------------------
+             1 | ERROR  | Source row is inconsistent. Natural key column new_code of target entity {"id": 1} would hold more than one value: ["Y", "Z"].
+             2 | ERROR  | Source row is inconsistent. Natural key column new_code of target entity {"id": 1} would hold more than one value: ["Y", "Z"].
+(2 rows)
+
+TABLE ho;
+ id | old_code | new_code | v |       valid_range       
+----+----------+----------+---+-------------------------
+  1 | X        |          | a | [2020-01-01,2030-01-01)
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+BEGIN;
+BEGIN
+SET LOCAL sql_saga.temporal_merge.use_plpgsql_planner = true;
+SET
+INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2030-01-01)');
+INSERT 0 1
+INSERT INTO src VALUES (1, 1, NULL, 'Y', 'b', '[2025-01-01,2026-01-01)'), (2, 1, NULL, 'Z', 'c', '[2027-01-01,2028-01-01)');
+INSERT 0 2
+CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'MERGE_ENTITY_PATCH');
+CALL
+SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | status |                                                         error_message                                                          
+---------------+--------+--------------------------------------------------------------------------------------------------------------------------------
+             1 | ERROR  | Source row is inconsistent. Natural key column new_code of target entity {"id": 1} would hold more than one value: ["Y", "Z"].
+             2 | ERROR  | Source row is inconsistent. Natural key column new_code of target entity {"id": 1} would hold more than one value: ["Y", "Z"].
+(2 rows)
+
+TABLE ho;
+ id | old_code | new_code | v |       valid_range       
+----+----------+----------+---+-------------------------
+  1 | X        |          | a | [2020-01-01,2030-01-01)
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+\echo '==== An entity found by a key its earlier pieces do not hold: the planner sees the whole entity'
+==== An entity found by a key its earlier pieces do not hold: the planner sees the whole entity
+\echo '-- id 1: old_code X over [2020,2030), new_code W from 2025; the source names only W, from 2021.'
+-- id 1: old_code X over [2020,2030), new_code W from 2025; the source names only W, from 2021.
+BEGIN;
+BEGIN
+INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'), (1, 'X', 'W', 'a', '[2025-01-01,2030-01-01)');
+INSERT 0 2
+INSERT INTO src VALUES (1, NULL, NULL, 'W', 'c', '[2021-01-01,2026-01-01)');
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'PATCH_FOR_PORTION_OF');
+CALL
+SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | status  | error_message 
+---------------+---------+---------------
+             1 | APPLIED | 
+(1 row)
+
+TABLE ho ORDER BY valid_range;
+ id | old_code | new_code | v |       valid_range       
+----+----------+----------+---+-------------------------
+  1 | X        |          | a | [2020-01-01,2021-01-01)
+  1 | X        | W        | c | [2021-01-01,2026-01-01)
+  1 | X        | W        | a | [2026-01-01,2030-01-01)
+(3 rows)
+
+ROLLBACK;
+ROLLBACK
+BEGIN;
+BEGIN
+SET LOCAL sql_saga.temporal_merge.use_plpgsql_planner = true;
+SET
+INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'), (1, 'X', 'W', 'a', '[2025-01-01,2030-01-01)');
+INSERT 0 2
+INSERT INTO src VALUES (1, NULL, NULL, 'W', 'c', '[2021-01-01,2026-01-01)');
+INSERT 0 1
+CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'PATCH_FOR_PORTION_OF');
+CALL
+SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | status  | error_message 
+---------------+---------+---------------
+             1 | APPLIED | 
+(1 row)
+
+TABLE ho ORDER BY valid_range;
+ id | old_code | new_code | v |       valid_range       
+----+----------+----------+---+-------------------------
+  1 | X        |          | a | [2020-01-01,2021-01-01)
+  1 | X        | W        | c | [2021-01-01,2026-01-01)
+  1 | X        | W        | a | [2026-01-01,2030-01-01)
+(3 rows)
+
+ROLLBACK;
+ROLLBACK
+\echo '==== check_integrity reports a natural key whose reverse guard is missing'
+==== check_integrity reports a natural key whose reverse guard is missing
+\echo '-- the state 1.14 left (the reverse guard did not exist), bypassing the event triggers as a restore would:'
+-- the state 1.14 left (the reverse guard did not exist), bypassing the event triggers as a restore would:
+BEGIN;
+BEGIN
+SET LOCAL session_replication_role = replica;
+SET
+ALTER TABLE ho DROP CONSTRAINT ho_new_code_valid_nk_consistency_excl;
+ALTER TABLE
+UPDATE sql_saga.unique_keys SET pk_consistency_constraint_names = '{ho_new_code_valid_pk_consistency_excl}'
+WHERE unique_key_name = 'ho_new_code_valid';
+UPDATE 1
+RESET session_replication_role;
+RESET
+SAVEPOINT report;
+SAVEPOINT
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for unique key "ho_new_code_valid" on table "nk_166.ho": natural key is not bound to the primary key; repair with drop_unique_key and add_unique_key
+ROLLBACK TO SAVEPOINT report;
+ROLLBACK
+ROLLBACK;
+ROLLBACK
+\set ECHO none

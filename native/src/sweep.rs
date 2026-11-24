@@ -49,7 +49,10 @@ pub fn sweep_line_plan(
     let matched_sources = detect_eclipsed(matched_sources, ctx);
 
     // Phase 3: Group by entity
-    let entity_groups = group_by_entity(matched_sources, &target_rows, ctx);
+    let mut entity_groups = group_by_entity(matched_sources, &target_rows, ctx);
+
+    // Phase 3.5: An entity holds one value of each natural key column outside its identity (hug 40nwvn)
+    refuse_other_natural_key_values(&mut entity_groups, ctx);
 
     // Phase 4: Per-entity sweep-line processing
     let mut all_plan_rows: Vec<PlanRow> = Vec::new();
@@ -650,6 +653,54 @@ fn group_by_entity(
 
 // ── Mode-specific filtering ──
 
+/// An entity holds at most one non-NULL value of each natural key column outside its identity, over its whole timeline
+/// (hug 40nwvn; the schema enforces it with the <key>_nk_consistency_excl guard). A source row giving another value than
+/// the entity holds, or than another row of the batch gives for the same entity, gets ERROR feedback and writes
+/// nothing; the guard would otherwise fail the whole call.
+fn refuse_other_natural_key_values(groups: &mut BTreeMap<String, EntityGroup>, ctx: &PlannerContext) {
+    if ctx.nk_data_cols.is_empty() {
+        return;
+    }
+    for group in groups.values_mut() {
+        for col in &ctx.nk_data_cols {
+            // The values the entity holds (any piece) and the values the active source rows give.
+            let mut held: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+            for tr in &group.target_rows {
+                if let Some(v) = tr.lookup_keys.get(col).filter(|v| !v.is_null()) {
+                    held.insert(json_value_to_str(v), v.clone());
+                }
+            }
+            let mut given: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+            for sr in group.source_rows.iter().filter(|s| s.early_feedback.is_none()) {
+                if let Some(v) = sr.source.lookup_keys.get(col).filter(|v| !v.is_null()) {
+                    given.insert(json_value_to_str(v), v.clone());
+                }
+            }
+            let mut values: BTreeMap<String, serde_json::Value> = held.clone();
+            values.extend(given.clone());
+            if values.len() <= 1 {
+                continue;
+            }
+            let identity = json_to_pg_text(&serde_json::Value::Object(group.identity_keys.clone()));
+            let listed = values.values().map(|v| json_to_pg_text(v)).collect::<Vec<_>>().join(", ");
+            for sr in group.source_rows.iter_mut().filter(|s| s.early_feedback.is_none()) {
+                let Some(v) = sr.source.lookup_keys.get(col).filter(|v| !v.is_null()) else { continue };
+                // A row giving the one value the entity holds is consistent; any other row giving a value is not.
+                if held.len() == 1 && held.contains_key(&json_value_to_str(v)) {
+                    continue;
+                }
+                sr.early_feedback = Some(EarlyFeedback {
+                    action: PlanAction::Error,
+                    message: Some(format!(
+                        "Source row is inconsistent. Natural key column {} of target entity {} would hold more than one value: [{}].",
+                        col, identity, listed
+                    )),
+                });
+            }
+        }
+    }
+}
+
 fn filter_by_mode<'a>(
     active_sources: &[&'a MatchedSourceRow],
     _group: &EntityGroup,
@@ -742,6 +793,16 @@ fn resolve_payloads(
     let is_numeric = ctx.era.range_subtype_category == 'N';
     let mut resolved = Vec::with_capacity(segments.len());
 
+    // The entity's natural key values (hug 40nwvn): it holds at most one of each column outside its identity (rows giving
+    // another were refused), the one an active source row gives, else the one a target piece holds. Time without a
+    // target piece carries them, so it coalesces with the pieces beside it.
+    let entity_nk: Vec<(String, serde_json::Value)> = ctx.nk_data_cols.iter().filter_map(|col| {
+        active_sources.iter()
+            .find_map(|s| s.source.lookup_keys.get(col).filter(|v| !v.is_null()).cloned())
+            .or_else(|| target_rows.iter().find_map(|t| t.lookup_keys.get(col).filter(|v| !v.is_null()).cloned()))
+            .map(|v| (col.clone(), v))
+    }).collect();
+
     for seg in segments {
         // Find covering source rows (source interval contains segment)
         let mut covering_sources: Vec<&MatchedSourceRow> = active_sources
@@ -771,6 +832,17 @@ fn resolve_payloads(
             (None, covering_sources.iter().map(|s| s.source.row_id).collect())
         } else {
             resolve_source_payload(&covering_sources, covering_target, ctx)
+        };
+        let data_payload = match (data_payload, covering_target) {
+            (Some(mut p), None) if !entity_nk.is_empty() => {
+                for (col, v) in &entity_nk {
+                    if p.get(col).map_or(true, |x| x.is_null()) {
+                        p.insert(col.clone(), v.clone());
+                    }
+                }
+                Some(p)
+            }
+            (p, _) => p,
         };
 
         let source_from = covering_sources.first().map(|s| s.source.valid_from.clone());
@@ -981,6 +1053,11 @@ fn resolve_source_payload(
             for (k, v) in &sr.source.data_payload {
                 if v.is_null() && ctx.exclude_if_null_columns.contains(k) {
                     // Skip NULL — preserves target value for this column
+                    continue;
+                }
+                // A NULL natural key means the source does not give it, in every mode: a merge never clears a
+                // natural key (hug 40nwvn).
+                if v.is_null() && ctx.nk_data_cols.contains(k) {
                     continue;
                 }
                 merged.insert(k.clone(), v.clone());
@@ -1213,9 +1290,18 @@ fn classify_operations(
             // matching PL/pgSQL behavior for both source-matched and orphan entities
             Some(serde_json::Value::Object(serde_json::Map::new()))
         } else {
-            // Find first source row with any values for lookup cols
-            let first_sr = group.source_rows.first();
+            // An entity holds at most one value of each natural key column (hug 40nwvn; rows giving another were
+            // refused above), so the value is the first non-NULL one an active source row gives, else the one a target
+            // piece holds. Pieces carry their own value in their data; this one fills time that has no target piece.
+            let first_sr = group.source_rows.iter().find(|s| s.early_feedback.is_none()).or(group.source_rows.first());
             let first_tr = group.target_rows.first();
+            let entity_value = |col: &String| -> Option<serde_json::Value> {
+                group.source_rows.iter()
+                    .filter(|s| s.early_feedback.is_none())
+                    .find_map(|s| s.source.identity_keys.get(col).or_else(|| s.source.lookup_keys.get(col)).filter(|v| !v.is_null()).cloned())
+                    .or_else(|| group.target_rows.iter()
+                        .find_map(|t| t.lookup_keys.get(col).or_else(|| t.identity_keys.get(col)).filter(|v| !v.is_null()).cloned()))
+            };
             match first_sr {
                 Some(sr) => {
                     let mut lk_map = serde_json::Map::new();
@@ -1229,12 +1315,8 @@ fn classify_operations(
                         // For existing entities, fall back to target values when source is NULL.
                         // PL/pgSQL resolves columns via COALESCE(source, target) so the diff row
                         // already carries target values for NULL source columns.
-                        let val = if val.is_null() && !group.is_new_entity {
-                            first_tr.and_then(|tr| {
-                                tr.lookup_keys.get(col)
-                                    .or_else(|| tr.identity_keys.get(col))
-                                    .cloned()
-                            }).unwrap_or(val)
+                        let val = if val.is_null() && (!group.is_new_entity || ctx.nk_data_cols.contains(col)) {
+                            entity_value(col).unwrap_or(val)
                         } else {
                             val
                         };

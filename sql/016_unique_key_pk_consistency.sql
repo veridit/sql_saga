@@ -136,9 +136,10 @@ ROLLBACK TO SAVEPOINT expect_error;
 SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT s4b;
 
--- Scenario 4c: A natural key that contains every stable primary key column is bound by its own uniqueness: no guard.
+-- Scenario 4c: A natural key that contains every stable primary key column is bound to it by its own uniqueness (no
+-- pk guard); its other column still holds one value per entity (the nk guard, 1.15, hug 40nwvn).
 \echo
-\echo --- Scenario 4c: NK containing the whole stable PK needs no guard ---
+\echo --- Scenario 4c: NK containing the whole stable PK needs only the one-value guard ---
 SAVEPOINT s4c;
 CREATE TABLE pk_consistency.nk_contains_pk (
     org_id int,

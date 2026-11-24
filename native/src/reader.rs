@@ -342,7 +342,7 @@ fn build_target_sql_template(
     }
 
     // Fall back to dynamic SQL with __SOURCE_IDENT__ subquery
-    let where_clause = build_target_filter("__SOURCE_IDENT__", source_cols, ctx);
+    let where_clause = build_target_filter(target_ident, "__SOURCE_IDENT__", source_cols, ctx);
     let sql = format!(
         "SELECT lower(t.{rc})::text, upper(t.{rc})::text{cols} \
          FROM {tgt} AS t{where_c}",
@@ -384,7 +384,7 @@ pub fn read_target_rows_with_sql(
                 });
 
             let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
-                read_target_ordinals(&row, layout);
+                read_target_ordinals(&row, layout, &state.ctx.nk_data_cols);
 
             rows.push(TargetRow {
                 valid_from,
@@ -550,6 +550,14 @@ fn read_source_ordinals(
     let lookup_cols_are_null = ctx.all_lookup_cols.is_empty()
         || lookup.values().all(|v| v.is_null());
 
+    // Natural key columns outside the identity are also carried in the data payload (hug 40nwvn); a NULL there means
+    // the source does not give the key, in every mode (a natural key is never cleared by a merge).
+    for col in &ctx.nk_data_cols {
+        if let Some(v) = lookup.get(col) {
+            data.insert(col.clone(), v.clone());
+        }
+    }
+
     (identity, lookup, data, ephemeral, stable_pk, is_identifiable, lookup_cols_are_null)
 }
 
@@ -702,15 +710,37 @@ fn try_build_parameterized_filter(
     // One branch per key set, combined by ctid: OR'ing the key sets in one WHERE made PostgreSQL build a BitmapOr over
     // the GiST exclusion index for every branch, 450,000 buffer reads for 1,000 keys on a 200,000-row table (6 s, hug
     // aqqsgb), where each branch alone uses its own index (3,000 reads). A single key set needs no UNION.
-    if where_parts.len() == 1 {
+    if where_parts.len() == 1 && !needs_whole_entity(ctx) {
         return Some((format!(" WHERE {}", where_parts[0]), params));
     }
     let branches: Vec<String> = where_parts
         .iter()
         .map(|w| format!("SELECT t.ctid FROM {target_ident} AS t WHERE {w}"))
         .collect();
-    let where_clause = format!(" WHERE t.ctid = ANY (ARRAY({}))", branches.join(" UNION "));
-    Some((where_clause, params))
+    Some((whole_entity_where(target_ident, &branches.join(" UNION "), ctx), params))
+}
+
+/// True when the rows a key finds may be only part of their entity (hug 40nwvn): a natural key column outside the
+/// identity is NULL before the key starts and after it is retired, so the entity's other pieces are found only by its
+/// identity. The planner must see the whole entity.
+fn needs_whole_entity(ctx: &PlannerContext) -> bool {
+    !ctx.nk_data_cols.is_empty() && !ctx.identity_columns.is_empty()
+}
+
+/// The WHERE clause that reads the rows `matched` (a query of target ctids) names: with natural key columns outside the
+/// identity, every row of each entity those rows belong to, by its identity.
+fn whole_entity_where(target_ident: &str, matched: &str, ctx: &PlannerContext) -> String {
+    if !needs_whole_entity(ctx) {
+        return format!(" WHERE t.ctid = ANY (ARRAY({matched}))");
+    }
+    let e_cols = ctx.identity_columns.iter().map(|c| format!("e.{}", qi(c))).collect::<Vec<_>>().join(", ");
+    let t_cols = ctx.identity_columns.iter().map(|c| format!("t.{}", qi(c))).collect::<Vec<_>>().join(", ");
+    // A single column as = ANY (ARRAY(...)), which the planner always serves from the index; IN (subquery) may become a
+    // hash join over the whole table (the lock step learned this, doc/design/temporal-merge-concurrency.md).
+    if ctx.identity_columns.len() == 1 {
+        return format!(" WHERE {t_cols} = ANY (ARRAY(SELECT {e_cols} FROM {target_ident} AS e WHERE e.ctid = ANY (ARRAY({matched}))))");
+    }
+    format!(" WHERE ({t_cols}) IN (SELECT {e_cols} FROM {target_ident} AS e WHERE e.ctid = ANY (ARRAY({matched})))")
 }
 
 /// Extract distinct filter values from source rows for parameterized target read.
@@ -822,7 +852,7 @@ pub fn read_target_rows_parameterized(
                     });
 
                 let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
-                    read_target_ordinals(&row, layout);
+                    read_target_ordinals(&row, layout, &state.ctx.nk_data_cols);
 
                 rows.push(TargetRow {
                     valid_from,
@@ -844,6 +874,7 @@ pub fn read_target_rows_parameterized(
 fn read_target_ordinals(
     row: &pgrx::spi::SpiHeapTupleData,
     layout: &[ColMapping],
+    nk_data_cols: &[String],
 ) -> (
     serde_json::Map<String, serde_json::Value>, // identity_keys
     serde_json::Map<String, serde_json::Value>, // lookup_keys
@@ -879,6 +910,13 @@ fn read_target_ordinals(
             ColCategory::StablePk => {
                 pk.insert(cm.col_name.clone(), val);
             }
+        }
+    }
+
+    // Each target piece carries its own natural key values in its data (hug 40nwvn).
+    for (col, v) in lookup.iter() {
+        if nk_data_cols.contains(col) {
+            data.insert(col.clone(), v.clone());
         }
     }
 
@@ -959,6 +997,7 @@ fn format_pg_array_literal(values: &[Option<String>]) -> String {
 /// Build a WHERE clause that filters the target table to only entities present
 /// in the source batch. Mirrors the PL/pgSQL planner's `v_target_rows_filter`.
 fn build_target_filter(
+    target_ident: &str,
     source_ident: &str,
     source_cols: &[String],
     ctx: &PlannerContext,
@@ -1030,6 +1069,10 @@ fn build_target_filter(
         return String::new();
     }
 
+    if needs_whole_entity(ctx) {
+        let matched = format!("SELECT t.ctid FROM {target_ident} AS t WHERE {}", union_parts.join(" OR "));
+        return whole_entity_where(target_ident, &matched, ctx);
+    }
     format!(" WHERE {}", union_parts.join(" OR "))
 }
 

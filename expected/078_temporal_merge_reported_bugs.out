@@ -67,7 +67,7 @@ NOTICE:  sql_saga: Added constraints to table tmrb.my_stat_for_unit: ADD CONSTRA
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: Added constraints to table tmrb.my_stat_for_unit: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table tmrb.my_stat_for_unit: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>); ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_unit_id WITH <>)
             add_unique_key            
 --------------------------------------
  my_stat_for_unit_legal_unit_id_valid

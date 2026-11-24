@@ -498,6 +498,10 @@ pub struct PlannerContext {
     pub log_trace: bool,
     /// Columns where NULL source values should be stripped in UPSERT/REPLACE modes.
     pub exclude_if_null_columns: std::collections::HashSet<String>,
+    /// Natural key columns outside the identity and primary key (hug 40nwvn). They name the entity, so they are matched
+    /// as keys, and each piece also carries its own value in its data payload: an entity holds one value of each, but
+    /// may hold none (NULL) before the key starts or after it is retired, so the value is per piece, not per entity.
+    pub nk_data_cols: Vec<String>,
 }
 
 impl PlannerContext {

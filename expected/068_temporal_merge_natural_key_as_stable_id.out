@@ -110,7 +110,7 @@ NOTICE:  sql_saga: Created GIST index "nk_unit_employment_valid_range_gist_idx" 
 -- The unique key on the natural key is what allows `temporal_merge` to
 -- identify a unique entity over time using these columns.
 SELECT sql_saga.add_unique_key('nk_unit_employment'::regclass, ARRAY['legal_unit_id', 'establishment_id']);
-NOTICE:  sql_saga: Added constraints to table public.nk_unit_employment: ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_uniq UNIQUE (legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_pk_cons EXCLUDE USING gist (legal_unit_id WITH =, establishment_id WITH =, employment_id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.nk_unit_employment: ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_uniq UNIQUE (legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_pk_cons EXCLUDE USING gist (legal_unit_id WITH =, establishment_id WITH =, employment_id WITH <>); ADD CONSTRAINT nk_unit_employment_legal_un_legal_unit_id_nk_consistency_excl EXCLUDE USING gist (employment_id WITH =, legal_unit_id WITH <>); ADD CONSTRAINT nk_unit_employment_legal_establishment_id_nk_consistency_excl EXCLUDE USING gist (employment_id WITH =, establishment_id WITH <>)
                      add_unique_key                      
 ---------------------------------------------------------
  nk_unit_employment_legal_unit_id_establishment_id_valid

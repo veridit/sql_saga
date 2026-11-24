@@ -421,7 +421,7 @@ NOTICE:  sql_saga: Added constraints to table saga_repro.target_units_ephemeral:
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_units_ephemeral', ARRAY['unit_ident'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_units_ephemeral: ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_units_ephemeral: ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>); ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, unit_ident WITH <>)
              add_unique_key              
 -----------------------------------------
  target_units_ephemeral_unit_ident_valid
@@ -921,7 +921,7 @@ NOTICE:  sql_saga: Created GIST index "target_with_audit_valid_range_gist_idx" o
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_with_audit', ARRAY['key_col'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_with_audit: ADD CONSTRAINT target_with_audit_key_col_valid_uniq UNIQUE (key_col, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_with_audit_key_col_valid_pk_consistency_excl EXCLUDE USING gist (key_col WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_with_audit: ADD CONSTRAINT target_with_audit_key_col_valid_uniq UNIQUE (key_col, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_with_audit_key_col_valid_pk_consistency_excl EXCLUDE USING gist (key_col WITH =, id WITH <>); ADD CONSTRAINT target_with_audit_key_col_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, key_col WITH <>)
          add_unique_key          
 ---------------------------------
  target_with_audit_key_col_valid
@@ -1010,7 +1010,7 @@ NOTICE:  sql_saga: Created GIST index "target_with_audit_patch_valid_range_gist_
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_with_audit_patch', ARRAY['key_col'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_with_audit_patch: ADD CONSTRAINT target_with_audit_patch_key_col_valid_uniq UNIQUE (key_col, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_with_audit_patch_key_col_valid_pk_consistency_excl EXCLUDE USING gist (key_col WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_with_audit_patch: ADD CONSTRAINT target_with_audit_patch_key_col_valid_uniq UNIQUE (key_col, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_with_audit_patch_key_col_valid_pk_consistency_excl EXCLUDE USING gist (key_col WITH =, id WITH <>); ADD CONSTRAINT target_with_audit_patch_key_col_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, key_col WITH <>)
             add_unique_key             
 ---------------------------------------
  target_with_audit_patch_key_col_valid
@@ -1107,7 +1107,7 @@ NOTICE:  sql_saga: Created GIST index "target_mixed_ephemeral_valid_range_gist_i
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_mixed_ephemeral', ARRAY['stat_definition_id', 'legal_unit_id', 'establishment_id'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_mixed_ephemeral: ADD CONSTRAINT target_mixed__stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_mixed__stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_mixed_ephemeral: ADD CONSTRAINT target_mixed__stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_mixed__stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>); ADD CONSTRAINT target_mixed__stat_def_stat_definition_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, stat_definition_id WITH <>); ADD CONSTRAINT target_mixed__stat_definiti_legal_unit_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_unit_id WITH <>); ADD CONSTRAINT target_mixed__stat_defin_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>)
                         add_unique_key                         
 ---------------------------------------------------------------
  target_mixed__stat_definiti_legal_unit_id_establishment_valid
@@ -1215,7 +1215,7 @@ NOTICE:  sql_saga: Created GIST index "target_batch_ephemeral_valid_range_gist_i
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_batch_ephemeral', ARRAY['stat_definition_id', 'establishment_id'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_batch_ephemeral: ADD CONSTRAINT target_batch_epheme_stat_definition_id_establishment_id_valid_u UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_batch_epheme_stat_definition_id_establishment_id_valid_p EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_batch_ephemeral: ADD CONSTRAINT target_batch_epheme_stat_definition_id_establishment_id_valid_u UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_batch_epheme_stat_definition_id_establishment_id_valid_p EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>); ADD CONSTRAINT target_batch_epheme_st_stat_definition_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, stat_definition_id WITH <>); ADD CONSTRAINT target_batch_epheme_stat_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>)
                         add_unique_key                         
 ---------------------------------------------------------------
  target_batch_epheme_stat_definition_id_establishment_id_valid
@@ -1329,7 +1329,7 @@ NOTICE:  sql_saga: Created GIST index "target_temp_view_test_valid_range_gist_id
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_temp_view_test', ARRAY['stat_definition_id', 'legal_unit_id', 'establishment_id'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_temp_view_test: ADD CONSTRAINT target_temp_v_stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_temp_v_stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_temp_view_test: ADD CONSTRAINT target_temp_v_stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_temp_v_stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>); ADD CONSTRAINT target_temp_v_stat_def_stat_definition_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, stat_definition_id WITH <>); ADD CONSTRAINT target_temp_v_stat_definiti_legal_unit_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_unit_id WITH <>); ADD CONSTRAINT target_temp_v_stat_defin_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>)
                         add_unique_key                         
 ---------------------------------------------------------------
  target_temp_v_stat_definiti_legal_unit_id_establishment_valid
@@ -1480,7 +1480,7 @@ NOTICE:  sql_saga: Created GIST index "target_statbus_valid_range_gist_idx" on c
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_statbus', ARRAY['stat_definition_id', 'legal_unit_id', 'establishment_id'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_statbus: ADD CONSTRAINT target_statbu_stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_statbu_stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_statbus: ADD CONSTRAINT target_statbu_stat_definiti_legal_unit_id_establishment_valid_u UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_statbu_stat_definiti_legal_unit_id_establishment_valid_p EXCLUDE USING gist (stat_definition_id WITH =, legal_unit_id WITH =, establishment_id WITH =, id WITH <>); ADD CONSTRAINT target_statbu_stat_def_stat_definition_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, stat_definition_id WITH <>); ADD CONSTRAINT target_statbu_stat_definiti_legal_unit_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_unit_id WITH <>); ADD CONSTRAINT target_statbu_stat_defin_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>)
                         add_unique_key                         
 ---------------------------------------------------------------
  target_statbu_stat_definiti_legal_unit_id_establishment_valid
@@ -1616,7 +1616,7 @@ NOTICE:  sql_saga: Created GIST index "target_step13_valid_range_gist_idx" on co
 SELECT sql_saga.add_unique_key('saga_repro.target_step13', 
     ARRAY['stat_definition_id', 'establishment_id'], 
     key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_step13: ADD CONSTRAINT target_step13_stat_definition_id_establishment_id_valid_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_step13_stat_definition_id_establishment_id_valid_pk_cons EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_step13: ADD CONSTRAINT target_step13_stat_definition_id_establishment_id_valid_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_step13_stat_definition_id_establishment_id_valid_pk_cons EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>); ADD CONSTRAINT target_step13_stat_def_stat_definition_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, stat_definition_id WITH <>); ADD CONSTRAINT target_step13_stat_defin_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>)
                      add_unique_key                      
 ---------------------------------------------------------
  target_step13_stat_definition_id_establishment_id_valid
@@ -1738,7 +1738,7 @@ NOTICE:  sql_saga: Created GIST index "target_default_preservation_valid_range_g
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_default_preservation', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_default_preservation: ADD CONSTRAINT target_default_preservation_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_default_preservation_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_default_preservation: ADD CONSTRAINT target_default_preservation_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_default_preservation_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT target_default_preservation_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
              add_unique_key             
 ----------------------------------------
  target_default_preservation_name_valid
@@ -1838,7 +1838,7 @@ NOTICE:  sql_saga: Created GIST index "target_ephemeral_split_valid_range_gist_i
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_ephemeral_split', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_ephemeral_split: ADD CONSTRAINT target_ephemeral_split_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_ephemeral_split_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_ephemeral_split: ADD CONSTRAINT target_ephemeral_split_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_ephemeral_split_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT target_ephemeral_split_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
           add_unique_key           
 -----------------------------------
  target_ephemeral_split_name_valid
@@ -1972,7 +1972,7 @@ NOTICE:  sql_saga: Created GIST index "target_ephemeral_replace_valid_range_gist
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_ephemeral_replace', ARRAY['name'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_ephemeral_replace: ADD CONSTRAINT target_ephemeral_replace_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_ephemeral_replace_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_ephemeral_replace: ADD CONSTRAINT target_ephemeral_replace_name_valid_uniq UNIQUE (name, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_ephemeral_replace_name_valid_pk_consistency_excl EXCLUDE USING gist (name WITH =, id WITH <>); ADD CONSTRAINT target_ephemeral_replace_name_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, name WITH <>)
            add_unique_key            
 -------------------------------------
  target_ephemeral_replace_name_valid
@@ -2112,7 +2112,7 @@ NOTICE:  sql_saga: Created GIST index "target_null_nk_valid_range_gist_idx" on c
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_repro.target_null_nk', ARRAY['legal_unit_id', 'establishment_id', 'type'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table saga_repro.target_null_nk: ADD CONSTRAINT target_null_nk_legal_unit_id_establishment_id_type_valid_uniq UNIQUE (legal_unit_id, establishment_id, type, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_null_nk_legal_unit_id_establishment_id_type_valid_pk_con EXCLUDE USING gist (legal_unit_id WITH =, establishment_id WITH =, type WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table saga_repro.target_null_nk: ADD CONSTRAINT target_null_nk_legal_unit_id_establishment_id_type_valid_uniq UNIQUE (legal_unit_id, establishment_id, type, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_null_nk_legal_unit_id_establishment_id_type_valid_pk_con EXCLUDE USING gist (legal_unit_id WITH =, establishment_id WITH =, type WITH =, id WITH <>); ADD CONSTRAINT target_null_nk_legal_unit_i_legal_unit_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_unit_id WITH <>); ADD CONSTRAINT target_null_nk_legal_uni_establishment_id_nk_consistency_excl EXCLUDE USING gist (id WITH =, establishment_id WITH <>); ADD CONSTRAINT target_null_nk_legal_unit_id_establi_type_nk_consistency_excl EXCLUDE USING gist (id WITH =, type WITH <>)
                       add_unique_key                      
 ----------------------------------------------------------
  target_null_nk_legal_unit_id_establishment_id_type_valid

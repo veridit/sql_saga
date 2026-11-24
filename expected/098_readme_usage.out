@@ -85,7 +85,7 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => 'legal_unit_legal_ident_valid'
 );
-NOTICE:  sql_saga: Added constraints to table readme.legal_unit: ADD CONSTRAINT legal_unit_legal_ident_valid_uniq UNIQUE (legal_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_legal_ident_valid_pk_consistency_excl EXCLUDE USING gist (legal_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table readme.legal_unit: ADD CONSTRAINT legal_unit_legal_ident_valid_uniq UNIQUE (legal_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT legal_unit_legal_ident_valid_pk_consistency_excl EXCLUDE USING gist (legal_ident WITH =, id WITH <>); ADD CONSTRAINT legal_unit_legal_ident_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, legal_ident WITH <>)
         add_unique_key        
 ------------------------------
  legal_unit_legal_ident_valid
@@ -314,11 +314,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |            entity_keys            | identity_keys |             lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                          data                          | feedback | trace | grouping_key  
--------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------+---------------+--------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+--------------------------------------------------------+----------+-------+---------------
-           1 |             1 | {101}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2023-07-01     | 2024-01-01      |                 | [2023-07-01,2024-01-01) | {"name": "AutoSpareParts INC", "status": "active"}     |          |       | new_entity__1
-           2 |             1 | {102}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2024-01-01     | infinity        |                 | [2024-01-01,infinity)   | {"name": "SpareParts Corporation", "status": "active"} |          |       | new_entity__1
-           3 |             1 | {103}   | INSERT    |               | 2         | t             | {"id": 2, "legal_ident": "LU002"} | {"id": null}  | {"id": null, "legal_ident": "LU002"} |              |              |                |                 | 2023-01-01     | infinity        |                 | [2023-01-01,infinity)   | {"name": "General Refinement LLC", "status": "active"} |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |            entity_keys            | identity_keys |             lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                                      data                                      | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------+---------------+--------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+--------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {101}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2023-07-01     | 2024-01-01      |                 | [2023-07-01,2024-01-01) | {"name": "AutoSpareParts INC", "status": "active", "legal_ident": "LU001"}     |          |       | new_entity__1
+           2 |             1 | {102}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2024-01-01     | infinity        |                 | [2024-01-01,infinity)   | {"name": "SpareParts Corporation", "status": "active", "legal_ident": "LU001"} |          |       | new_entity__1
+           3 |             1 | {103}   | INSERT    |               | 2         | t             | {"id": 2, "legal_ident": "LU002"} | {"id": null}  | {"id": null, "legal_ident": "LU002"} |              |              |                |                 | 2023-01-01     | infinity        |                 | [2023-01-01,infinity)   | {"name": "General Refinement LLC", "status": "active", "legal_ident": "LU002"} |          |       | new_entity__2
 (3 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -639,6 +639,7 @@ SELECT sql_saga.drop_unique_key_by_name(table_oid => 'readme.legal_unit'::regcla
 
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], era_name => 'valid');
 NOTICE:  sql_saga: dropping constraint: ALTER TABLE readme.legal_unit DROP CONSTRAINT legal_unit_legal_ident_valid_pk_consistency_excl
+NOTICE:  sql_saga: dropping constraint: ALTER TABLE readme.legal_unit DROP CONSTRAINT legal_unit_legal_ident_valid_nk_consistency_excl
  drop_unique_key 
 -----------------
  

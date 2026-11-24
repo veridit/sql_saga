@@ -618,7 +618,8 @@ BEGIN
               AND (v_valid_until_col IS NULL OR t.attname <> v_valid_until_col)
               AND (v_valid_to_col IS NULL OR t.attname <> v_valid_to_col)
               AND t.attname <> ALL(COALESCE(temporal_merge_execute.identity_columns, '{}'))
-              AND t.attname <> ALL(v_lookup_columns)
+              -- A natural key column outside the identity and primary key is set like data: each piece carries its own
+              -- value, and a handover fills it on existing pieces (hug 40nwvn).
               AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
               AND t.attidentity <> 'a' -- Exclude GENERATED ALWAYS AS IDENTITY
               AND t.attgenerated = '' -- Exclude GENERATED ... STORED

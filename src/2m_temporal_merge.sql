@@ -204,6 +204,13 @@ BEGIN
         v_present text;
         v_hash_args text;
         v_kind integer := 0;
+        v_whole_entity boolean;   -- lock whole entities for this key (a natural key outside the identity)
+        v_id_t text := (SELECT string_agg(pg_catalog.format('t.%I', c), ', ') FROM unnest(v_identity_cols_discovered) AS c);
+        v_id_k text := (SELECT string_agg(pg_catalog.format('k.%I', c), ', ') FROM unnest(v_identity_cols_discovered) AS c);
+        v_range_col_name name := (SELECT e.range_column_name FROM sql_saga.era AS e
+                                  JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name
+                                  JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
+                                  WHERE c.oid = temporal_merge.target_table AND e.era_name = temporal_merge.era_name);
     BEGIN
         SELECT array_agg(k ORDER BY o) INTO v_keys
         FROM (
@@ -227,6 +234,8 @@ BEGIN
         FOREACH v_key IN ARRAY COALESCE(v_keys, '{}') LOOP
             v_kind := v_kind + 1;
             SELECT array_agg(c ORDER BY o) INTO v_key_cols FROM jsonb_array_elements_text(v_key::jsonb) WITH ORDINALITY AS u(c, o);
+            v_whole_entity := v_kind > 1 AND cardinality(v_identity_cols_discovered) > 0
+                AND EXISTS (SELECT FROM unnest(v_key_cols) AS c WHERE c <> ALL (v_identity_cols_discovered));
             -- Each source value is cast to the target column's type, so the lock follows the target's equality.
             SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o),
                    string_agg(pg_catalog.format('s.%I IS NOT NULL', c), ' OR ' ORDER BY o)
@@ -240,23 +249,36 @@ BEGIN
                 v_kind, v_hash_args, temporal_merge.source_table, v_present);
             -- The target rows of the key, by equality on the source's non-NULL columns, typed as the target's so the key's
             -- index applies; one statement per pattern of NULL columns (a natural key with mutually exclusive columns).
-            -- A single column is matched with = ANY (ARRAY(...)), which the planner always serves from the index; IN
-            -- (subquery) may be planned as a hash join over the whole table.
+            -- A single column is matched with = ANY (ARRAY(...)), which the planner always serves from the index. Several
+            -- columns are matched against the source's distinct keys, materialized first (OFFSET 0): on the source's own
+            -- estimates, (a, b) IN (subquery) was planned as a nested loop over the index of one column, 48 s for 28,578
+            -- keys (hug t8b97s), where a join on the materialized keys takes milliseconds.
             v_row_parts := v_row_parts || (
                 SELECT array_agg(pg_catalog.format(
                     CASE WHEN cardinality(p.present) = 1
-                         THEN 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE %2$s = ANY (ARRAY(SELECT %3$s FROM %4$s AS s WHERE %5$s)) ORDER BY %2$s FOR UPDATE OF t) AS locked'
-                         ELSE 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE (%2$s) IN (SELECT %3$s FROM %4$s AS s WHERE %5$s) ORDER BY %2$s FOR UPDATE OF t) AS locked'
+                         THEN 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE %6$s%2$s = ANY (ARRAY(SELECT %3$s FROM %4$s AS s WHERE %5$s))%7$s ORDER BY %8$s FOR UPDATE OF t) AS locked'
+                         ELSE 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE %6$s(%2$s) IN (SELECT * FROM (SELECT DISTINCT %3$s FROM %4$s AS s WHERE %5$s OFFSET 0) AS keys)%7$s ORDER BY %8$s FOR UPDATE OF t) AS locked'
                     END,
                     temporal_merge.target_table,
-                    (SELECT string_agg(pg_catalog.format('t.%I', c), ', ' ORDER BY o) FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o) WHERE c = ANY (p.present)),
+                    (SELECT string_agg(pg_catalog.format('%s.%I', CASE WHEN v_whole_entity THEN 'k' ELSE 't' END, c), ', ' ORDER BY o) FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o) WHERE c = ANY (p.present)),
                     (SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o)
                      FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
                      JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = u.c
                      WHERE c = ANY (p.present)),
                     temporal_merge.source_table,
                     (SELECT string_agg(pg_catalog.format('s.%I IS %s NULL', c, CASE WHEN c = ANY (p.present) THEN 'NOT' ELSE '' END), ' AND ')
-                     FROM unnest(v_key_cols) AS c)))
+                     FROM unnest(v_key_cols) AS c),
+                    -- A natural key outside the identity may be NULL on some pieces of its entity (before it starts, after
+                    -- it is retired): lock every row of each entity it finds, by identity, as the planner reads them (hug
+                    -- 40nwvn).
+                    CASE WHEN v_whole_entity AND cardinality(v_identity_cols_discovered) = 1
+                              THEN pg_catalog.format('%s = ANY (ARRAY(SELECT %s FROM %s AS k WHERE ', v_id_t, v_id_k, temporal_merge.target_table)
+                         WHEN v_whole_entity THEN pg_catalog.format('(%s) IN (SELECT %s FROM %s AS k WHERE ', v_id_t, v_id_k, temporal_merge.target_table)
+                         ELSE '' END,
+                    CASE WHEN v_whole_entity AND cardinality(v_identity_cols_discovered) = 1 THEN '))'
+                         WHEN v_whole_entity THEN ')' ELSE '' END,
+                    CASE WHEN v_whole_entity THEN v_id_t || ', t.' || pg_catalog.quote_ident(v_range_col_name)
+                         ELSE (SELECT string_agg(pg_catalog.format('t.%I', c), ', ' ORDER BY o) FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o) WHERE c = ANY (p.present)) END))
                 FROM (SELECT ARRAY(SELECT c FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
                                    WHERE (m >> (o::integer - 1)) & 1 = 1) AS present
                       FROM generate_series(1, (1 << cardinality(v_key_cols)) - 1) AS m) AS p);

@@ -278,6 +278,12 @@ pub fn build_planner_context(
         .cloned()
         .collect();
 
+    let nk_data_cols: Vec<String> = all_lookup_cols
+        .iter()
+        .filter(|c| !identity_columns.contains(c) && !pk_cols.contains(c) && !temporal_cols.contains(c))
+        .cloned()
+        .collect();
+
     let mut all_ephemeral = ephemeral_columns;
     for col in &era.ephemeral_columns {
         if !all_ephemeral.contains(col) {
@@ -304,5 +310,6 @@ pub fn build_planner_context(
         row_id_column,
         log_trace,
         exclude_if_null_columns,
+        nk_data_cols,
     }
 }

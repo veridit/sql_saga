@@ -95,16 +95,16 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  sql_saga: Added constraints to table public."""quoted"" table": ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table public."""quoted"" table": ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS); ADD CONSTRAINT """my "" uk""_""product "" code""_nk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH <>)
  add_unique_key 
 ----------------
  "my " uk"
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
------------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
- "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    |                    |                  |           |                            | {}
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns |             pk_consistency_constraint_names              
+-----------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+----------------------------------------------------------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    |                    |                  |           |                            | {"\"my \" uk\"_\"product \" code\"_nk_consistency_excl"}
 (1 row)
 
 -- 4. Create referencing table with quoted names

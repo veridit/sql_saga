@@ -87,7 +87,7 @@ CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
                 p_log_trace => v_log_trace,
                 p_log_sql => v_log_sql
             )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 277 at PERFORM
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 299 at PERFORM
 \echo '## State of target table after merge (should be unchanged)'
 ## State of target table after merge (should be unchanged)
 -- This will also error because the transaction is aborted.
@@ -124,7 +124,7 @@ NOTICE:  sql_saga: Added constraints to table public.target_units: ALTER COLUMN 
 (1 row)
 
 SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table public.target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>); ADD CONSTRAINT target_units_unit_ident_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, unit_ident WITH <>)
         add_unique_key         
 -------------------------------
  target_units_unit_ident_valid
@@ -179,7 +179,7 @@ CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
                 p_log_trace => v_log_trace,
                 p_log_sql => v_log_sql
             )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 277 at PERFORM
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 299 at PERFORM
 \echo '## State of target table after merge'
 ## State of target table after merge
 TABLE target_units ORDER BY id, valid_from;

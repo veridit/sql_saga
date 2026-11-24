@@ -1257,8 +1257,8 @@ BEGIN
                 r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
         END IF;
 
-        /* 1.14 (hug mnntde): a natural key on a table with a primary key is bound to it by exactly the guard
-         * add_unique_key builds now (none when the natural key holds every stable primary key column). */
+        /* 1.14 (hug mnntde) and 1.15 (hug 40nwvn): a natural key on a table with a primary key is bound to it both ways
+         * by exactly the guards add_unique_key builds now. */
         IF r.key_type = 'natural' THEN
             DECLARE
                 pk_row sql_saga.unique_keys;

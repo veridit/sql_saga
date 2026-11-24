@@ -710,7 +710,7 @@ fn build_column_list_cte_query(
             LEFT JOIN pg_attrdef ad ON ad.adrelid = {target_oid}::oid AND ad.adnum = t.attnum
             WHERE {range_filter}{vf_filter}{vu_filter}{vt_filter}
               AND t.attname <> ALL({identity_arr}::text[])
-              AND t.attname <> ALL({lookup_arr}::text[])
+              -- A natural key column outside the identity and primary key is set like data (hug 40nwvn).
               AND t.attname <> ALL({pk_arr}::text[])
               AND t.attidentity <> 'a'
               AND t.attgenerated = ''

@@ -59,6 +59,8 @@ DECLARE
     -- The set of columns to use for looking up entities in the target table.
     -- Derived from lookup_keys or identity_columns.
     v_lookup_columns TEXT[];
+    -- Natural key columns outside the identity and primary key, carried per piece (hug 40nwvn).
+    v_nk_data_cols TEXT[];
 
     --
     -- Other planner variables
@@ -192,6 +194,14 @@ BEGIN
 
     -- 1.5: Build the final, canonical lists of identity columns.
     v_lookup_columns := COALESCE(v_all_lookup_cols, v_identity_columns);
+
+    -- Natural key columns outside the identity and primary key (hug 40nwvn). They name the entity, so they are matched as
+    -- keys; each piece also carries its own value in its data payload, because an entity holds one value of each but may
+    -- hold none (NULL) before the key starts or after it is retired.
+    v_nk_data_cols := ARRAY(SELECT c FROM unnest(v_all_lookup_cols) AS c
+                            WHERE c <> ALL (COALESCE(v_identity_columns, '{}')) AND c <> ALL (COALESCE(v_pk_cols, '{}'))
+                              AND c <> ALL (v_temporal_cols)
+                            ORDER BY c);
 
     v_natural_key_join_condition := COALESCE((SELECT string_agg(format('s1.%1$I IS NOT DISTINCT FROM s2.%1$I', col), ' AND ') FROM unnest(v_all_lookup_cols) as col), 'false');
 
@@ -557,6 +567,7 @@ BEGIN
             v_trace_select_list TEXT;
             v_target_rows_lookup_cols_expr TEXT;
             v_source_rows_exists_join_expr TEXT;
+            v_source_nk_payload_expr TEXT; -- the natural key values a source row gives (hug 40nwvn)
             v_atomic_segments_select_list_expr TEXT;
             v_diff_select_expr TEXT;
             v_plan_with_op_entity_id_json_build_expr TEXT;
@@ -738,7 +749,9 @@ BEGIN
                     END,
                     ' AND '
                 ), 'true')
+                -- Natural key columns outside the identity are per-piece data, not part of the entity's key (hug 40nwvn).
                 FROM unnest(v_original_entity_key_cols) AS col
+                WHERE col <> ALL (v_nk_data_cols)
             );
             v_lateral_join_sr_to_seg_new := 'source_row.grouping_key = seg.grouping_key';
 
@@ -752,7 +765,8 @@ BEGIN
             -- For other NULLABLE columns, use null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
             -- For NOT NULL columns, use simple = for better query plan performance (Hash Joins).
             IF v_mutually_exclusive_cols IS NOT NULL 
-               AND v_mutually_exclusive_cols <@ v_original_entity_key_cols::name[] THEN
+               AND v_mutually_exclusive_cols <@ v_original_entity_key_cols::name[]
+               AND NOT v_mutually_exclusive_cols && v_nk_data_cols::name[] THEN
                 -- Generate optimized CASE/WHEN condition for mutually exclusive columns.
                 -- This avoids expensive (col IS NULL AND col IS NULL) checks when columns
                 -- are known to be mutually exclusive (only one can be non-NULL at a time).
@@ -784,7 +798,7 @@ BEGIN
                             ' AND '
                         ), '') AS conditions
                         FROM unnest(v_original_entity_key_cols) AS col
-                        WHERE col <> ALL(v_mutually_exclusive_cols)
+                        WHERE col <> ALL(v_mutually_exclusive_cols) AND col <> ALL (v_nk_data_cols)
                     )
                     SELECT 
                         CASE 
@@ -809,6 +823,7 @@ BEGIN
                         ' AND '
                     ), 'true')
                     FROM unnest(v_original_entity_key_cols) AS col
+                    WHERE col <> ALL (v_nk_data_cols)
                 );
             END IF;
     
@@ -988,6 +1003,19 @@ BEGIN
             v_target_ephemeral_cols_jsonb_build := COALESCE(v_target_ephemeral_cols_jsonb_build, '''{}''::jsonb');
             v_target_data_cols_jsonb_build_bare := COALESCE(v_target_data_cols_jsonb_build_bare, '''{}''::jsonb');
             v_target_ephemeral_cols_jsonb_build_bare := COALESCE(v_target_ephemeral_cols_jsonb_build_bare, '''{}''::jsonb');
+
+            -- Each piece carries its natural key values outside the identity in its data (hug 40nwvn): a target piece its
+            -- own (also NULL), a source row only those it gives, in every mode (a merge never clears a natural key).
+            IF cardinality(v_nk_data_cols) > 0 THEN
+                v_target_data_cols_jsonb_build := format('(%s || jsonb_build_object(%s))', v_target_data_cols_jsonb_build,
+                    (SELECT string_agg(format('%L, t.%I', c, c), ', ') FROM unnest(v_nk_data_cols) AS c));
+                v_target_data_cols_jsonb_build_bare := format('(%s || jsonb_build_object(%s))', v_target_data_cols_jsonb_build_bare,
+                    (SELECT string_agg(format('%L, %I', c, c), ', ') FROM unnest(v_nk_data_cols) AS c));
+                v_source_nk_payload_expr := format('jsonb_strip_nulls(jsonb_build_object(%s))',
+                    (SELECT string_agg(format('%L, source_table.%I', c, c), ', ') FROM unnest(v_nk_data_cols) AS c
+                     WHERE EXISTS (SELECT FROM pg_attribute AS a WHERE a.attrelid = source_table AND a.attname = c
+                                     AND a.attnum > 0 AND NOT a.attisdropped)));
+            END IF;
     
             -- Phase 3.5: Comprehensive Column Classification (MOVED BEFORE payload construction)
             -- Classify all target columns to enable intelligent payload construction
@@ -1227,6 +1255,18 @@ BEGIN
                             ) u
                         )
                     ) AS t $$, array_to_string(v_union_parts, ' UNION ALL '), v_distinct_on_cols_list);
+                    -- With natural key columns outside the identity, the rows a key finds may be part of their entity only
+                    -- (the key is NULL before it starts and after it is retired): read every row of each entity found, by
+                    -- its identity, as the native planner does (hug 40nwvn).
+                    IF cardinality(v_nk_data_cols) > 0 AND cardinality(v_identity_columns) > 0 THEN
+                        v_target_rows_filter := format($$(
+                            SELECT * FROM %1$s AS whole
+                            WHERE (%2$s) IN (SELECT %3$s FROM %4$s)
+                        ) AS t $$, v_target_table_ident,
+                            (SELECT string_agg(format('whole.%I', c), ', ') FROM unnest(v_identity_columns) AS c),
+                            (SELECT string_agg(format('t.%I', c), ', ') FROM unnest(v_identity_columns) AS c),
+                            v_target_rows_filter);
+                    END IF;
                 END;
             END IF;
     
@@ -1318,6 +1358,11 @@ BEGIN
                         v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
                     END IF;
                 END;
+            END IF;
+
+            -- The natural key values the source row gives, in every mode but DELETE_FOR_PORTION_OF (hug 40nwvn).
+            IF v_source_nk_payload_expr IS NOT NULL AND mode <> 'DELETE_FOR_PORTION_OF' THEN
+                v_source_data_payload_expr := format('((%s) || %s)', v_source_data_payload_expr, v_source_nk_payload_expr);
             END IF;
     
             -- Second, determine timeline semantics. The default is a non-destructive merge where we
@@ -2088,6 +2133,54 @@ BEGIN
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
+            -- CTE 9.25: source_nk_conflicts (hug 40nwvn). An entity holds at most one non-NULL value of each natural key
+            -- column outside its identity, over its whole timeline. A row giving another value than the entity holds, or
+            -- than another row of the batch gives for it, is refused; a row giving the one value the entity holds is not.
+            IF cardinality(v_nk_data_cols) > 0 THEN
+                v_sql := format($SQL$
+                    CREATE TEMP TABLE source_nk_conflicts ON COMMIT DROP AS
+                    WITH cand AS (
+                        SELECT s.source_row_id, s.grouping_key, s.stable_pk_payload, x.col, x.val
+                        FROM source_rows_with_canonical_key AS s
+                        CROSS JOIN LATERAL (VALUES %1$s) AS x(col, val)
+                        WHERE NOT s.is_ambiguous AND s.identity_conflict IS NULL AND (s.is_identifiable OR NOT s.is_new_entity)
+                          AND s.temporal_columns_are_consistent AND x.val IS NOT NULL
+                    ),
+                    held AS (
+                        SELECT DISTINCT 'existing_entity__' || %2$s AS grouping_key, x.col, x.val
+                        FROM target_rows AS t
+                        CROSS JOIN LATERAL (VALUES %3$s) AS x(col, val)
+                        WHERE x.val IS NOT NULL
+                    ),
+                    per AS (
+                        SELECT v.grouping_key, v.col,
+                               count(*) FILTER (WHERE v.is_held) AS n_held,
+                               min(v.val #>> '{}') FILTER (WHERE v.is_held) AS held_val,
+                               jsonb_agg(v.val ORDER BY v.val #>> '{}' COLLATE "C") AS vals
+                        FROM (SELECT grouping_key, col, val, bool_or(is_held) AS is_held
+                              FROM (SELECT grouping_key, col, val, false AS is_held FROM cand
+                                    UNION ALL
+                                    SELECT h.grouping_key, h.col, h.val, true FROM held AS h
+                                    WHERE h.grouping_key IN (SELECT grouping_key FROM cand)) AS u
+                              GROUP BY grouping_key, col, val) AS v
+                        GROUP BY v.grouping_key, v.col
+                        HAVING count(*) > 1
+                    )
+                    SELECT DISTINCT ON (c.source_row_id) c.source_row_id,
+                           'Source row is inconsistent. Natural key column ' || c.col || ' of target entity '
+                           || c.stable_pk_payload::text || ' would hold more than one value: ' || p.vals::text || '.' AS message
+                    FROM cand AS c
+                    JOIN per AS p ON (p.grouping_key, p.col) = (c.grouping_key, c.col)
+                    WHERE NOT (p.n_held = 1 AND c.val #>> '{}' = p.held_val)
+                    ORDER BY c.source_row_id, c.col
+                $SQL$,
+                    (SELECT string_agg(format('(%L, to_jsonb(s.%I))', c, c), ', ' ORDER BY c) FROM unnest(v_nk_data_cols) AS c),
+                    (SELECT string_agg(format('COALESCE(t.%I::text, ''_NULL_'')', col), ' || ''__'' || ') FROM unnest(v_identity_columns) AS col),
+                    (SELECT string_agg(format('(%L, to_jsonb(t.%I))', c, c), ', ' ORDER BY c) FROM unnest(v_nk_data_cols) AS c)
+                );
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+            END IF;
+
             -- CTE 9.3: source_rows_with_early_feedback
             v_sql := format($SQL$
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -2101,18 +2194,20 @@ BEGIN
                         WHEN NOT s.is_identifiable AND s.is_new_entity
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace(%1$L::text, '"', '') || ' and all natural keys ' || replace(%2$L::text, '"', '') )
                         WHEN NOT s.temporal_columns_are_consistent
-                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row has inconsistent temporal columns. Column "' || %3$L || '" must be equal to column "' || %4$L || '" + ' || %5$L || '.' )
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row has inconsistent temporal columns. Column "' || %3$L || '" must be equal to column "' || %4$L || '" + ' || %5$L || '.' )%6$s
                         WHEN s.is_eclipsed
                         THEN jsonb_build_object( 'operation', 'SKIP_ECLIPSED'::text, 'message', 'Source row was eclipsed by row_ids=' || s.eclipsed_by::text || ' in the same batch.' )
                         ELSE NULL
                     END as early_feedback
-                FROM source_rows_with_canonical_key s
+                FROM source_rows_with_canonical_key s%7$s
             $SQL$,
                 v_identity_columns, /* %1$L */
                 lookup_keys,        /* %2$L */
                 v_valid_until_col,  /* %3$L */
                 v_valid_to_col,     /* %4$L */
-                v_interval          /* %5$L */
+                v_interval,         /* %5$L */
+                CASE WHEN cardinality(v_nk_data_cols) > 0 THEN E'\n                        WHEN nk.message IS NOT NULL\n                        THEN jsonb_build_object( ''operation'', ''ERROR''::text, ''message'', nk.message )' ELSE '' END, /* %6$s */
+                CASE WHEN cardinality(v_nk_data_cols) > 0 THEN E'\n                LEFT JOIN source_nk_conflicts AS nk ON nk.source_row_id = s.source_row_id' ELSE '' END /* %7$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
@@ -2361,6 +2456,25 @@ BEGIN
                 v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
 
                 v_resolver_from := 'resolved_atomic_segments_with_flag';
+            END IF;
+
+            -- The entity's natural key values (hug 40nwvn): it holds at most one of each column outside its identity (rows
+            -- giving another were refused), the one a source row gives, else the one a target piece holds. Time without a
+            -- target piece carries them, so it coalesces with the pieces beside it, as in the native planner.
+            IF cardinality(v_nk_data_cols) > 0 THEN
+                v_sql := format($SQL$
+                    CREATE TEMP TABLE resolved_atomic_segments_with_entity_nk ON COMMIT DROP AS
+                    SELECT r.*, e.nk AS entity_nk_payload
+                    FROM %1$s AS r
+                    JOIN (SELECT grouping_key, jsonb_strip_nulls(jsonb_build_object(%2$s)) AS nk
+                          FROM %1$s GROUP BY grouping_key) AS e USING (grouping_key)
+                $SQL$, v_resolver_from,
+                    (SELECT string_agg(format('%1$L, COALESCE(sql_saga.first(s_data_payload->%1$L ORDER BY valid_from) FILTER (WHERE s_data_payload->%1$L <> ''null''::jsonb), sql_saga.first(t_data_payload->%1$L ORDER BY valid_from) FILTER (WHERE t_data_payload->%1$L <> ''null''::jsonb))', c), ', ')
+                     FROM unnest(v_nk_data_cols) AS c));
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+                v_resolver_from := 'resolved_atomic_segments_with_entity_nk';
+                -- New time (no target piece) takes the entity's values under the source's.
+                v_final_data_payload_expr := format($$CASE WHEN t_data_payload IS NULL AND (%1$s) IS NOT NULL THEN entity_nk_payload || (%1$s) ELSE (%1$s) END$$, v_final_data_payload_expr);
             END IF;
     
             -- CTE 15.5: resolved_atomic_segments_with_propagated_ids
@@ -2908,6 +3022,8 @@ BEGIN
     IF to_regclass('pg_temp.new_segments_no_target') IS NOT NULL THEN DROP TABLE pg_temp.new_segments_no_target; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_payloads') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_payloads; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_flag') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_flag; END IF;
+    IF to_regclass('pg_temp.resolved_atomic_segments_with_entity_nk') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_entity_nk; END IF;
+    IF to_regclass('pg_temp.source_nk_conflicts') IS NOT NULL THEN DROP TABLE pg_temp.source_nk_conflicts; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_propagated_ids') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_propagated_ids; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments; END IF;
     IF to_regclass('pg_temp.island_group') IS NOT NULL THEN DROP TABLE pg_temp.island_group; END IF;

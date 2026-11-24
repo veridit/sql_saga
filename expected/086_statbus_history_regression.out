@@ -57,7 +57,7 @@ NOTICE:  sql_saga: Added constraints to table repro.units: ALTER COLUMN id SET N
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table repro.units: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT units_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table repro.units: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT units_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>); ADD CONSTRAINT units_org_nr_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, org_nr WITH <>)
    add_unique_key   
 --------------------
  units_org_nr_valid

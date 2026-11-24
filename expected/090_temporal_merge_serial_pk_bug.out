@@ -53,7 +53,7 @@ NOTICE:  sql_saga: Added constraints to table public.target_units: ALTER COLUMN 
 (1 row)
 
 SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table public.target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.target_units: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>); ADD CONSTRAINT target_units_unit_ident_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, unit_ident WITH <>)
         add_unique_key         
 -------------------------------
  target_units_unit_ident_valid

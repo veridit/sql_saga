@@ -59,7 +59,7 @@ NOTICE:  sql_saga: Added constraints to table repro.establishment: ALTER COLUMN 
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table repro.establishment: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT establishment_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table repro.establishment: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT establishment_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>); ADD CONSTRAINT establishment_org_nr_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, org_nr WITH <>)
        add_unique_key       
 ----------------------------
  establishment_org_nr_valid

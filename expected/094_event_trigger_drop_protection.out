@@ -211,7 +211,7 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => 'dp_pk_consistency_nk_valid'
 );
-NOTICE:  sql_saga: Added constraints to table public.dp_pk_consistency: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS); ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table public.dp_pk_consistency: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS); ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>); ADD CONSTRAINT dp_pk_consistency_nk_valid_nk_consistency_excl EXCLUDE USING gist (id WITH =, nk WITH <>)
        add_unique_key       
 ----------------------------
  dp_pk_consistency_nk_valid
@@ -223,6 +223,7 @@ ERROR:  cannot drop constraint "dp_pk_consistency_nk_valid_pk_consistency_excl" 
 ROLLBACK TO SAVEPOINT expect_error;
 SELECT sql_saga.drop_unique_key('dp_pk_consistency', ARRAY['nk'], 'p');
 NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl
+NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_nk_consistency_excl
  drop_unique_key 
 -----------------
  
