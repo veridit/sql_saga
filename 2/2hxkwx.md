@@ -1,7 +1,7 @@
 ---
 id: 2hxkwx
 title: "MERGE_ENTITY_UPSERT ignores DELETE_MISSING_ENTITIES"
-state: "doing"
+state: "done"
 type: bug
 priority: "high"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzq"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T14:08"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T14:33"
 ---
 
 ## Goal
@@ -44,3 +43,4 @@ Grid of all 8 modes x 4 delete modes on both planners (doc/upstream/repro/mode_d
 a1ed54c6: test 163 RED on 1.14 (UPSERT keeps entity 2; refusals ran) and GREEN after; grid 32/32 planners agree; make test fast 148/148.
 ## History
 - 2026-11-24T14:08 todo -> doing/active (take)
+- 2026-11-24T14:33 doing/active -> done (done); was doing_since: 2026-11-24T14:08
