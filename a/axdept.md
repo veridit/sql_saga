@@ -27,6 +27,8 @@ Inputs: the revert study (vhhp80, concurrency must be answerable in the syntax) 
 
 ## Depends on
 
+- vhhp80
+- 9fxqkc
 ## Acceptance
 - [ ] Each candidate expresses every temporal_merge merge mode and delete mode, and the regular-to-temporal key, as an example statement
 - [ ] A comparison table gives each candidate's fit with the standard, effort to implement and open questions
