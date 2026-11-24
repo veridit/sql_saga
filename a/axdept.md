@@ -41,5 +41,6 @@ Inputs: the revert study (vhhp80, concurrency must be answerable in the syntax) 
 ## Notes
 
 
+doc/upstream/syntax-candidates.md (871987de): candidates A (MERGE + per-row FOR PORTION OF), B (MERGE TEMPORAL with mode keywords), C (table declarations + plain statements), each mapped to all 8 modes and the delete modes; 3 forms for the regular-to-temporal FK; comparison table; recommends A. Reviewed.
 ## History
 - 2026-11-24T14:03 todo -> doing/active (take)
