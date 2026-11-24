@@ -1,7 +1,7 @@
 ---
 id: rtwrp6
 title: "DELETE_MISSING_TIMELINE keeps target time beside interior source edges"
-state: "doing"
+state: "done"
 type: bug
 priority: "high"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzh"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T14:33"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T14:33"
 ---
 
 ## Goal
@@ -46,3 +45,4 @@ a1ed54c6: test 163 covers inside/boundary/gap/hole edges, REPLACE/UPSERT/PATCH, 
 
 ## History
 - 2026-11-24T14:33 todo -> doing/active (take)
+- 2026-11-24T14:33 doing/active -> done (done); was doing_since: 2026-11-24T14:33
