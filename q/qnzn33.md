@@ -1,16 +1,21 @@
 ---
 id: qnzn33
 title: "Updates as a chain of single-release steps instead of direct scripts"
-state: todo
+state: "doing"
 type: feature
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzz"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
+doing_since: "2026-11-24T02:12"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -33,3 +38,7 @@ Design: doc/design/update-chain.md. Prototype tmp/chain.py; empty DBs 1.0..1.12 
 - [ ] The upgrade matrix passes for every released source; the 1.14 add_unique_key signature change needs no hand-written entry
 
 ## Notes
+
+
+## History
+- 2026-11-24T02:12 todo -> doing/active (take)
