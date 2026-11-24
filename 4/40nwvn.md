@@ -14,7 +14,7 @@ parent: "pj849j"
 ---
 
 ## Goal
-A source row that names its entity by identity and carries a new natural key value writes that value, in both planners.
+Natural key values follow time like data: a merge never changes a natural key outside the source's time or one the source leaves NULL.
 
 ## Purpose
 Found with mfky60. Target id 1 code A; source id=1 code=Z. Native writes code Z over the row's time (and carries it to the later piece of the split row); PL/pgSQL writes code A, ignoring Z, because natural key columns are entity key columns there, unified to the target's value (time_points_unified) and excluded from the data payload. When the natural key changes over time (A then Q) and the source names only id=1, PL/pgSQL loses the target time after the source (1.14: SKIPPED_NO_TARGET; with mfky60 it applies, but drops [2026,2030)).
