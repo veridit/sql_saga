@@ -122,7 +122,7 @@ Each row is a capability of temporal_merge, what the standard or PostgreSQL offe
 | `ephemeral_columns` | columns (audit, provenance) ignored when deciding equality, still written | none | **gap**, part of coalescing |
 | DELETE, then UPDATE (shrink before grow), then INSERT | never a transient overlap; transient gaps allowed, checked by deferrable foreign keys at commit | FOR PORTION OF is one statement; foreign keys checked at its end | an engine statement would not need it |
 | per-source-row feedback (`APPLIED`, `SKIPPED_*`, `ERROR`) | import pipelines record what happened to each input row | `MERGE ... RETURNING merge_action()` | partial |
-| concurrency | serial results at READ COMMITTED | FOR PORTION OF v2: serialization failure; sql_saga 1.14: silent loss in three races (bug 7rzgv5) | **open on both sides** |
+| concurrency | serial results at READ COMMITTED | FOR PORTION OF v2: serialization failure; sql_saga 1.14: silent loss in three races (bug 7rzgv5, fixed for 1.15 by locking the source's keys before planning) | **open on both sides** |
 | synchronized `valid_from`/`valid_until`/`valid_to` columns | start/end columns kept in step with the range | SQL:2011 `PERIOD FOR` over two columns; PostgreSQL: range column only | PostgreSQL-specific |
 | system versioning, history tables | when the database knew it | SQL:2011 system time; PostgreSQL: none | separate topic |
 
@@ -136,12 +136,12 @@ that statement. That is the subject of the syntax exploration (task axdept).
 The question is what to offer Paul Jungwirth and Peter Eisentraut first. Three candidates, smallest first:
 
 1. **Help with what they are doing now: FOR PORTION OF v2 and temporal foreign key actions.** Offer our isolation
-   scenarios, the results of sql_saga's entity-lock protocol once bug 7rzgv5 is fixed (correctness and rows/s with
-   and without locks), and review or testing of the two patch series against a real workload (StatBus). It needs no
+   scenarios, the results of sql_saga's entity-lock protocol (bug 7rzgv5, fixed for 1.15: correctness and rows/s with
+   and without locks are in doc/design/temporal-merge-concurrency.md), and review or testing of the two patch series against a real workload (StatBus). It needs no
    syntax and no buy-in to start, and it is what the thread lacked: evidence about concurrency behaviour that works at
    READ COMMITTED. That evidence supports Andres Freund's position rather than the serialization failure in Paul's
-   current series, so it is best offered as data for his next step. Cost to prepare: fix 7rzgv5 (needed anyway),
-   then about a day for the benchmark and the write-up.
+   current series, so it is best offered as data for his next step. Cost to prepare: about a day for the write-up, now that
+   7rzgv5 is fixed and measured.
 2. **Propose the regular-to-temporal foreign key.** It is small, it fills a gap nobody else is working on, it fits
    the standard's model, and sql_saga has shipped it with a concurrency harness since 1.3. Cost: a design note with
    syntax options and semantics (days); a core patch later is weeks and only after interest.

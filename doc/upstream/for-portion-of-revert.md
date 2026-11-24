@@ -119,7 +119,8 @@ planner's later read sees everything committed before the lock was granted, and 
 existing rows until commit. The advisory lock also covers entities that have no rows yet (scenario f), which row
 locks cannot. In d the locks make s3 wait for s2, so that run commits s2 before s3.
 
-What the prototype does not settle, and the fix (hug task 7rzgv5) must:
+What the prototype did not settle, and the fix (hug task 7rzgv5, sql_saga 1.15, commit 3284e2e7) does: see
+`doc/design/temporal-merge-concurrency.md`. The points as found:
 
 - **The view path.** The prototype takes the lock before the `UPDATE` through the view. The view's row trigger
   copies the unchanged columns from `OLD`, read with the view statement's snapshot, into the change it queues, and
@@ -142,15 +143,16 @@ With per-entity locks, disjoint entities do not block each other, so concurrent 
 
 ## What this means for the upstream conversation
 
-- sql_saga must fix 7rzgv5 before we raise temporal DML upstream. Arriving with the same bug that sank FOR PORTION
-  OF would cost credibility.
-- Once fixed, sql_saga is evidence for Andres Freund's position that working READ COMMITTED behaviour is achievable
+- **Fixed for 1.15** (hug 7rzgv5): `temporal_merge` locks every key its source names, then the rows, then plans;
+  the view merges only changed columns; the executor checks its row counts. The isolation specs now live in
+  `isolation/specs/` and run in CI. Arriving upstream with the bug that sank FOR PORTION OF would have cost
+  credibility; we can now arrive with a tested answer.
+- sql_saga is evidence for Andres Freund's position that working READ COMMITTED behaviour is achievable
   for temporal writes: lock the entity's timeline, then plan. That argues against the serialization failure in
-  Paul's current series, so it should be offered as data for his next step, not as a counter-proposal. It is entity-level locking at the SQL level,
-  coarser than what the server can do with an index-driven protocol, and it shows the cost in practice.
-- The serialization failure Paul's new series raises is the REPEATABLE READ behaviour applied to READ COMMITTED.
-  Our numbers (rows/s with and without the locks, to be measured in 7rzgv5) can inform whether per-entity
-  locking is affordable.
+  Paul's current series, so it should be offered as data for his next step, not as a counter-proposal. It is
+  entity-level locking at the SQL level, coarser than what the server can do with an index-driven protocol.
+- Measured cost (1,000-row batch, 200,000-row target): 506/520 ms per call with the locks against 498/533 ms
+  without, within run-to-run spread; the lock statements take about 18 ms together.
 
 ## Sources
 

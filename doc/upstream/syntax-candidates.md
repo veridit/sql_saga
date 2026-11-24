@@ -199,9 +199,8 @@ delete-mode bugs rtwrp6 and 2hxkwx are fixed for 1.15).
    `founding_id_column`. MERGE has no way to say that two source rows are the same new entity.
 4. **Feedback per source row**: `RETURNING merge_action()` reports per target row; import pipelines want per source
    row status (`APPLIED`, `SKIPPED_*`).
-5. **Concurrency**: the statement must give serial results at READ COMMITTED (bug 7rzgv5 for sql_saga; the reason
-   FOR PORTION OF was reverted). Locking per entity before planning gives serial results in sql_saga's prototype
-   for the tested races; the view path, natural keys and other writers are still open
-   ([for-portion-of-revert.md](for-portion-of-revert.md)).
+5. **Concurrency**: the statement must give serial results at READ COMMITTED (the reason FOR PORTION OF was
+   reverted). sql_saga 1.15 locks every key the source names before planning (doc/design/temporal-merge-concurrency.md,
+   hug 7rzgv5); a server implementation could do the same at a finer grain through the `WITHOUT OVERLAPS` index.
 6. **Statement triggers and leftovers**: the FOR PORTION OF review objected to firing statement triggers per leftover
    row; a temporal MERGE writes many leftovers per statement and needs a clear trigger model.
