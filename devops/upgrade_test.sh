@@ -3619,6 +3619,64 @@ SELECT sql_saga.add_era('ed', 'valid_range', valid_from_column_name => 'valid_fr
     assert_integrity "$ERA_DP_DB"
 fi
 
+# 1.14: every natural key is bound to its primary key. Before, a natural key could be added unbound (opted out, or with
+# a composite primary key), and one added before its primary key got its guard while its catalog entry still said
+# pending. The update binds the first two and records the third; conflicting rows refuse it, unchanged.
+if ! version_lt "$NEW_VERSION" 1.14; then
+    section "$BASELINE_VERSION natural keys are bound to their primary keys after the update to $NEW_VERSION" "expected RED"
+    NK_DB=${PREFIX}_nkbind114
+    NK_FIXTURE="CREATE TABLE nk_out (id integer NOT NULL, code text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('nk_out', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nk_out', ARRAY['id']::name[], key_type => 'primary');
+SELECT sql_saga.add_unique_key('nk_out', ARRAY['code']::name[], unique_key_name => 'nk_out_code', enforce_consistency_with_primary_key => false);
+CREATE TABLE nk_comp (org integer NOT NULL, unit integer NOT NULL, code text, valid_range daterange NOT NULL, valid_from date, valid_until date,
+    PRIMARY KEY (org, unit, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('nk_comp', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nk_comp', ARRAY['org', 'unit']::name[], key_type => 'primary', unique_constraint => 'nk_comp_pkey');
+SELECT sql_saga.add_unique_key('nk_comp', ARRAY['code']::name[], unique_key_name => 'nk_comp_code');
+CREATE TABLE nk_late (id integer NOT NULL, code text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('nk_late', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('nk_late', ARRAY['code']::name[], unique_key_name => 'nk_late_code');
+SELECT sql_saga.add_unique_key('nk_late', ARRAY['id']::name[], key_type => 'primary');
+INSERT INTO nk_out (id, code, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', '2021-01-01'), (1, 'a', '2021-01-01', '2025-01-01');
+INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 1, 'a', '2020-01-01', '2025-01-01');
+INSERT INTO nk_late (id, code, valid_from, valid_until) VALUES (1, 'a', '2020-01-01', 'infinity');"
+    v13_db "$NK_DB" "$NK_FIXTURE"
+    check "preflight accepts natural keys whose rows the update can bind" "" \
+        "$(run_preflight "$NK_DB" | grep -m1 'natural key')"
+    v13_restart "$NK_DB"
+    NK_STATE="SELECT string_agg(uk.unique_key_name || '=' || coalesce(uk.pk_consistency_constraint_names::text, 'null'), ' ' ORDER BY uk.unique_key_name) FROM sql_saga.unique_keys AS uk WHERE uk.key_type = 'natural'"
+    check "update succeeds" "" "$(q "$NK_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "every natural key records its guards" \
+        "nk_comp_code={nk_comp_code_org_pk_consistency_excl,nk_comp_code_unit_pk_consistency_excl} nk_late_code={nk_late_code_pk_consistency_excl} nk_out_code={nk_out_code_pk_consistency_excl}" \
+        "$(q "$NK_DB" "$NK_STATE")"
+    # The fixture rows end in 2025: a later row of another entity overlaps none, so only the guard can refuse it.
+    check "an opted-out natural key now refuses a second entity" "refused" \
+        "$(v13_probe "$NK_DB" "INSERT INTO nk_out (id, code, valid_from, valid_until) VALUES (2, 'a', '2030-01-01', '2031-01-01')")"
+    check "a natural key over a composite primary key now refuses another unit" "refused" \
+        "$(v13_probe "$NK_DB" "INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 2, 'a', '2030-01-01', '2031-01-01')")"
+    check "the same entity keeps its natural key" "accepted" \
+        "$(v13_probe "$NK_DB" "INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 1, 'a', '2030-01-01', 'infinity')")"
+    assert_integrity "$NK_DB"
+
+    NK_BAD_DB=${PREFIX}_nkbind114_conflict
+    v13_db "$NK_BAD_DB" "$NK_FIXTURE
+INSERT INTO nk_comp (org, unit, code, valid_from, valid_until) VALUES (1, 2, 'a', '2025-01-01', 'infinity');"
+    check "preflight names the natural key value held by two primary key values" \
+        "public.nk_comp natural key nk_comp_code: (a)" \
+        "$(run_preflight "$NK_BAD_DB" | grep -m1 '^public.nk_comp natural key')"
+    v13_restart "$NK_BAD_DB"
+    NK_BEFORE=$(q "$NK_BAD_DB" "$NK_STATE")
+    check "a natural key value under two primary key values refuses the update, by name" \
+        "ERROR:  sql_saga: natural key nk_comp_code on table public.nk_comp is not bound to its primary key: a natural key value belongs to more than one primary key value" \
+        "$(q "$NK_BAD_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "the refused update leaves version and catalog unchanged" "$BASELINE_VERSION|$NK_BEFORE" \
+        "$(q "$NK_BAD_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$NK_BAD_DB" "$NK_STATE")"
+    check "after correcting the rows the update succeeds" "" \
+        "$(q "$NK_BAD_DB" "DELETE FROM nk_comp WHERE unit = 2; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    assert_integrity "$NK_BAD_DB"
+fi
+
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")

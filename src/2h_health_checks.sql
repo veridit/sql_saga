@@ -1238,6 +1238,39 @@ BEGIN
             RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key',
                 r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
         END IF;
+
+        /* 1.14 (hug mnntde): a natural key on a table with a primary key is bound to it by exactly the guard
+         * add_unique_key builds now (none when the natural key holds every stable primary key column). */
+        IF r.key_type = 'natural' THEN
+            DECLARE
+                pk_row sql_saga.unique_keys;
+                range_column name;
+                expected jsonb;
+            BEGIN
+                SELECT uk.* INTO pk_row FROM sql_saga.unique_keys AS uk
+                WHERE (uk.table_schema, uk.table_name, uk.key_type) = (r.table_schema, r.table_name, 'primary');
+                IF FOUND THEN
+                    SELECT e.range_column_name INTO range_column FROM sql_saga.era AS e
+                    WHERE (e.table_schema, e.table_name, e.era_name) = (r.table_schema, r.table_name, r.era_name);
+                    expected := sql_saga.__internal_generate_pk_consistency_constraints(
+                        r.unique_key_name, r.column_names, r.mutually_exclusive_columns,
+                        ARRAY(SELECT c FROM pg_catalog.unnest(pk_row.column_names) AS c WHERE c <> range_column));
+                    /* Count and definitions, not names: a renamed guard is followed (rename_following). */
+                    IF r.pk_consistency_constraint_names IS NULL
+                       OR pg_catalog.cardinality(r.pk_consistency_constraint_names) <> pg_catalog.jsonb_array_length(expected->'cmds')
+                       OR EXISTS (
+                            SELECT FROM pg_catalog.jsonb_array_elements_text(expected->'cmds') WITH ORDINALITY AS x(cmd, n)
+                            JOIN pg_catalog.jsonb_array_elements_text(expected->'names') WITH ORDINALITY AS en(conname, n) USING (n)
+                            JOIN pg_catalog.unnest(r.pk_consistency_constraint_names) WITH ORDINALITY AS g(conname, n) USING (n)
+                            LEFT JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname, c.contype) = (base_oid, g.conname, 'x')
+                            WHERE c.oid IS NULL
+                               OR x.cmd <> pg_catalog.format('ADD CONSTRAINT %I %s', en.conname, pg_catalog.pg_get_constraintdef(c.oid))) THEN
+                        RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": natural key is not bound to the primary key; repair with drop_unique_key and add_unique_key',
+                            r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
+                    END IF;
+                END IF;
+            END;
+        END IF;
     END LOOP;
 
     FOR r IN

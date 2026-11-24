@@ -284,6 +284,64 @@ BEGIN
             USING ERRCODE = 'object_not_in_prerequisite_state',
                   HINT = 'Move each policy to its base table, drop it from history, and rerun preflight.';
     END IF;
+
+    /* Natural keys the 1.14 update binds to their primary key (an earlier release left them unbound): a natural key
+       value held by more than one primary key value refuses the update. The query mirrors the guard: equal values
+       (a NULL is equal to nothing), one guard per column of a mutually exclusive key, on the rows where only that
+       column is set. */
+    DECLARE
+        k record;
+        stable_pk name[];
+        variant record;
+        nk_value text;
+    BEGIN
+        policy_list := NULL;
+        FOR k IN
+            SELECT nk.unique_key_name, nk.table_schema, nk.table_name, nk.column_names, nk.mutually_exclusive_columns,
+                   pk.column_names AS pk_columns, e.range_column_name
+            FROM sql_saga.unique_keys AS nk
+            JOIN sql_saga.unique_keys AS pk ON (pk.table_schema, pk.table_name, pk.key_type) = (nk.table_schema, nk.table_name, 'primary')
+            JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (nk.table_schema, nk.table_name, nk.era_name)
+            WHERE nk.key_type = 'natural' AND (nk.pk_consistency_constraint_names IS NULL OR nk.pk_consistency_constraint_names = '{}')
+            ORDER BY nk.table_schema, nk.table_name, nk.unique_key_name
+        LOOP
+            stable_pk := ARRAY(SELECT c FROM pg_catalog.unnest(k.pk_columns) AS c WHERE c <> k.range_column_name);
+            IF stable_pk <@ ARRAY(SELECT c FROM pg_catalog.unnest(k.column_names) AS c
+                                  WHERE k.mutually_exclusive_columns IS NULL OR c <> ALL (k.mutually_exclusive_columns)) THEN
+                CONTINUE;
+            END IF;
+            FOR variant IN
+                SELECT ARRAY(SELECT c FROM pg_catalog.unnest(k.column_names) AS c WHERE c <> ALL (k.mutually_exclusive_columns)) || x AS cols,
+                       ARRAY(SELECT o FROM pg_catalog.unnest(k.mutually_exclusive_columns) AS o WHERE o <> x) AS nulls
+                FROM pg_catalog.unnest(k.mutually_exclusive_columns) AS x
+                WHERE k.mutually_exclusive_columns IS NOT NULL
+                UNION ALL
+                SELECT k.column_names, '{}'::name[] WHERE k.mutually_exclusive_columns IS NULL
+            LOOP
+                EXECUTE pg_catalog.format(
+                    'SELECT pg_catalog.string_agg(v, '', '') FROM (SELECT pg_catalog.format(%L, %s) AS v FROM %I.%I WHERE %s GROUP BY %s HAVING pg_catalog.count(DISTINCT (%s)) > 1 ORDER BY 1 LIMIT 5) AS x',
+                    '(' || pg_catalog.array_to_string(ARRAY(SELECT '%s' FROM pg_catalog.unnest(variant.cols)), ', ') || ')',
+                    (SELECT pg_catalog.string_agg(pg_catalog.format('%I', c), ', ') FROM pg_catalog.unnest(variant.cols) AS c),
+                    k.table_schema, k.table_name,
+                    (SELECT pg_catalog.string_agg(f, ' AND ') FROM (
+                        SELECT pg_catalog.format('%I IS NOT NULL', c) AS f FROM pg_catalog.unnest(variant.cols) AS c
+                        UNION ALL
+                        SELECT pg_catalog.format('%I IS NULL', c) FROM pg_catalog.unnest(variant.nulls) AS c) AS w),
+                    (SELECT pg_catalog.string_agg(pg_catalog.format('%I', c), ', ') FROM pg_catalog.unnest(variant.cols) AS c),
+                    (SELECT pg_catalog.string_agg(pg_catalog.format('%I', c), ', ') FROM pg_catalog.unnest(stable_pk) AS c))
+                INTO nk_value;
+                IF nk_value IS NOT NULL THEN
+                    policy_list := pg_catalog.concat_ws(E'\n', policy_list,
+                        pg_catalog.format('%I.%I natural key %I: %s', k.table_schema, k.table_name, k.unique_key_name, nk_value));
+                END IF;
+            END LOOP;
+        END LOOP;
+        IF policy_list IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: natural key values held by more than one primary key value prevent upgrade:%', E'\n' || policy_list
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'The 1.14 update binds every natural key value to one primary key value. Correct the rows so that each value belongs to one entity.';
+        END IF;
+    END;
 END;
 $preflight$;
 

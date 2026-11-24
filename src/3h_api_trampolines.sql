@@ -123,7 +123,6 @@ CREATE FUNCTION sql_saga.add_unique_key(
     column_names name[],
     era_name name DEFAULT 'valid'::name,
     key_type sql_saga.unique_key_type DEFAULT 'natural'::sql_saga.unique_key_type,
-    enforce_consistency_with_primary_key boolean DEFAULT NULL::boolean,
     unique_key_name name DEFAULT NULL::name,
     unique_constraint name DEFAULT NULL::name,
     exclude_constraint name DEFAULT NULL::name,

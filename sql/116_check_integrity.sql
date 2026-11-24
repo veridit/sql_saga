@@ -333,7 +333,7 @@ CREATE TABLE period_child (id integer, parent_id integer, valid_from date, valid
 CREATE TABLE regular_child (id integer, parent_id integer);
 SELECT sql_saga.add_era('period_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'period_parent_primary');
-SELECT sql_saga.add_unique_key('period_parent', ARRAY['category']::name[], 'valid', key_type => 'natural', unique_key_name => 'period_parent_natural', enforce_consistency_with_primary_key => false);
+SELECT sql_saga.add_unique_key('period_parent', ARRAY['category']::name[], 'valid', key_type => 'natural', unique_key_name => 'period_parent_natural');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'predicated', predicate => 'category IS NOT NULL', unique_key_name => 'period_parent_predicated');
 SELECT sql_saga.add_for_portion_of_view('period_parent', 'valid');
 SELECT sql_saga.add_current_view('period_parent', 'valid');

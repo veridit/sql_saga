@@ -1,8 +1,17 @@
+/*
+ * The guard that binds a natural key to its entity (1.14, hug mnntde): for each stable primary key column (the primary
+ * key's columns without the range), EXCLUDE (natural key WITH =, that column WITH <>). Together they refuse a natural
+ * key value on two rows whose primary key differs in any column, at any time. No guard is needed when the natural key
+ * itself contains every stable primary key column (outside its mutually exclusive columns): then its own uniqueness
+ * already binds it. There is no opt-out: a natural key that could move between entities identifies nothing.
+ * Names: <key>_pk_consistency_excl for a single stable column (as before 1.14), <key>_<column>_pk_consistency_excl for
+ * each column of a composite one; a mutually exclusive key adds the XOR column to the name, as before.
+ */
 CREATE FUNCTION sql_saga.__internal_generate_pk_consistency_constraints(
     p_unique_key_name name,
     p_natural_key_columns name[],
     p_mutually_exclusive_columns name[],
-    p_primary_key_column name
+    p_stable_pk_columns name[]
 )
 RETURNS jsonb -- { "cmds": text[], "names": name[] }
 LANGUAGE plpgsql AS
@@ -14,34 +23,54 @@ DECLARE
     v_constraint_name name;
     v_constraint_sql text;
     v_withs text[];
+    v_pk_column name;
+    v_composite boolean := pg_catalog.array_length(p_stable_pk_columns, 1) > 1;
+    non_xor_cols name[] := ARRAY(SELECT c FROM pg_catalog.unnest(p_natural_key_columns) AS c
+                                 WHERE p_mutually_exclusive_columns IS NULL OR c <> ALL (p_mutually_exclusive_columns));
+    xor_col name;
+    where_clause_partial text;
 BEGIN
-    IF p_mutually_exclusive_columns IS NULL THEN
-        v_constraint_name := p_unique_key_name || '_pk_consistency_excl';
-        SELECT array_agg(format('%I WITH =', col)) INTO v_withs FROM unnest(p_natural_key_columns) AS col;
-        v_withs := v_withs || format('%I WITH <>', p_primary_key_column);
-        v_constraint_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s)', v_constraint_name, array_to_string(v_withs, ', '));
-        v_constraint_cmds := array_append(v_constraint_cmds, v_constraint_sql);
-        v_constraint_names := array_append(v_constraint_names, v_constraint_name);
-    ELSE
-        DECLARE
-            non_xor_cols name[];
-            xor_col name;
-            where_clause_partial text;
-        BEGIN
-            non_xor_cols := ARRAY(SELECT c FROM unnest(p_natural_key_columns) AS c WHERE c <> ALL(p_mutually_exclusive_columns));
-            FOREACH xor_col IN ARRAY p_mutually_exclusive_columns LOOP
-                v_constraint_name := sql_saga.__internal_make_name(ARRAY[p_unique_key_name, xor_col, 'pk_consistency_excl']);
-                SELECT array_agg(format('%I WITH =', col)) INTO v_withs FROM unnest(non_xor_cols || xor_col) AS col;
-                v_withs := v_withs || format('%I WITH <>', p_primary_key_column);
-                where_clause_partial := format('WHERE (%I IS NOT NULL AND (%s))', xor_col, (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(p_mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col));
-                v_constraint_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s) %s', v_constraint_name, array_to_string(v_withs, ', '), where_clause_partial);
-                v_constraint_cmds := array_append(v_constraint_cmds, v_constraint_sql);
-                v_constraint_names := array_append(v_constraint_names, v_constraint_name);
-            END LOOP;
-        END;
+    IF p_stable_pk_columns IS NULL OR pg_catalog.array_length(p_stable_pk_columns, 1) IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: a primary key without a stable column cannot bind natural key "%"', p_unique_key_name;
     END IF;
+    -- Implied by the natural key's own uniqueness: it holds every stable primary key column.
+    IF p_stable_pk_columns <@ non_xor_cols THEN
+        RETURN jsonb_build_object('cmds', '[]'::jsonb, 'names', '[]'::jsonb);
+    END IF;
+    FOREACH v_pk_column IN ARRAY p_stable_pk_columns LOOP
+        IF p_mutually_exclusive_columns IS NULL THEN
+            v_constraint_name := CASE WHEN v_composite
+                THEN sql_saga.__internal_make_name(ARRAY[p_unique_key_name, v_pk_column, 'pk_consistency_excl'])
+                ELSE p_unique_key_name || '_pk_consistency_excl' END;
+            SELECT array_agg(pg_catalog.format('%I WITH =', col)) INTO v_withs FROM pg_catalog.unnest(p_natural_key_columns) AS col;
+            v_withs := v_withs || pg_catalog.format('%I WITH <>', v_pk_column);
+            v_constraint_sql := pg_catalog.format('ADD CONSTRAINT %I EXCLUDE USING gist (%s)', v_constraint_name, pg_catalog.array_to_string(v_withs, ', '));
+            v_constraint_cmds := pg_catalog.array_append(v_constraint_cmds, v_constraint_sql);
+            v_constraint_names := pg_catalog.array_append(v_constraint_names, v_constraint_name);
+        ELSE
+            FOREACH xor_col IN ARRAY p_mutually_exclusive_columns LOOP
+                v_constraint_name := sql_saga.__internal_make_name(
+                    CASE WHEN v_composite THEN ARRAY[p_unique_key_name, xor_col, v_pk_column, 'pk_consistency_excl']
+                         ELSE ARRAY[p_unique_key_name, xor_col, 'pk_consistency_excl'] END);
+                SELECT array_agg(pg_catalog.format('%I WITH =', col)) INTO v_withs FROM pg_catalog.unnest(non_xor_cols || xor_col) AS col;
+                v_withs := v_withs || pg_catalog.format('%I WITH <>', v_pk_column);
+                -- Written as PostgreSQL deparses it (pg_get_constraintdef), so check_integrity compares text with text.
+                where_clause_partial := pg_catalog.format('WHERE ((%s))',
+                    (SELECT string_agg(p, ' AND ' ORDER BY o) FROM (
+                        SELECT 0 AS o, pg_catalog.format('(%I IS NOT NULL)', xor_col) AS p
+                        UNION ALL
+                        SELECT u.n, pg_catalog.format('(%I IS NULL)', u.other_col)
+                        FROM pg_catalog.unnest(p_mutually_exclusive_columns) WITH ORDINALITY AS u(other_col, n)
+                        WHERE u.other_col <> xor_col) AS parts));
+                v_constraint_sql := pg_catalog.format('ADD CONSTRAINT %I EXCLUDE USING gist (%s) %s', v_constraint_name,
+                    pg_catalog.array_to_string(v_withs, ', '), where_clause_partial);
+                v_constraint_cmds := pg_catalog.array_append(v_constraint_cmds, v_constraint_sql);
+                v_constraint_names := pg_catalog.array_append(v_constraint_names, v_constraint_name);
+            END LOOP;
+        END IF;
+    END LOOP;
 
-    RETURN jsonb_build_object('cmds', v_constraint_cmds, 'names', v_constraint_names);
+    RETURN jsonb_build_object('cmds', to_jsonb(v_constraint_cmds), 'names', to_jsonb(v_constraint_names));
 END;
 $function$;
 
@@ -50,7 +79,6 @@ CREATE FUNCTION sql_saga.__api_add_unique_key(
         column_names name[],
         era_name name DEFAULT 'valid',
         key_type sql_saga.unique_key_type DEFAULT 'natural',
-        enforce_consistency_with_primary_key boolean DEFAULT NULL,
         unique_key_name name DEFAULT NULL,
         unique_constraint name DEFAULT NULL,
         exclude_constraint name DEFAULT NULL,
@@ -82,16 +110,11 @@ DECLARE
     where_clause text;
 
     v_pk_consistency_constraint_names name[];
-    v_enforce_consistency_original boolean := enforce_consistency_with_primary_key;
     v_stable_cols_to_store name[];
 BEGIN
     PERFORM sql_saga.__internal_entry_guard();
     PERFORM sql_saga.__internal_require_owner(table_oid, 'add_unique_key');
     RAISE DEBUG 'add_unique_key entry: table_oid=%, column_names=%, era_name=%, key_type=%', table_oid, column_names, era_name, key_type;
-    -- If the parameter is NULL (the default), set it to true for natural keys and false otherwise.
-    IF enforce_consistency_with_primary_key IS NULL THEN
-        enforce_consistency_with_primary_key := (key_type = 'natural');
-    END IF;
 
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -179,11 +202,6 @@ BEGIN
         IF key_type <> 'natural' THEN
             RAISE EXCEPTION 'mutually_exclusive_columns can only be used with key_type = ''natural''';
         END IF;
-    END IF;
-
-    -- This check is now only relevant if the user explicitly provides the parameter.
-    IF enforce_consistency_with_primary_key AND key_type <> 'natural' THEN
-        RAISE EXCEPTION 'enforce_consistency_with_primary_key can only be used with key_type = ''natural''';
     END IF;
 
     IF predicate IS NOT NULL THEN
@@ -449,76 +467,31 @@ BEGIN
         exclude_constraint := NULL;
     END IF;
 
-    -- When adding a natural key, determine the state of PK consistency enforcement.
+    -- A natural key is bound to its entity (1.14): with a primary key the guard is built now; without one the state is
+    -- pending ('{}') until add_unique_key adds the primary key. '{}' with a primary key means the guard is implied.
     IF key_type = 'natural' THEN
-        IF enforce_consistency_with_primary_key THEN
-            DECLARE
-                pk_column_names name[];
-                stable_pk_columns name[];
-                pk_is_compatible boolean := true;
-            BEGIN
-                -- A PK exists, so we can enforce immediately.
-                SELECT uk.column_names INTO pk_column_names FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'primary'::sql_saga.unique_key_type;
-                IF NOT FOUND THEN
-                    SELECT array_agg(a.attname ORDER BY u.ord) INTO pk_column_names FROM pg_catalog.pg_constraint c JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum WHERE c.conrelid = table_oid AND c.contype = 'p';
-                END IF;
+        DECLARE
+            pk_column_names name[];
+            consistency_result jsonb;
+        BEGIN
+            SELECT uk.column_names INTO pk_column_names FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'primary'::sql_saga.unique_key_type;
+            IF NOT FOUND THEN
+                SELECT array_agg(a.attname ORDER BY u.ord) INTO pk_column_names FROM pg_catalog.pg_constraint c JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum WHERE c.conrelid = table_oid AND c.contype = 'p';
+            END IF;
 
-                IF pk_column_names IS NOT NULL THEN
-                    -- Subtract temporal columns to find the stable part of the PK.
-                    SELECT array_agg(c) INTO stable_pk_columns
-                    FROM unnest(pk_column_names) as c
-                    WHERE c <> era_row.range_column_name;
-
-                    IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
-                        IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
-                            RAISE EXCEPTION 'cannot enforce primary key consistency on table "%" because its PRIMARY KEY (%) does not contain a stable (non-temporal) column', sql_saga.__internal_display_name(table_oid), array_to_string(pk_column_names, ', ');
-                        ELSE -- Silently opt-out if using default (NULL) or explicit false
-                            pk_is_compatible := false;
-                        END IF;
-                    END IF;
-
-                    IF pk_is_compatible AND array_length(stable_pk_columns, 1) > 1 THEN
-                        IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
-                            RAISE EXCEPTION 'cannot enforce primary key consistency for natural key (%) on table "%" because its stable PRIMARY KEY component (%) is composite', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
-                        ELSE -- Silently opt-out if using default (NULL) or explicit false
-                            pk_is_compatible := false;
-                        END IF;
-                    END IF;
-
-                    IF pk_is_compatible THEN
-                        -- If we get here, we have a single stable PK column.
-                        DECLARE
-                            pk_column_name name := stable_pk_columns[1];
-                            consistency_result jsonb;
-                        BEGIN
-                            -- Skip consistency constraint when natural key IS the PK column (single column case)
-                            IF array_length(column_names, 1) = 1 AND column_names[1] = pk_column_name THEN
-                                -- Natural key is identical to PK column, no consistency check needed
-                                v_pk_consistency_constraint_names := '{}';
-                            ELSE
-                                consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
-                                    p_unique_key_name => unique_key_name,
-                                    p_natural_key_columns => column_names,
-                                    p_mutually_exclusive_columns => mutually_exclusive_columns,
-                                    p_primary_key_column => pk_column_name
-                                );
-                                alter_cmds := alter_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
-                                v_pk_consistency_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
-                            END IF;
-                        END;
-                    ELSE
-                        -- Incompatible PK, silently opt-out.
-                        v_pk_consistency_constraint_names := NULL;
-                    END IF;
-                ELSE
-                    -- No PK exists yet. Set state to "pending" (empty array).
-                    v_pk_consistency_constraint_names := '{}';
-                END IF;
-            END;
-        ELSE
-            -- User opted out. Set state to "opt-out" (NULL).
-            v_pk_consistency_constraint_names := NULL;
-        END IF;
+            IF pk_column_names IS NULL THEN
+                v_pk_consistency_constraint_names := '{}';
+            ELSE
+                consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
+                    p_unique_key_name => unique_key_name,
+                    p_natural_key_columns => column_names,
+                    p_mutually_exclusive_columns => mutually_exclusive_columns,
+                    p_stable_pk_columns => ARRAY(SELECT c FROM unnest(pk_column_names) AS c WHERE c <> era_row.range_column_name)
+                );
+                alter_cmds := alter_cmds || ARRAY(SELECT jsonb_array_elements_text(consistency_result->'cmds'));
+                v_pk_consistency_constraint_names := ARRAY(SELECT jsonb_array_elements_text(consistency_result->'names'))::name[];
+            END IF;
+        END;
     END IF;
 
     IF alter_cmds <> '{}' THEN
@@ -594,59 +567,37 @@ BEGIN
         END;
     END IF;
 
-    -- When adding a primary key, scan for any natural keys in a "pending" state.
+    -- When adding a primary key, bind every natural key that was waiting for one (state '{}').
     IF key_type = 'primary' THEN
         DECLARE
             nk_row sql_saga.unique_keys;
-            pk_column_name name;
-            consistency_cmds text[];
+            consistency_result jsonb;
+            consistency_cmds text[] := '{}';
         BEGIN
-            DECLARE
-                stable_pk_columns name[];
-            BEGIN
-                -- Subtract temporal columns from the new PK to find its stable part.
-                SELECT array_agg(c) INTO stable_pk_columns
-                FROM unnest(column_names) as c
-                WHERE c <> era_row.range_column_name;
+            FOR nk_row IN
+                SELECT * FROM sql_saga.unique_keys uk
+                WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
+                  AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}'
+                ORDER BY uk.unique_key_name
+            LOOP
+                consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
+                    p_unique_key_name => nk_row.unique_key_name,
+                    p_natural_key_columns => nk_row.column_names,
+                    p_mutually_exclusive_columns => nk_row.mutually_exclusive_columns,
+                    p_stable_pk_columns => ARRAY(SELECT c FROM unnest(column_names) AS c WHERE c <> era_row.range_column_name)
+                );
+                consistency_cmds := consistency_cmds || ARRAY(SELECT jsonb_array_elements_text(consistency_result->'cmds'));
+                -- Qualified: unique_key_name alone is this function's parameter (#variable_conflict use_variable), the
+                -- primary key's name, and until 1.14 left the natural key's catalog row at '{}' with its guard built.
+                UPDATE sql_saga.unique_keys AS uk
+                SET pk_consistency_constraint_names = ARRAY(SELECT jsonb_array_elements_text(consistency_result->'names'))::name[]
+                WHERE uk.unique_key_name = nk_row.unique_key_name;
+            END LOOP;
 
-                IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
-                    IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
-                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because it has no stable (non-temporal) part, which is required by existing natural keys pending consistency enforcement', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid);
-                    END IF;
-                ELSIF array_length(stable_pk_columns, 1) > 1 THEN
-                    IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
-                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because its stable part (%) is composite, which is not supported for consistency enforcement required by existing natural keys', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
-                    END IF;
-                ELSE
-                    -- This is a compatible, single-column stable PK. Apply to pending NKs.
-                    pk_column_name := stable_pk_columns[1];
-                    FOR nk_row IN
-                        SELECT * FROM sql_saga.unique_keys uk
-                        WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
-                        AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}' -- Find pending keys
-                    LOOP
-                        DECLARE
-                            consistency_result jsonb;
-                            newly_created_constraint_names name[];
-                        BEGIN
-                             consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
-                                p_unique_key_name => nk_row.unique_key_name,
-                                p_natural_key_columns => nk_row.column_names,
-                                p_mutually_exclusive_columns => nk_row.mutually_exclusive_columns,
-                                p_primary_key_column => pk_column_name
-                            );
-                            consistency_cmds := consistency_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
-                            newly_created_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
-                            UPDATE sql_saga.unique_keys SET pk_consistency_constraint_names = newly_created_constraint_names WHERE unique_key_name = nk_row.unique_key_name;
-                        END;
-                    END LOOP;
-
-                    IF consistency_cmds IS NOT NULL AND array_length(consistency_cmds, 1) > 0 THEN
-                        RAISE NOTICE 'sql_saga: Applied retroactive primary key consistency constraints to table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, '; ');
-                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', ')));
-                    END IF;
-                END IF;
-            END;
+            IF array_length(consistency_cmds, 1) > 0 THEN
+                RAISE NOTICE 'sql_saga: Applied retroactive primary key consistency constraints to table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, '; ');
+                PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', ')));
+            END IF;
         END;
     END IF;
 
@@ -691,5 +642,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.__api_add_unique_key(regclass, name[], name, sql_saga.unique_key_type, boolean, name, name, name, text, name[]) IS
-'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. Can also enforce consistency between a natural key and the primary key.';
+COMMENT ON FUNCTION sql_saga.__api_add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text, name[]) IS
+'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. A natural key is always bound to one primary key value, also when that key is composite.';

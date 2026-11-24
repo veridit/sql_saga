@@ -92,18 +92,18 @@ SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('sql_saga %(v)s upgr
 """ % {'v': version, 'tag': version.replace('.', '_')}
 
 
-def replace_routine_sql(old_key, new_key, target):
+def replace_routine_sql(old_key, new_key, target, revoked_from_public):
     """Refuse when the old routine's EXECUTE privileges differ from those its replacement gets, then drop it.
 
-    DROP and CREATE cannot carry privileges over. The replacement gets what a function created now gets (the
-    database's default privileges, read from a throwaway probe), minus PUBLIC for a private routine, whose PUBLIC
-    EXECUTE the update revokes as a fresh install does. Any other difference is a site decision that would be lost
-    silently (a grant dropped, a revoke undone), so the update stops and prints the statements that carry it over
-    to the new signature.
+    DROP and CREATE cannot carry privileges over. The old routine's privileges as its release installed them are what a
+    function created now gets (the database's default privileges, read from a throwaway probe), minus PUBLIC when that
+    release's install script revoked it from PUBLIC. Any other privilege is a site decision that would be lost silently
+    (a grant dropped, a revoke undone), so the update stops and prints the statements that carry it over to the new
+    signature. The new routine then gets the privilege statements src/ has for it.
     """
     name = old_key.split('(')[0].split('.')[-1]
     tag = re.sub(r'[^a-z0-9]+', '_', name)
-    keep_public = 'false' if name.startswith('__') else 'true'
+    keep_public = 'false' if revoked_from_public else 'true'
     template = """DO $replace_@TAG@$
 DECLARE
     old_proc CONSTANT text := '@OLD@';
@@ -365,8 +365,10 @@ def build(previous_install, current_install, fragment, previous, target):
     chunks = [header(target), prefix(target)]
     # Dependents before what they depend on: the reverse of their order in the previous install script.
     order = {i: n for n, i in enumerate(routine_ident(x) for x in old)}
+    revoked = {t for x in old for t in (acl_targets(s._core(x)) or [])
+               if re.match(r'REVOKE\s.*\sFROM\s+PUBLIC\b', ' '.join(s._core(x).split()), re.I)}
     for o, n in sorted(replaced, key=lambda p: -order[p[0]]):
-        chunks.append(replace_routine_sql(key_text(o), key_text(n), target))
+        chunks.append(replace_routine_sql(key_text(o), key_text(n), target, o in revoked))
     for i in sorted(removed, key=lambda i: -order[i]):
         kind = s._parse_routine(old_routines[i])['kind'].upper()
         chunks.append('DROP %s %s;\n' % (kind, key_text(i)))

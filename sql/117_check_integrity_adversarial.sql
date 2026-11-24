@@ -182,7 +182,7 @@ SELECT sql_saga.add_era('era_wrong', 'valid_range', 'valid', valid_from_column_n
 SELECT sql_saga.add_era('period_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'period_parent_primary');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'predicated', predicate => 'category IS NOT NULL', unique_key_name => 'period_parent_predicated');
-SELECT sql_saga.add_unique_key('period_parent', ARRAY['category']::name[], 'valid', key_type => 'natural', unique_key_name => 'period_parent_natural', enforce_consistency_with_primary_key => false);
+SELECT sql_saga.add_unique_key('period_parent', ARRAY['category']::name[], 'valid', key_type => 'natural', unique_key_name => 'period_parent_natural');
 ALTER TABLE period_parent ADD COLUMN alt_id integer;
 ALTER TABLE period_parent ADD CONSTRAINT period_parent_alt_temporal UNIQUE (alt_id, valid_range WITHOUT OVERLAPS);
 ALTER TABLE period_parent ADD CONSTRAINT period_parent_id_plain UNIQUE (id);
@@ -219,7 +219,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('__internal_current_view_now(view_oid oid, range_subtype regtype)'),
 ('__internal_deny_history(table_oid oid)'),
 ('__internal_display_name(object_name regclass)'),
-('__internal_generate_pk_consistency_constraints(p_unique_key_name name, p_natural_key_columns name[], p_mutually_exclusive_columns name[], p_primary_key_column name)'),
+('__internal_generate_pk_consistency_constraints(p_unique_key_name name, p_natural_key_columns name[], p_mutually_exclusive_columns name[], p_stable_pk_columns name[])'),
 ('__internal_history_base_select_policy_name()'),
 ('__internal_history_copy_name(base_policy_name name)'),
 ('__internal_history_family(rel oid)'),
@@ -247,7 +247,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('add_synchronize_temporal_columns_trigger(IN table_oid regclass, IN era_name name)'),
 ('add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name, history_table_must_exist boolean)'),
 ('add_temporal_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
-('add_unique_key(table_oid regclass, column_names name[], era_name name, key_type sql_saga.unique_key_type, enforce_consistency_with_primary_key boolean, unique_key_name name, unique_constraint name, exclude_constraint name, predicate text, mutually_exclusive_columns name[])'),
+('add_unique_key(table_oid regclass, column_names name[], era_name name, key_type sql_saga.unique_key_type, unique_key_name name, unique_constraint name, exclude_constraint name, predicate text, mutually_exclusive_columns name[])'),
 ('covers_without_gaps(anyrange, anyrange)'),
 ('covers_without_gaps_finalfn(internal, anyrange, anyrange)'),
 ('covers_without_gaps_transfn(internal, anyrange, anyrange)'),
@@ -913,7 +913,7 @@ RESET session_replication_role;
 SELECT integrity_g4.attempt('wrong exact managed unique index definition', 'sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
 INSERT INTO replacement_state
 SELECT 'index', c.relname, pg_get_indexdef(c.oid) FROM pg_class AS c JOIN pg_namespace AS n ON n.oid=c.relnamespace
-WHERE n.nspname='integrity_g4' AND c.relname LIKE 'period_parent_natural%' AND c.relkind='i';
+WHERE n.nspname='integrity_g4' AND c.relname = (SELECT unique_constraint FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_natural') AND c.relkind='i';
 SET LOCAL client_min_messages = notice;
 SELECT sql_saga.drop_unique_key_by_name('integrity_g4.period_parent', 'period_parent_natural');
 SET LOCAL client_min_messages = warning;

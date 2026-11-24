@@ -323,8 +323,7 @@ SELECT sql_saga.add_unique_key(
 SELECT sql_saga.add_unique_key(
     'dp_guard_order.identifier_compete', ARRAY['alt_a', 'alt_b'], 'valid',
     key_type => 'natural', unique_key_name => 'identifier_compete_alt_key',
-    unique_constraint => 'identifier_compete_alt',
-    enforce_consistency_with_primary_key => false) AS key_added \gset
+    unique_constraint => 'identifier_compete_alt') AS key_added \gset
 SELECT sql_saga.add_current_view('dp_guard_order.identifier_compete', 'valid') AS view_added \gset
 SELECT dp_guard_order.case_result(
     'identifier loss outranks earlier-payload temporal unique constraint',
