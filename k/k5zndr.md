@@ -1,7 +1,7 @@
 ---
 id: k5zndr
 title: "Repair jsonb provenance values that 1.9 stored as JSON strings"
-state: "doing"
+state: "done"
 type: bug
 priority: "high"
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzy"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
-doing_since: "2026-11-24T05:00"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T05:00"
 ---
 
 ## Goal
@@ -44,5 +43,7 @@ check 1: Upgrade gate from 1.9 and 1.13 (fixture writes the 1.9 strings): base a
 check 2: RED on the 1.13 step (strings kept), GREEN on 1.14 from 1.9 and 1.13
 
 
+Reflection (unanswered, 2026-11-24, sabertooth)
 ## History
 - 2026-11-24T05:00 todo -> doing/active (take)
+- 2026-11-24T05:00 doing/active -> done (done); was doing_since: 2026-11-24T05:00
