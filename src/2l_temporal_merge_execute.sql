@@ -82,6 +82,8 @@ DECLARE
     v_partition_select_lists TEXT[];
     v_partition_count INT;
     v_part INT;
+    v_changed bigint;  -- rows an UPDATE or DELETE changed, checked against the plan (hug 7rzgv5)
+    v_planned bigint;
 BEGIN
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
@@ -880,6 +882,13 @@ BEGIN
                         $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
                         IF v_log_sql THEN RAISE NOTICE '(%) DELETE partition %/% SQL: %', v_log_id, v_part, v_partition_count, v_sql; END IF;
                         EXECUTE v_sql;
+                        GET DIAGNOSTICS v_changed = ROW_COUNT;
+                        EXECUTE format('SELECT count(*) FROM temporal_merge_plan WHERE operation = ''DELETE'' AND %s', v_partition_plan_filters[v_part]) INTO v_planned;
+                        IF v_changed <> v_planned THEN
+                            RAISE EXCEPTION 'sql_saga: temporal_merge planned to delete % rows of %, but % changed', v_planned, temporal_merge_execute.target_table, v_changed
+                                USING ERRCODE = 'internal_error',
+                                      HINT = 'The target changed under the plan. A BEFORE DELETE trigger that returns NULL, or a row-level security DELETE policy narrower than its SELECT policy, also does this (doc/design/temporal-merge-concurrency.md).';
+                        END IF;
                     END LOOP;
                 END IF;
 
@@ -908,6 +917,13 @@ BEGIN
                                 $$, v_target_table_ident, v_update_set_clause, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
                                 IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
                                 EXECUTE v_sql;
+                                GET DIAGNOSTICS v_changed = ROW_COUNT;
+                                EXECUTE format('SELECT count(*) FROM temporal_merge_plan WHERE operation = ''UPDATE'' AND statement_seq = %s AND %s', v_update_statement_seq, v_partition_plan_filters[v_part]) INTO v_planned;
+                                IF v_changed <> v_planned THEN
+                                    RAISE EXCEPTION 'sql_saga: temporal_merge planned to update % rows of %, but % changed', v_planned, temporal_merge_execute.target_table, v_changed
+                                        USING ERRCODE = 'internal_error',
+                                              HINT = 'The target changed under the plan. A BEFORE UPDATE trigger that returns NULL, or a row-level security UPDATE policy narrower than its SELECT policy, also does this (doc/design/temporal-merge-concurrency.md).';
+                                END IF;
                             ELSIF v_all_cols_ident IS NOT NULL THEN
                                 v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
                                     FROM (SELECT *, %8$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s AND %9$s ORDER BY plan_op_seq) p
@@ -915,6 +931,13 @@ BEGIN
                                 $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
                                 IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
                                 EXECUTE v_sql;
+                                GET DIAGNOSTICS v_changed = ROW_COUNT;
+                                EXECUTE format('SELECT count(*) FROM temporal_merge_plan WHERE operation = ''UPDATE'' AND statement_seq = %s AND %s', v_update_statement_seq, v_partition_plan_filters[v_part]) INTO v_planned;
+                                IF v_changed <> v_planned THEN
+                                    RAISE EXCEPTION 'sql_saga: temporal_merge planned to update % rows of %, but % changed', v_planned, temporal_merge_execute.target_table, v_changed
+                                        USING ERRCODE = 'internal_error',
+                                              HINT = 'The target changed under the plan. A BEFORE UPDATE trigger that returns NULL, or a row-level security UPDATE policy narrower than its SELECT policy, also does this (doc/design/temporal-merge-concurrency.md).';
+                                END IF;
                             END IF;
                         END LOOP;
                     END LOOP;

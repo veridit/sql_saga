@@ -12,6 +12,7 @@ that implements it and the tests that hold it.
 | [restore.md](restore.md) | `pg_restore --clean` teardown recognition; restoring dumps of older releases at their own version; the `catalog_format` safeguard | 1.2 to 1.4, current |
 | [catalog-column-order.md](catalog-column-order.md) | Key and foreign key columns follow the native constraint order; updatable views follow their base table's columns (1.3 audit) | 1.3, current |
 | [provenance.md](provenance.md) | Writer and time columns are ephemeral columns sql_saga fills from their `DEFAULT` on changed pieces and keeps on untouched ones; the comment stays the user's | 1.9 |
+| [temporal-merge-concurrency.md](temporal-merge-concurrency.md) | temporal_merge locks the keys its source names (advisory, then `FOR UPDATE`) before it plans, so concurrent writers at READ COMMITTED give the serial result; the for_portion_of view merges only changed columns; the executor checks its row counts | 1.15 |
 
 The planning briefs, review rounds and probe logs these were distilled from are archived outside the repository
 (`sql_saga_archive/sql_saga_tmp_2026-11-15.tar.zst`).

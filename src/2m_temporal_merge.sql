@@ -190,6 +190,91 @@ BEGIN
         temporal_merge.row_id_column
     );
 
+    -- Lock the entities the source names, then plan (doc/design/temporal-merge-concurrency.md, hug 7rzgv5).
+    -- At READ COMMITTED the planner's later statements take a new snapshot, so the plan sees everything committed
+    -- before these locks were granted, and nothing can change these entities until this transaction ends: the
+    -- result is that of running the concurrent transactions one after the other. The locks and the planner call
+    -- must stay separate statements.
+    DECLARE
+        v_keys text[];            -- one entry per key kind: the identity, then each natural key
+        v_key_cols text[];
+        v_key text;
+        v_lock_parts text[] := '{}';
+        v_row_parts text[] := '{}';
+        v_present text;
+        v_hash_args text;
+        v_kind integer := 0;
+    BEGIN
+        SELECT array_agg(k ORDER BY o) INTO v_keys
+        FROM (
+            SELECT to_jsonb(v_identity_cols_discovered)::text AS k, 0 AS o
+            WHERE cardinality(v_identity_cols_discovered) > 0
+            UNION ALL
+            SELECT nk.value::text, nk.ordinality
+            FROM jsonb_array_elements(COALESCE(v_natural_identity_keys_discovered, '[]'::jsonb)) WITH ORDINALITY AS nk
+        ) AS keys
+        -- A key whose columns the source or the target lacks names no entity to lock; the planner reports a missing
+        -- target column.
+        WHERE NOT EXISTS (
+            SELECT FROM jsonb_array_elements_text(k::jsonb) AS c(name)
+            WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                              WHERE a.attrelid = temporal_merge.source_table AND a.attname = c.name
+                                AND a.attnum > 0 AND NOT a.attisdropped)
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                              WHERE a.attrelid = temporal_merge.target_table AND a.attname = c.name
+                                AND a.attnum > 0 AND NOT a.attisdropped));
+
+        FOREACH v_key IN ARRAY COALESCE(v_keys, '{}') LOOP
+            v_kind := v_kind + 1;
+            SELECT array_agg(c ORDER BY o) INTO v_key_cols FROM jsonb_array_elements_text(v_key::jsonb) WITH ORDINALITY AS u(c, o);
+            -- Each source value is cast to the target column's type, so the lock follows the target's equality.
+            SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o),
+                   string_agg(pg_catalog.format('s.%I IS NOT NULL', c), ' OR ' ORDER BY o)
+            INTO v_hash_args, v_present
+            FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
+            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = u.c;
+            -- A key names an entity when any of its columns is not NULL (a natural key may hold mutually exclusive
+            -- nullable columns); a NULL column hashes as NULL, so the lock covers exactly the columns present.
+            v_lock_parts := v_lock_parts || pg_catalog.format(
+                'SELECT pg_catalog.hash_record_extended(ROW(%s, %s), 0) & 65535 AS stripe FROM %s AS s WHERE %s',
+                v_kind, v_hash_args, temporal_merge.source_table, v_present);
+            -- The target rows of the key, by equality on the source's non-NULL columns, typed as the target's so the key's
+            -- index applies; one statement per pattern of NULL columns (a natural key with mutually exclusive columns).
+            -- A single column is matched with = ANY (ARRAY(...)), which the planner always serves from the index; IN
+            -- (subquery) may be planned as a hash join over the whole table.
+            v_row_parts := v_row_parts || (
+                SELECT array_agg(pg_catalog.format(
+                    CASE WHEN cardinality(p.present) = 1
+                         THEN 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE %2$s = ANY (ARRAY(SELECT %3$s FROM %4$s AS s WHERE %5$s)) ORDER BY %2$s FOR UPDATE OF t) AS locked'
+                         ELSE 'SELECT count(*) FROM (SELECT FROM %1$s AS t WHERE (%2$s) IN (SELECT %3$s FROM %4$s AS s WHERE %5$s) ORDER BY %2$s FOR UPDATE OF t) AS locked'
+                    END,
+                    temporal_merge.target_table,
+                    (SELECT string_agg(pg_catalog.format('t.%I', c), ', ' ORDER BY o) FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o) WHERE c = ANY (p.present)),
+                    (SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o)
+                     FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
+                     JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = u.c
+                     WHERE c = ANY (p.present)),
+                    temporal_merge.source_table,
+                    (SELECT string_agg(pg_catalog.format('s.%I IS %s NULL', c, CASE WHEN c = ANY (p.present) THEN 'NOT' ELSE '' END), ' AND ')
+                     FROM unnest(v_key_cols) AS c)))
+                FROM (SELECT ARRAY(SELECT c FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
+                                   WHERE (m >> (o::integer - 1)) & 1 = 1) AS present
+                      FROM generate_series(1, (1 << cardinality(v_key_cols)) - 1) AS m) AS p);
+        END LOOP;
+
+        IF cardinality(v_lock_parts) > 0 THEN
+            EXECUTE pg_catalog.format(
+                'SELECT count(pg_catalog.pg_advisory_xact_lock(%s, stripe::integer)) FROM (SELECT DISTINCT stripe FROM (%s) AS k ORDER BY stripe) AS ordered',
+                temporal_merge.target_table::oid::bigint::bit(32)::integer, array_to_string(v_lock_parts, ' UNION ALL '));
+            -- One statement per key and pattern of present columns, so each uses its key's index. With the advisory
+            -- locks held no other merge locks these rows concurrently, so the order across statements cannot deadlock
+            -- between merges.
+            FOREACH v_key IN ARRAY v_row_parts LOOP
+                EXECUTE v_key;
+            END LOOP;
+        END IF;
+    END;
+
     -- The plan table is created here and passed implicitly to the planner and executor.
     IF to_regclass('pg_temp.temporal_merge_plan') IS NOT NULL THEN
         DROP TABLE pg_temp.temporal_merge_plan;

@@ -182,7 +182,7 @@ BEGIN
               AND pa.attname <> ALL(info.generated_columns)
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
-            EXECUTE format('CREATE TEMP TABLE %I (row_id bigserial, %s, merge_status jsonb) ON COMMIT DROP',
+            EXECUTE format('CREATE TEMP TABLE %I (row_id bigserial, %s, merge_status jsonb, changed_columns name[]) ON COMMIT DROP',
                 temp_source_table_name, v_cols_def);
         END;
     END IF;
@@ -290,7 +290,19 @@ BEGIN
         DECLARE
             v_insert_cols text;
             v_insert_vals text;
+            v_changed name[];
         BEGIN
+            -- The data columns this row changes. The apply trigger merges only these: an unchanged column's OLD value
+            -- was read before temporal_merge locks the entity, and writing it back would undo a concurrent change
+            -- (doc/design/temporal-merge-concurrency.md). A removal changes none.
+            SELECT COALESCE(array_agg(nc.key::name ORDER BY nc.key), '{}')
+            INTO v_changed
+            FROM jsonb_each(jnew) AS nc(key, value)
+            WHERE NOT delete_portion
+              AND nc.value IS DISTINCT FROM jold -> nc.key
+              AND nc.key <> ALL (identifier_columns)
+              AND nc.key IS DISTINCT FROM info.range_column_name;
+
             -- Build explicit column list and values from jnew
             SELECT 
                 string_agg(quote_ident(key), ', '),
@@ -301,9 +313,9 @@ BEGIN
                                 AND pa.attname = key
             WHERE pa.attnum > 0 AND NOT pa.attisdropped;
 
-            EXECUTE format('INSERT INTO %I (%s) VALUES (%s)',
+            EXECUTE format('INSERT INTO %I (%s, changed_columns) VALUES (%s, $2)',
                 temp_source_table_name, v_insert_cols, v_insert_vals)
-            USING jnew;
+            USING jnew, v_changed;
         END;
     END;
 
@@ -336,6 +348,7 @@ DECLARE
     identifier_columns text[];
     queue record;
     queue_oid regclass;
+    column_set record;
     v_nonempty boolean;
     v_error_message text;
     v_applying text;
@@ -388,17 +401,35 @@ BEGIN
         PERFORM pg_catalog.set_config('sql_saga.for_portion_of_applying',
             pg_catalog.concat_ws(',', NULLIF(v_applying, ''), TG_RELID::text), true);
 
-        CALL sql_saga.temporal_merge(
-            target_table => info.table_oid,
-            source_table => queue_oid,
-            primary_identity_columns => identifier_columns,
-            mode => queue.mode,
-            era_name => info.era_name,
-            update_source_with_feedback => true,
-            feedback_status_column => 'merge_status',
-            feedback_status_key => 'temporal_merge',
-            ephemeral_columns => info.ephemeral_columns
-        );
+        -- Merge each set of rows that changed the same columns through a view of the queue with exactly the
+        -- identity, the period and those columns: a column the source lacks keeps the target's value, read under
+        -- temporal_merge's locks (doc/design/temporal-merge-concurrency.md). Sets never overlap in time (each row lies
+        -- within its own OLD row), and are merged in queue order.
+        FOR column_set IN EXECUTE pg_catalog.format(
+            'SELECT q.changed_columns FROM %s AS q GROUP BY q.changed_columns ORDER BY min(q.row_id)', queue_oid)
+        LOOP
+            IF to_regclass('pg_temp.__for_portion_of_source') IS NOT NULL THEN
+                DROP VIEW pg_temp.__for_portion_of_source;
+            END IF;
+            EXECUTE pg_catalog.format(
+                'CREATE TEMP VIEW __for_portion_of_source AS SELECT q.row_id, %s, q.merge_status FROM %s AS q WHERE q.changed_columns = %L',
+                (SELECT string_agg(pg_catalog.quote_ident(c), ', ')
+                 FROM unnest(identifier_columns || info.range_column_name::text || column_set.changed_columns::text[]) AS c),
+                queue_oid, column_set.changed_columns);
+
+            CALL sql_saga.temporal_merge(
+                target_table => info.table_oid,
+                source_table => 'pg_temp.__for_portion_of_source'::regclass,
+                primary_identity_columns => identifier_columns,
+                mode => queue.mode,
+                era_name => info.era_name,
+                update_source_with_feedback => true,
+                feedback_status_column => 'merge_status',
+                feedback_status_key => 'temporal_merge',
+                ephemeral_columns => info.ephemeral_columns
+            );
+        END LOOP;
+        DROP VIEW IF EXISTS pg_temp.__for_portion_of_source;
 
         PERFORM pg_catalog.set_config('sql_saga.for_portion_of_applying', COALESCE(v_applying, ''), true);
 

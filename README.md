@@ -470,6 +470,12 @@ the nested statement is refused (`object_in_use`); write to the base table direc
 trigger is part of the managed view, so drop protection, `check_integrity()` and rename following treat it
 like the row trigger. Upgrading to 1.6 adds it to every existing `for_portion_of` view in place.
 
+Since 1.15 the view merges only the columns a statement changes; every other column keeps the value the
+target has when the merge runs, under its locks. A concurrent transaction's change to another column of the
+same row is therefore kept. The row trigger sees `NEW` and `OLD`, not the `SET` list, so a column counts as
+changed when its new value differs from the one the statement read: `SET price = 2` on a row that read `price =
+2` leaves the price to whatever is committed when the merge runs.
+
 ##### The `current` View: A Simple View of the Present
 This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It simplifies interaction by showing only the records that are currently active. Because it is based on the concept of "now", the `current` view can only be created on eras that use a `date` or `timestamp`-based data type. It provides a safe, explicit protocol for data modification.
 
@@ -892,6 +898,13 @@ A regular foreign key references a primary or natural key; a predicated key is r
 
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
+
+  ##### Concurrent Writers (since 1.15)
+  `temporal_merge` locks the entities its source names before it plans: a transaction-level advisory lock per key a source row names (its identity, and each natural key it carries), then `FOR UPDATE` on the target rows of those keys. At `READ COMMITTED`, PostgreSQL's default, concurrent writers of the same entities therefore end with the result of running the transactions one after the other, without an error to retry; batches of different entities do not wait for each other. Before 1.15 a concurrent `UPDATE` of another column could be overwritten, and a concurrently deleted entity could partly come back. Details, limits and measurements: `doc/design/temporal-merge-concurrency.md`.
+  - Write an entity through `temporal_merge` (or the `for_portion_of` view) when other sessions do so at the same time. A plain `INSERT` of a row of the entity by another session is not serialized: the temporal key then refuses whichever commits second.
+  - At `REPEATABLE READ` and `SERIALIZABLE`, a write that conflicts with a transaction committed after the snapshot fails, as plain statements do there (40001, or a key violation for rows inserted after the snapshot).
+  - The executor raises (`XX000`, "planned to update N rows ... but M changed") when an `UPDATE` or `DELETE` changed other rows than planned, which a `BEFORE` trigger returning `NULL` or a narrower row-level security policy can also cause, instead of writing the pieces around a row it did not change.
+  - The advisory locks use the shared lock table: one lock per key per call, at most 65,536 per table. Batches of about 1,000 entities fit comfortably; when `out of shared memory` asks for it, raise `max_locks_per_transaction`.
 
   ##### Performance Considerations: Batch Sizing
   For optimal performance, process data in batches of approximately **1,000 rows per `temporal_merge` call**. Benchmarks show:

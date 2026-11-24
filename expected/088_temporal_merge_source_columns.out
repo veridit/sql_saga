@@ -110,7 +110,7 @@ CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
                 p_log_trace => v_log_trace,
                 p_log_sql => v_log_sql
             )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 192 at PERFORM
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 277 at PERFORM
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Scenario 3: FAIL - natural_identity_column missing from target ---'
 --- Scenario 3: FAIL - natural_identity_column missing from target ---
@@ -138,7 +138,7 @@ CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
                 p_log_trace => v_log_trace,
                 p_log_sql => v_log_sql
             )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 192 at PERFORM
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 277 at PERFORM
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Scenario 4: FAIL - identity_column missing from target ---'
 --- Scenario 4: FAIL - identity_column missing from target ---
@@ -166,7 +166,7 @@ CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
                 p_log_trace => v_log_trace,
                 p_log_sql => v_log_sql
             )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 192 at PERFORM
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 277 at PERFORM
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Scenario 5: Happy path (ID back-filling) ---'
 --- Scenario 5: Happy path (ID back-filling) ---
