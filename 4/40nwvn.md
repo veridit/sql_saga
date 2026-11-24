@@ -32,3 +32,5 @@ Repro: tmp/nkchange.sql and tmp/nkchange2.sql (copy into doc/upstream/repro or t
 - [ ] Test for id=1 code=Z and for a natural key that changes over time gives the same hand-written result from both planners
 
 ## Notes
+
+Severity raised, blocks 1.15. Target id 1: code A [2020,2025), code Q [2025,2030); source id=1 code NULL [2024,2026), PATCH_FOR_PORTION_OF. After mfky60 (7ae460c4) the PL/pgSQL planner plans DELETE of the Q row [2025,2030) and writes only [2024,2025): data loss (1.14 skipped the row). Native (1.14 and now) writes code A over [2025,2026), where the target had Q. Cause in both planners: natural key columns are entity-constant (entity_keys/group lookup keys, excluded from data). The schema allows a natural key to differ over time for one entity (the guard binds a value to one id, not one value per id), so the only answer consistent with it is per-time values: the target's value at each time, overridden by the source's non-NULL value inside the source's time; adjacent pieces with different values do not coalesce. Repro doc/upstream/repro/natural_key_change_over_time_plan.sql.
