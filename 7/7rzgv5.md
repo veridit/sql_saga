@@ -34,7 +34,7 @@ Cause: the planner reads the target with one snapshot; the executor then matches
 
 ## Acceptance
 - [x] The isolation specs b, c and e fail on 1.14 and give the serial result after the fix
-- [ ] Specs a, d and f give the serial result instead of an exclusion error
+- [x] Specs a, d and f give the serial result instead of an exclusion error
 - [ ] Two concurrent temporal_merge calls on disjoint entities do not wait for each other (isolation spec)
 - [ ] The executor raises when an UPDATE or DELETE changes a different number of rows than planned (test)
 - [ ] Benchmark rows/s before and after are recorded
