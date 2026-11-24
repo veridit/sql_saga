@@ -37,7 +37,7 @@ Guard for a composite stable primary key: one EXCLUDE (natural key WITH =, pk_co
 - [x] The owner's decision is recorded here, and 016 4a's comment and expected output match the chosen behaviour
 - [x] 016 4a and 4b both succeed and both tables reject the same natural key on another primary key; expected output hand-written first
 - [x] add_unique_key has no enforce_consistency_with_primary_key parameter; doc/api.md, README and tests updated
-- [ ] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
+- [x] The 1.14 update adds the guard to every natural key without one, and refuses with the conflicting rows listed when data breaks it
 - [ ] check_integrity reports a natural key without its guard (missing pk_consistency constraint, or NULL/empty state while a primary key exists); test hand-written first
 
 ## Notes
@@ -49,5 +49,6 @@ check 1: Owner decided 2026-11-23: no opt-out at all; recorded in notes, goal an
 
 check 2: 016 4a (PK then NK) and 4b (NK then composite PK) both succeed; both refuse NK1 on another unit (and 4a on another org) with the per-column guard; 9d5f52d
 check 3: parameter removed from src/1j, 3h, 3g; doc/api.md regenerated (line removed); README never documented it; tests 016/039/116/117 updated; 016 scenario 3 shows 'function ... does not exist'
+check 4: devops/update_step.sql bind_natural_keys; upgrade gate GREEN from 1.0/1.6/1.13 (guards recorded for opted-out, composite and late keys), RED (5 checks) on 1.13 code; conflict refused by name with PostgreSQL DETAIL naming both rows, extversion and catalog unchanged; preflight lists the value
 ## History
 - 2026-11-23T13:51 todo -> doing/active (take)
