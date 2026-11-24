@@ -1,16 +1,21 @@
 ---
 id: k5zndr
 title: "Repair jsonb provenance values that 1.9 stored as JSON strings"
-state: todo
+state: "doing"
 type: bug
 priority: "high"
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzy"
 created: 2026-11-23
 updated: 2026-11-23
 parent: "2q5nvf"
+doing_since: "2026-11-24T05:00"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -37,3 +42,7 @@ Provenance values come only from the column DEFAULT via sql_saga.provenance_trig
 check 1: Upgrade gate from 1.9 and 1.13 (fixture writes the 1.9 strings): base and history converted to objects, plain-string value untouched, history count and REPLICA trigger mode unchanged; NOTICE 'Converted the jsonb provenance values of N rows' (c03b7b9). Manual probe on real 1.9 binaries: 2 rows + history converted
 
 check 2: RED on the 1.13 step (strings kept), GREEN on 1.14 from 1.9 and 1.13
+
+
+## History
+- 2026-11-24T05:00 todo -> doing/active (take)
