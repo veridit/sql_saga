@@ -61,8 +61,10 @@ CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
 NEW_VERSION=${UPGRADE_NEW_VERSION:-$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$REPO/sql_saga.control")}
 # The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
-catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14|1.15) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
+# A new release must be added to the map above: an unknown layout made gates compare against an error string.
+case "$NEW_CATALOG_FORMAT" in unknown*) echo "HARNESS ERROR: $NEW_CATALOG_FORMAT: add it to catalog_format_of" >&2; exit 2 ;; esac
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
 RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf v1.14|1.14|87085d0"
 chain_path() {  # chain_path <from> <to>: the released versions from <from> to <to>, joined by --
