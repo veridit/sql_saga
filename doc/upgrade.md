@@ -101,6 +101,51 @@ stops at an older release; a later plain update continues from there. Exercise
 application reads and writes before reopening writers. Repeat for every database
 that contains the extension.
 
+## What changes in 1.14
+
+**Updates are a chain of steps.** The package ships one update step per release instead of
+a direct script from every older release; `ALTER EXTENSION sql_saga UPDATE` runs them in
+sequence, in one transaction (above, and
+[doc/design/update-chain.md](design/update-chain.md)). Nothing changes in how you update.
+
+**A natural key is always bound to its primary key.** A natural key value now belongs to one
+entity throughout history:
+
+- `add_unique_key` no longer has the `enforce_consistency_with_primary_key` parameter;
+  a call that passes it fails with "function ... does not exist". Remove the argument.
+- With a composite primary key, a natural key is bound too: one guard per stable primary
+  key column (`EXCLUDE (natural key WITH =, column WITH <>)`), whichever key is added
+  first. Before, a composite primary key added after the natural key was refused, and one
+  added before left the natural key unbound.
+- A natural key added before its primary key got its guard, but its catalog entry stayed
+  "pending" (every release had this). The update records it.
+- `check_integrity()` reports a natural key that is not bound.
+
+The update binds every natural key that an earlier release left unbound. A natural key
+value that belongs to more than one primary key value refuses the update, naming the key
+and the two rows; correct the rows and retry. `sql_saga_upgrade_preflight.sql` lists such
+values beforehand.
+
+**A disabled synchronization trigger is reported.** With `ALTER TABLE ... DISABLE TRIGGER`
+on an era's synchronization trigger, `valid_from` and `valid_until` stopped following the
+range column without any report. `check_integrity()`, and so the update, now refuses it
+with the repair `ALTER TABLE ... ENABLE TRIGGER ...`; the preflight lists it. Check those
+columns after enabling it. Disabling the trigger remains allowed.
+
+**jsonb provenance values from 1.9 are converted.** 1.9 stored a `jsonb` provenance value
+as a JSON string (`"{\"by\": ...}"`, see 1.10 below). The update turns every such value
+that encodes a JSON object back into that object, in the table and its history table,
+without firing triggers (no history row is written, provenance is not rewritten); other
+values are left as they are. A NOTICE gives the number of rows. The manual repair the 1.10
+section describes is no longer needed.
+
+The update replaces `add_unique_key`, its worker and the guard generator (new signatures,
+with the privilege check described for `add_era` in 1.9), and changes `check_integrity`.
+The catalog layout is unchanged (catalog format **1.9**), so a 1.9 to 1.13 dump restores
+plainly, and there is no native library change. See [the 1.13 guide](upgrade-1.13.md).
+
+Sources before 1.13 also receive the 1.13 changes (below).
+
 ## What changes in 1.13
 
 An era's own safeguards could be dropped with plain DDL: its bounds check
