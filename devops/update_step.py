@@ -10,12 +10,15 @@ The step sql_saga--<previous>--<target>.sql is worked out by comparing the previ
       a plain DROP for every routine the release removes,
   CREATE OR REPLACE for every routine that is new or changed, in src/ order,
   the privilege statements and comments src/ has for those routines, and the idempotent blocks that copy them,
-  devops/update_step.sql: the release's catalog DDL and data repairs, written by hand,
+  devops/update_step.sql: the release's catalog DDL and data repairs, written by hand (a part between the lines
+      "-- before routines" and "-- after routines" runs before the routines: types and tables their signatures use),
   the integrity gate, which runs when this step is the last one of the update.
 
 Any other difference between the two install scripts (a table, type, view, trigger or privilege on an existing object)
 fails the build unless devops/update_step.sql names it in a line "-- handles: <statement key>"; the error message
-gives the key. The upgrade test then proves that an updated installation equals a fresh one.
+gives the key. So does a routine that must be dropped while another object of the install script refers to it (an
+aggregate, a trigger, a view). Objects outside the extension that depend on a routine (a trigger on a user table) are
+the upgrade test's to find. The upgrade test then proves that an updated installation equals a fresh one.
 
 The target is default_version in sql_saga.control; the previous release is the newest install script in versions/.
 
@@ -181,7 +184,7 @@ BEGIN
                       CASE WHEN new_grantees IS NOT NULL THEN pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM %s %s;', new_proc, new_grantees, cascade_word) END,
                       old_grants);
     END IF;
-    EXECUTE 'DROP FUNCTION ' || old_proc;
+    EXECUTE 'DROP ROUTINE ' || old_proc;
 END;
 $replace_@TAG@$;
 """
@@ -252,6 +255,22 @@ def install_statements(text):
     return s.split_sql(text)
 
 
+BEFORE_MARK = '-- before routines'
+AFTER_MARK = '-- after routines'
+
+
+def split_fragment(fragment):
+    """The fragment's part that runs before the new routines (types and tables their signatures need) and the part
+    that runs after them (DDL that fires event triggers, data repairs). Without markers, all of it runs after."""
+    lines = fragment.split('\n')
+    if BEFORE_MARK not in lines:
+        return '', fragment
+    if lines.count(BEFORE_MARK) != 1 or lines.count(AFTER_MARK) != 1 or lines.index(BEFORE_MARK) > lines.index(AFTER_MARK):
+        raise GeneratorError('devops/%s: one line "%s" before one line "%s"' % (FRAGMENT, BEFORE_MARK, AFTER_MARK))
+    b, a = lines.index(BEFORE_MARK), lines.index(AFTER_MARK)
+    return '\n'.join(lines[b + 1:a]) + '\n', '\n'.join(lines[:b] + lines[a + 1:])
+
+
 def handled_keys(fragment):
     return {m.group(1).strip() for m in re.finditer(r'^-- handles: (.+)$', fragment, re.M)}
 
@@ -298,8 +317,26 @@ def build(previous_install, current_install, fragment, previous, target):
     removed = [i for i in gone if i not in {o for o, _ in replaced}]
     reached = {n for _, n in replaced} | set(added)
 
+    # DROP cannot remove a routine that a non-routine object of the extension depends on (an aggregate's support
+    # function, a trigger or event trigger function, a view or default that calls it): PostgreSQL refuses the step at the
+    # site. Such a change is the release's to make by hand, in the fragment.
+    dropped = [o for o, _ in replaced] + removed
+    for x in old:
+        if routine_ident(x):
+            continue
+        core = s._core(x)
+        if acl_targets(core) or comment_target(core, old_routines):
+            continue
+        for i in dropped:
+            name = i[0].split('.')[-1]
+            if re.search(r'(?<![A-Za-z0-9_$])%s(?![A-Za-z0-9_$])' % re.escape(name), core):
+                raise GeneratorError('%s must be dropped, but "%s" in the previous install script refers to it; '
+                                     'change it in devops/%s (and name what it handles)'
+                                     % (key_text(i), statement_key(core.strip()), FRAGMENT))
+
     # Everything else must be equal, generated here (privileges and comments of new or replaced routines, changed
     # routine comments), or handled by the fragment.
+    before, after = split_fragment(fragment)
     handles = handled_keys(fragment)
     old_rest = {}
     for x in old:
@@ -363,6 +400,8 @@ def build(previous_install, current_install, fragment, previous, target):
         raise GeneratorError('devops/%s must not run the integrity gate; the step ends with it' % FRAGMENT)
 
     chunks = [header(target), prefix(target)]
+    if before.strip():
+        chunks.append(before if before.endswith('\n') else before + '\n')
     # Dependents before what they depend on: the reverse of their order in the previous install script.
     order = {i: n for n, i in enumerate(routine_ident(x) for x in old)}
     revoked = {t for x in old for t in (acl_targets(s._core(x)) or [])
@@ -378,8 +417,8 @@ def build(previous_install, current_install, fragment, previous, target):
             text = s.to_create_or_replace(x).strip('\n')
             chunks.append(text + '\n')
     chunks.extend(c + '\n' for c in emitted)
-    if fragment.strip():
-        chunks.append(fragment if fragment.endswith('\n') else fragment + '\n')
+    if after.strip():
+        chunks.append(after if after.endswith('\n') else after + '\n')
     chunks.append(LAST_STEP_GATE)
     return ''.join(chunks)
 

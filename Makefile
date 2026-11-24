@@ -68,6 +68,7 @@ install: $(EXTENSION)--$(EXTVERSION).sql $(UPDATE_STEP) remove-stale-scripts
 # newer native library. Install exactly this package's scripts (a package manager removes them the same way).
 .PHONY: remove-stale-scripts
 remove-stale-scripts:
+	@echo "sql_saga: removing every $(EXTENSION)--*.sql from $(DESTDIR)$(datadir)/extension before installing this package's scripts"
 	rm -f '$(DESTDIR)$(datadir)/extension/$(EXTENSION)--'*.sql
 
 # ---------------------------------------------------------------------------

@@ -40,12 +40,17 @@ with the definitions of its own release, exactly as that release was tested.
      - 1.0--1.1: the shared regular-FK helper validator reads each helper once (released in 1.0--1.2);
      - 1.0--1.1: the ACL guard runs before the historical grants (released in 1.0--1.3).
 - Because a step accepts a newer library, `ALTER EXTENSION sql_saga UPDATE TO '1.5'` with the 1.14 package stops at
-  1.5, and a later plain update continues from there.
+  1.5, and a later plain update continues from there. Such a stop runs no integrity check (its last step's version is
+  not the library's); the update that reaches the library's version does.
 - A new release adds exactly one step, built by `devops/update_step.py`. Its routine changes are found by comparing
   the new install script with the previous one; nothing is listed by hand. A routine whose signature changes (or that
   CREATE OR REPLACE cannot change) is dropped and created after a check that the site did not change its privileges.
   Every other change (catalog tables, types, data) is written by hand in `devops/update_step.sql`, which names each
-  install-script difference it handles; an unnamed difference fails the build. The version lives only in
+  install-script difference it handles; an unnamed difference fails the build. The fragment runs after the routines;
+  a part between the lines `-- before routines` and `-- after routines` runs before them (a type or table a new
+  signature uses). A routine that must be dropped while an object of the install script refers to it (an aggregate,
+  a trigger or event trigger, a view) fails the build too: that change is made by hand. Objects outside the
+  extension that depend on a routine (a trigger on a user table) are found by the upgrade test. The version lives only in
   `sql_saga.control`; the previous release is the newest install script in `versions/`.
 - `make install` removes every `sql_saga--*.sql` from the extension directory before installing, so direct scripts
   left by an older package cannot shortcut the chain.
@@ -72,7 +77,7 @@ with the definitions of its own release, exactly as that release was tested.
 | Repository growth per release | about 19 MB | the step's size (about 1,000 lines) |
 | Hand-written per release | generator, hashes, routine lists, spec test, version in ten files | none beyond the step's catalog and data changes |
 | What an old database runs | one file with every old step, guards retargeted | the same steps, each as released |
-| Integrity checks during an update | one, at the end | one, at the end |
+| Integrity checks during an update | one, at the end | one, at the end (none for a stop at an older release) |
 
 Rejected: assembling every update from all current routines plus replayed catalog steps (tried 2026-11-23). It ran old
 steps against today's routines and failed for 1.0 and 1.1 with data, the releases StatBus shipped longest.

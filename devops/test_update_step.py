@@ -105,6 +105,37 @@ class Step(unittest.TestCase):
             step(new)
 
 
+class Review(unittest.TestCase):
+    """Findings of the independent review (tmp/review_update_chain.md, B1, B2, N1)."""
+
+    def test_replaced_routine_is_dropped_whatever_its_kind(self):
+        base = BASE + 'CREATE PROCEDURE sql_saga.p(x integer) LANGUAGE sql AS $p$ SELECT $p$;\n'
+        new = BASE + 'CREATE FUNCTION sql_saga.p(x integer) RETURNS void LANGUAGE sql AS $p$ SELECT $p$;\n'
+        out = u.build(base, new, '', '1.13', '1.14')
+        self.assertIn("EXECUTE 'DROP ROUTINE ' || old_proc;", out)
+        self.assertNotIn("EXECUTE 'DROP FUNCTION ' || old_proc;", out)
+
+    def test_dropping_a_routine_another_object_uses_fails_the_build(self):
+        base = BASE + ('CREATE FUNCTION sql_saga.first_sfunc(anyelement, anyelement) RETURNS anyelement LANGUAGE sql AS $f$ SELECT $1 $f$;\n'
+                       'CREATE AGGREGATE sql_saga.first(anyelement) (SFUNC = sql_saga.first_sfunc, STYPE = anyelement);\n')
+        new = base.replace("RETURNS anyelement LANGUAGE sql AS $f$ SELECT $1 $f$", "RETURNS anycompatible LANGUAGE sql AS $f$ SELECT $1 $f$")
+        with self.assertRaisesRegex(u.GeneratorError, r'first_sfunc\(anyelement, anyelement\) must be dropped, but "CREATE AGGREGATE sql_saga.first" .* refers to it'):
+            u.build(base, new, '', '1.13', '1.14')
+
+    def test_before_part_of_the_fragment_runs_before_the_routines(self):
+        new = BASE + ('CREATE TYPE sql_saga.mood AS ENUM (\'ok\');\n'
+                      'CREATE FUNCTION sql_saga.m() RETURNS sql_saga.mood LANGUAGE sql AS $m$ SELECT \'ok\'::sql_saga.mood $m$;\n')
+        fragment = ('-- handles: CREATE TYPE sql_saga.mood\n-- before routines\nCREATE TYPE sql_saga.mood AS ENUM (\'ok\');\n'
+                    '-- after routines\nSELECT 1;\n')
+        out = u.build(BASE, new, fragment, '1.13', '1.14')
+        self.assertLess(out.index('CREATE TYPE sql_saga.mood'), out.index('CREATE OR REPLACE FUNCTION sql_saga.m('))
+        self.assertLess(out.index('CREATE OR REPLACE FUNCTION sql_saga.m('), out.index('SELECT 1;'))
+
+    def test_fragment_markers_must_pair(self):
+        with self.assertRaisesRegex(u.GeneratorError, 'one line "-- before routines" before one line "-- after routines"'):
+            u.build(BASE, BASE, '-- before routines\nSELECT 1;\n', '1.13', '1.14')
+
+
 class History(unittest.TestCase):
     """The released steps 1.9--1.10 to 1.12--1.13 change only routines: the generator finds exactly their routines."""
 
