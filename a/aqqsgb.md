@@ -33,11 +33,12 @@ Repro: doc/upstream/repro/native_planner_natural_key_slow.sql (psql -f against a
 ## Depends on
 
 ## Acceptance
-- [ ] PLAN phase for the repro is under 200 ms with the natural key discovered, measured before and after
+- [x] PLAN phase for the repro is under 200 ms with the natural key discovered, measured before and after
 - [ ] make test fast and the 101/102 benchmarks pass
 
 ## Notes
 
 
+check 1: Repro doc/upstream/repro/native_planner_natural_key_slow.sql: PLAN phase 6.0-7.6 s before, 84-165 ms after (PL/pgSQL planner 356 ms); d04b7b42
 ## History
 - 2026-11-24T15:55 todo -> doing/active (take)
