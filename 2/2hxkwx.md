@@ -35,7 +35,7 @@ Repro: doc/upstream/repro/delete_missing_entities_upsert.sql. Cause: src/2k_temp
 ## Acceptance
 - [x] A regression test with hand-written expected output fails on 1.14 for UPSERT with DELETE_MISSING_ENTITIES and DELETE_MISSING_TIMELINE_AND_ENTITIES, and passes after the fix
 - [x] The combination of every mode with every delete mode is either applied as documented or refused with a clear error, covered by tests
-- [ ] make test fast passes
+- [x] make test fast passes
 
 ## Notes
 
