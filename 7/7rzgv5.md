@@ -38,6 +38,8 @@ Cause: the planner reads the target with one snapshot; the executor then matches
 ## Requests
 - 2026-11-24T14:02 request 1 by sabertooth:
   The fix must also cover the for_portion_of view path: its row trigger copies unchanged columns from OLD (view statement snapshot) before temporal_merge runs, so a lock inside temporal_merge alone does not fix scenario e. Open design points from review (tmp/review_upstream_docs.md items 2-3): natural-key lookups, plain writers, deadlocks with row locks, advisory key (table oid + full-key hash), max_locks_per_transaction for big batches; row-count check alone turns c into an error. See doc/upstream/for-portion-of-revert.md.
+  resolved 2026-11-24T14:03 by sabertooth:
+    Folded into the task: acceptance check 6 (view path) and a note with the open design points; doc/upstream/for-portion-of-revert.md lists them.
 
 ## Notes
 
@@ -46,3 +48,4 @@ Review notes (tmp/ is not committed), for the implementer: natural-key lookups l
 ## History
 - 2026-11-24T14:02 request 1 by sabertooth
 - 2026-11-24T14:02 request 1 not delivered: no coordinator set (hug task coordinator NAME)
+- 2026-11-24T14:03 resolved request 1 by sabertooth
