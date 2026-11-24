@@ -342,23 +342,42 @@ NOTICE:  Executing setup: ANALYZE target_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
+                WITH matched AS (SELECT source_row.ctid AS source_ctid, target_row.ctid AS target_ctid FROM source_with_eclipsed_flag source_row JOIN target_rows target_row ON ((source_row.id = target_row.id) AND (source_row.id IS NOT NULL)))
                 SELECT
                     source_row.*,
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.id AS discovered_id_1 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (((source_row.id = target_row.id)) /* v_source_rows_exists_join_expr */)
+                LEFT JOIN matched ON matched.source_ctid = source_row.ctid
+                LEFT JOIN target_rows target_row ON target_row.ctid = matched.target_ctid
             
 NOTICE:  Hash Left Join (actual rows=1.00 loops=1)
-NOTICE:    Hash Cond: (source_row.id = target_row.id)
-NOTICE:    Buffers: local hit=2
+NOTICE:    Hash Cond: (source_row.ctid = source_row_1.ctid)
+NOTICE:    Buffers: local hit=4
 NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
-NOTICE:                Buffers: local hit=1
+NOTICE:          Buffers: local hit=3
+NOTICE:          ->  Nested Loop Left Join (actual rows=1.00 loops=1)
+NOTICE:                Join Filter: (target_row.ctid = target_row_1.ctid)
+NOTICE:                Buffers: local hit=3
+NOTICE:                ->  Hash Join (actual rows=1.00 loops=1)
+NOTICE:                      Hash Cond: (source_row_1.id = target_row_1.id)
+NOTICE:                      Buffers: local hit=2
+NOTICE:                      ->  Seq Scan on source_with_eclipsed_flag source_row_1 (actual rows=1.00 loops=1)
+NOTICE:                            Filter: (id IS NOT NULL)
+NOTICE:                            Buffers: local hit=1
+NOTICE:                      ->  Hash (actual rows=1.00 loops=1)
+NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 9kB
+NOTICE:                            Buffers: local hit=1
+NOTICE:                            ->  Seq Scan on target_rows target_row_1 (actual rows=1.00 loops=1)
+NOTICE:                                  Buffers: local hit=1
+NOTICE:                ->  Materialize (actual rows=1.00 loops=1)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
+NOTICE:                      Buffers: local hit=1
+NOTICE:                      ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
+NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
@@ -1844,23 +1863,39 @@ NOTICE:  Executing setup: ANALYZE target_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
+                WITH matched AS (SELECT source_row.ctid AS source_ctid, target_row.ctid AS target_ctid FROM source_with_eclipsed_flag source_row JOIN target_rows target_row ON ((source_row.type = target_row.type AND source_row.lu_id = target_row.lu_id) AND (source_row.type IS NOT NULL OR source_row.lu_id IS NOT NULL)))
                 SELECT
                     source_row.*,
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.lu_id AS discovered_id_1, target_row.type AS discovered_id_2 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (((source_row.type = target_row.type AND source_row.lu_id = target_row.lu_id)) /* v_source_rows_exists_join_expr */)
+                LEFT JOIN matched ON matched.source_ctid = source_row.ctid
+                LEFT JOIN target_rows target_row ON target_row.ctid = matched.target_ctid
             
 NOTICE:  Hash Left Join (actual rows=1.00 loops=1)
-NOTICE:    Hash Cond: ((source_row.type = target_row.type) AND (source_row.lu_id = target_row.lu_id))
-NOTICE:    Buffers: local hit=2
+NOTICE:    Hash Cond: (source_row.ctid = source_row_1.ctid)
+NOTICE:    Buffers: local hit=4
 NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
-NOTICE:                Buffers: local hit=1
+NOTICE:          Buffers: local hit=3
+NOTICE:          ->  Nested Loop Left Join (actual rows=1.00 loops=1)
+NOTICE:                Join Filter: (target_row.ctid = target_row_1.ctid)
+NOTICE:                Buffers: local hit=3
+NOTICE:                ->  Hash Join (actual rows=1.00 loops=1)
+NOTICE:                      Hash Cond: ((source_row_1.type = target_row_1.type) AND (source_row_1.lu_id = target_row_1.lu_id))
+NOTICE:                      Buffers: local hit=2
+NOTICE:                      ->  Seq Scan on source_with_eclipsed_flag source_row_1 (actual rows=1.00 loops=1)
+NOTICE:                            Filter: ((type IS NOT NULL) OR (lu_id IS NOT NULL))
+NOTICE:                            Buffers: local hit=1
+NOTICE:                      ->  Hash (actual rows=1.00 loops=1)
+NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 9kB
+NOTICE:                            Buffers: local hit=1
+NOTICE:                            ->  Seq Scan on target_rows target_row_1 (actual rows=1.00 loops=1)
+NOTICE:                                  Buffers: local hit=1
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
+NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---
@@ -3406,24 +3441,41 @@ NOTICE:  Executing setup: ANALYZE target_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
+                WITH matched AS (SELECT source_row.ctid AS source_ctid, target_row.ctid AS target_ctid FROM source_with_eclipsed_flag source_row JOIN target_rows target_row ON ((source_row.type = target_row.type AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND (source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL))) AND (source_row.type IS NOT NULL OR source_row.lu_id IS NOT NULL OR source_row.es_id IS NOT NULL)))
                 SELECT
                     source_row.*,
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.es_id AS discovered_id_1, target_row.lu_id AS discovered_id_2, target_row.type AS discovered_id_3 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (((source_row.type = target_row.type AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND (source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL)))) /* v_source_rows_exists_join_expr */)
+                LEFT JOIN matched ON matched.source_ctid = source_row.ctid
+                LEFT JOIN target_rows target_row ON target_row.ctid = matched.target_ctid
             
 NOTICE:  Hash Left Join (actual rows=2.00 loops=1)
-NOTICE:    Hash Cond: (source_row.type = target_row.type)
-NOTICE:    Join Filter: (((source_row.lu_id = target_row.lu_id) OR ((source_row.lu_id IS NULL) AND (target_row.lu_id IS NULL))) AND ((source_row.es_id = target_row.es_id) OR ((source_row.es_id IS NULL) AND (target_row.es_id IS NULL))))
-NOTICE:    Buffers: local hit=2
+NOTICE:    Hash Cond: (source_row.ctid = source_row_1.ctid)
+NOTICE:    Buffers: local hit=5
 NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Hash (actual rows=2.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
-NOTICE:                Buffers: local hit=1
+NOTICE:          Buffers: local hit=4
+NOTICE:          ->  Nested Loop Left Join (actual rows=2.00 loops=1)
+NOTICE:                Join Filter: (target_row.ctid = target_row_1.ctid)
+NOTICE:                Rows Removed by Join Filter: 2
+NOTICE:                Buffers: local hit=4
+NOTICE:                ->  Hash Join (actual rows=2.00 loops=1)
+NOTICE:                      Hash Cond: (source_row_1.type = target_row_1.type)
+NOTICE:                      Join Filter: (((source_row_1.lu_id = target_row_1.lu_id) OR ((source_row_1.lu_id IS NULL) AND (target_row_1.lu_id IS NULL))) AND ((source_row_1.es_id = target_row_1.es_id) OR ((source_row_1.es_id IS NULL) AND (target_row_1.es_id IS NULL))))
+NOTICE:                      Buffers: local hit=2
+NOTICE:                      ->  Seq Scan on source_with_eclipsed_flag source_row_1 (actual rows=2.00 loops=1)
+NOTICE:                            Filter: ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL))
+NOTICE:                            Buffers: local hit=1
+NOTICE:                      ->  Hash (actual rows=2.00 loops=1)
+NOTICE:                            Buckets: 1024  Batches: 1  Memory Usage: 9kB
+NOTICE:                            Buffers: local hit=1
+NOTICE:                            ->  Seq Scan on target_rows target_row_1 (actual rows=2.00 loops=1)
+NOTICE:                                  Buffers: local hit=1
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=2)
+NOTICE:                      Buffers: local hit=2
 NOTICE:  Planning:
 NOTICE:    Buffers: shared (masked)
 NOTICE:  ---

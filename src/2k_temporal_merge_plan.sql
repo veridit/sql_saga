@@ -567,6 +567,7 @@ BEGIN
             v_trace_select_list TEXT;
             v_target_rows_lookup_cols_expr TEXT;
             v_source_rows_exists_join_expr TEXT;
+            v_source_rows_exists_join_branches TEXT[]; -- one equijoin per key (hug 40nwvn)
             v_source_nk_payload_expr TEXT; -- the natural key values a source row gives (hug 40nwvn)
             v_atomic_segments_select_list_expr TEXT;
             v_diff_select_expr TEXT;
@@ -1430,33 +1431,30 @@ BEGIN
     
             -- Pre-calculate all expressions to be passed to format() for easier debugging.
             v_target_rows_lookup_cols_expr := (SELECT string_agg(format('t.%I', col), ', ') FROM unnest(v_lookup_columns) as col);
-            -- Build the join expression for source_rows_with_matches.
-            -- For NULLABLE columns, we MUST use the null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
-            -- because NULL = NULL evaluates to NULL (not TRUE), which would fail the join.
-            -- For NOT NULL columns, we can use simple = for better query plan performance (Hash Joins).
-            v_source_rows_exists_join_expr := (
-                SELECT string_agg(
-                    format('((%s))', (
+            -- Build the join expression for source_rows_with_matches: one branch per key a source row may name its entity
+            -- by (each natural key and the identity, hug mfky60), ORed. A key names an entity only when at least one of
+            -- its columns is not NULL in the source: an all-NULL natural key matched every target row without that key
+            -- (NULL IS NULL on both sides), a quadratic join and false matches (hug 40nwvn). Among the key's columns, a
+            -- NULLABLE one still compares null-safely (a mutually exclusive key: the NULL column must be NULL in both).
+            v_source_rows_exists_join_branches := ARRAY(
+                SELECT format('((%s) AND (%s))', (
                         SELECT string_agg(
                             CASE
                                 WHEN a.attnotnull THEN
-                                    -- NOT NULL column: safe to use simple =
                                     format('source_row.%1$I = target_row.%2$I', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
                                 ELSE
-                                    -- NULLABLE column: must use null-safe comparison
                                     format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
                             END,
-                            ' AND ' ORDER BY k.ord
-                        )
-                        FROM jsonb_array_elements_text(v_key) WITH ORDINALITY AS k(c, ord)
+                            ' AND ' ORDER BY k.ord)
+                        FROM jsonb_array_elements_text(lk.v_key) WITH ORDINALITY AS k(c, ord)
                         LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = k.c AND NOT a.attisdropped
-                    )),
-                ' OR ' ORDER BY lk.ord)
-                -- Every key a source row may name its entity by: each natural key and the identity (hug mfky60).
+                    ), (
+                        SELECT string_agg(format('source_row.%I IS NOT NULL', k.c), ' OR ' ORDER BY k.ord)
+                        FROM jsonb_array_elements_text(lk.v_key) WITH ORDINALITY AS k(c, ord)
+                    ))
                 FROM jsonb_array_elements(v_keys_for_filtering) WITH ORDINALITY AS lk(v_key, ord)
-            );
-    
-            v_source_rows_exists_join_expr := COALESCE(v_source_rows_exists_join_expr, 'false');
+                ORDER BY lk.ord);
+            v_source_rows_exists_join_expr := COALESCE(array_to_string(v_source_rows_exists_join_branches, ' OR '), 'false');
             v_atomic_segments_select_list_expr := (SELECT COALESCE(string_agg(format('seg.%I', col), ', ') || ',', '') || ' seg.corr_ent' FROM unnest(v_lookup_columns) as col);
             -- The `diff` CTE's SELECT list must project all identifying columns to be used in later CTEs.
             -- This requires mapping from the internal, standardized temporal column names (`valid_from`) back
@@ -2002,18 +2000,28 @@ BEGIN
             v_sql := 'ANALYZE target_rows;';
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
-            -- CTE 4: source_rows_with_matches
+            -- CTE 4: source_rows_with_matches. One equijoin per key, combined by UNION: an OR of the keys in one join
+            -- condition can only be a nested loop (1,000 source rows against 3,000 target rows took 28 s, hug 40nwvn); each
+            -- branch alone is a hash join. A source row without any match keeps one row with NULL matches.
             v_sql := format($SQL$
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
+                WITH matched AS (%3$s)
                 SELECT
                     source_row.*,
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     %1$s /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON (%2$s /* v_source_rows_exists_join_expr */)
+                LEFT JOIN matched ON matched.source_ctid = source_row.ctid
+                LEFT JOIN target_rows target_row ON target_row.ctid = matched.target_ctid
             $SQL$,
                 v_propagated_id_cols_list,      /* %1$s */
-                v_source_rows_exists_join_expr  /* %2$s */
+                NULL,
+                COALESCE((
+                    SELECT string_agg(format(
+                        'SELECT source_row.ctid AS source_ctid, target_row.ctid AS target_ctid FROM source_with_eclipsed_flag source_row JOIN target_rows target_row ON %s',
+                        branch), ' UNION ')
+                    FROM unnest(v_source_rows_exists_join_branches) AS branch),
+                    'SELECT NULL::tid AS source_ctid, NULL::tid AS target_ctid WHERE false') /* %3$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     

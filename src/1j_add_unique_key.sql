@@ -680,4 +680,4 @@ END;
 $function$;
 
 COMMENT ON FUNCTION sql_saga.__api_add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text, name[]) IS
-'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. A natural key is always bound to one primary key value, also when that key is composite.';
+'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. A natural key is always bound to one primary key value, also when that key is composite, and an entity holds one value of each natural key column (NULL before the key starts and after it is retired).';

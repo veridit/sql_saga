@@ -84,7 +84,11 @@ The rule in (1) needs no lookup before locking: a source row that names an entit
 natural-key value, and any other writer of the same entity that carries the same natural-key value, as identity
 writers do when they write that column, locks it too. A writer that names the entity only by identity and does not
 carry its natural-key columns does not share a lock with a natural-key writer; it does lock the entity's rows (2), and
-a natural-key writer locks the same rows through its natural-key predicate, so existing entities still serialize. The
+a natural-key writer locks the same rows: every row of each entity its natural-key predicate finds, by identity,
+because a natural key outside the identity may be NULL on some of the entity's pieces (before the key starts, after it
+is retired; hug 40nwvn). Existing entities therefore still serialize, and the planner reads the same whole entities. A
+multi-column key finds its rows through the source's distinct keys, materialized first: `(a, b) IN (subquery)` was
+planned as a nested loop over one column's index on the source view's estimates (48 s for 28,578 keys, hug t8b97s). The
 remaining case, two writers creating one new entity, one by identity alone and one by natural key alone, ends in an
 exclusion violation on the natural key, not in silent damage. Source rows whose keys are all NULL (new entities with
 generated identities and no natural key) take no lock: they cannot collide on a key.
