@@ -1,7 +1,7 @@
 ---
 id: 40nwvn
 title: "A natural key holds one value per entity; merges and the schema enforce it"
-state: "doing"
+state: "done"
 type: bug
 priority: ""
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzzh"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "pj849j"
-doing_since: "2026-11-24T17:02"
-stage: "active"
 model: "claude-opus-5-5"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-24T22:54"
 ---
 
 ## Goal
@@ -49,5 +48,7 @@ landed eeb2c4d on master 2026-11-24: PL/pgSQL planner: match source rows to targ
 check 2: Test 166 (hand-written expected, both planners identical on all 15 grid cases, batch conflict, whole entity, check_integrity) and isolation spec temporal_merge_natural_keys pass; make test fast 151/151, isolation 3/3, test-native 7/7. Commits 34be2391, eeb2c4d1
 Benchmarks (fresh db per version, v1.14 worktree, tmp/bench40): test 112 ES seed back to 1.14 (3.2 s) after t8b97s; 101/102/114 within run-to-run spread. Natural-key table (400,000 rows, two natural keys, one NULL on the first piece; 1,000 rows by id or old_code): native 1.14 ~800 ms, 1.15 ~1,500 ms. Cause, measured: 1.15 writes 2,000 INSERTs instead of 1,000 because a source piece crossing the 2025 boundary where new_code goes NULL -> n98 is now split there (each piece keeps its own natural key value, which is the decided rule; 1.14 wrote NULL over [2025,2027), losing n98). The guards cost ~15% of execute (1.29 s with vs 1.15 s without). PL/pgSQL by old_code: 1.14 85-107 s, 1.15 2.2 s; by id 1.15 1.9 s (1.14 failed with an exclusion violation).
 Upgrade: devops/update_step.sql adds the one-value guard to existing keys, refuses by name on conflicting rows; preflight lists them. Gate in upgrade_test.sh: RED on 1.14 code (4 checks, tmp/upgrade_115_red.log), GREEN from 1.13 and 1.14 (tmp/upgrade_115_a.log, _b.log). 5ed5301
+Reflection (open, 2026-11-24, sabertooth): The owner's question 'is it then a natural key?' settled what my framing had left open; I should have proposed the schema-enforced rule first rather than offering a time-varying option the domain does not have.
 ## History
 - 2026-11-24T17:02 todo -> doing/active (take)
+- 2026-11-24T22:54 doing/active -> done (done); was doing_since: 2026-11-24T17:02
