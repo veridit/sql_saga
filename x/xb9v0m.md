@@ -33,12 +33,13 @@ Makefile lines ~113-121 (NATIVE_TEST_ENV only for PORTNAME linux). macOS candida
 ## Depends on
 
 ## Acceptance
-- [ ] make test-native passes on macOS (Postgres.app 18) and in CI
+- [x] make test-native passes on macOS (Postgres.app 18) and in CI
 
 ## Notes
 
 landed d04b7b4 on master 2026-11-24: Native planner: read the target per key set, combined by ctid (aqqsgb); make…
 
 
+check 1: make test-native 7 passed on macOS (Postgres.app 18); CI ubuntu passed 7 before; d04b7b42
 ## History
 - 2026-11-24T16:25 todo -> doing/active (take)
