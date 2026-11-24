@@ -407,8 +407,9 @@ database; `UPGRADE_ONLY_BASELINES="1.0 1.12"` runs only those source releases.
 
 With N the new and P the previous version:
 
-1. Set `default_version` in `sql_saga.control` to N (the only place the version is written) and in
-   `expected/001_install.out`.
+1. Freeze P: build `sql_saga--P.sql` and `sql_saga--<before P>--P.sql` from `git archive vP` (twice, byte-identical),
+   copy them into `versions/`, and empty `devops/update_step.sql`. Then set `default_version` in `sql_saga.control` to
+   N (the only place the version is written) and in `expected/001_install.out`.
 2. Change `src/`. Put catalog DDL and data repairs in `devops/update_step.sql`, after which the step's gate runs;
    `make` reports each change the step cannot make by itself. If the catalog layout changes, bump `catalog_format`
    in the fragment and the source.
@@ -421,5 +422,3 @@ With N the new and P the previous version:
 4. Freeze this guide as `doc/upgrade-P.md` and describe N here.
 5. Release: CI green on the exact master head (`gh workflow run` if the head is `[skip ci]`), then the annotated tag
    `vN` ("sql_saga N") on that commit.
-6. Right after the release, freeze its artifacts: copy `sql_saga--N.sql` and `sql_saga--P--N.sql`, built from
-   `git archive vN`, into `versions/`, and empty `devops/update_step.sql` for the next release.

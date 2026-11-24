@@ -5,6 +5,33 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-24: Version 1.14, updates as a chain of steps; natural keys bound (tag v1.14 at 87085d0, CI 45314858890 green; hug 2q5nvf: qnzn33, mnntde, a5sdk3, k5zndr)
+
+- Updates as a chain (qnzn33, doc/design/update-chain.md): one step per release, run in sequence by
+  `ALTER EXTENSION sql_saga UPDATE` in one transaction, instead of a direct script from every older release. versions/
+  holds the released install scripts and the released steps 1.0--1.1 to 1.12--1.13, each as its tag shipped it with
+  four documented changes (native check "this release or newer", one integrity gate in the last step, hints without a
+  version, the 1.0/1.1 corrections of the direct scripts); devops/chain_steps.py derives them from the tags (SHA-256)
+  and checks. 142 MB, 105 files -> 17 MB, 27 files. devops/update_step.py builds the new step from the previous
+  install script and src/ (no routine lists; version only in sql_saga.control). make install removes stale scripts;
+  make test-native-symbols checks the 34 C symbols released scripts bind. Per-release generators removed (in tags).
+- Natural key always bound to its primary key (mnntde): enforce_consistency_with_primary_key removed; composite
+  primary keys bound (one guard per stable column, either order, distinct names after truncation); check_integrity
+  reports an unbound key. Bug since v1.0 fixed on the way: a natural key added before its primary key got its guard
+  but kept catalog '{}'. The step binds unbound keys, records existing guards, refuses by name on conflicting rows;
+  the preflight lists them.
+- check_integrity reports a disabled era synchronization trigger with the ENABLE TRIGGER repair (a5sdk3).
+- The step converts jsonb provenance values that 1.9 stored as JSON strings into objects, base and history, without
+  firing triggers, ONLY the era table (k5zndr).
+- Reviews by independent agents: chain (tmp/review_update_chain.md: DROP ROUTINE, refusal of drops other objects use,
+  fragment before-section) and 1.14 code (tmp/review_1_14.md: ONLY in the repair, guard name collisions, useless
+  guards); all fixed with tests that fail before the fix.
+- Gates RED on 1.13 code, GREEN on 1.14: natural keys (5 checks), sync trigger (2), provenance (2, plus inheriting
+  table). Acceptance at 87085d0: make test fast 147/147; test-generator (17 + 7 tests, chain_steps --check); 34/34 C
+  symbols; local upgrade matrix 14/14 GREEN (5408 checks, every release 1.0-1.13 through the chain); restore 22
+  passed, 0 failed (old_dump_113 added); two git-archive builds of sql_saga--1.14.sql and sql_saga--1.13--1.14.sql
+  byte-identical to the tested install.
+
 ## 2026-11-22: Version 1.13, era drop protection (tag v1.13 at a96e1cf, CI 45074292407 green; hug p60d2m)
 
 - Bug since v1.0: user DDL could drop an era's bounds check (NOT isempty), boundary check (from < until),
