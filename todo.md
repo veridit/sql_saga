@@ -5,6 +5,33 @@ The record of finished work, newest first. Open work is tracked with hug tasks (
 
 # Done
 
+## 2026-11-25: Version 1.15, temporal_merge correctness (tag v1.15 at 7011af1, CI 45538893307 green; hug pj849j: 7rzgv5, rtwrp6, 2hxkwx, aqqsgb, xb9v0m, mfky60, 40nwvn, t8b97s, 9qjh32, 4h7png, bjd8v7)
+
+- Delete modes: DELETE_MISSING_TIMELINE deletes all uncovered time of a source entity (rtwrp6);
+  DELETE_MISSING_ENTITIES applies to every MERGE_ENTITY_* mode (2hxkwx); other modes refuse a delete mode (22023).
+- Concurrent writers (7rzgv5, doc/design/temporal-merge-concurrency.md): advisory stripes per key and FOR UPDATE on the
+  entities a batch names, before planning; READ COMMITTED gives the serial result. A natural key also locks the
+  identity of each entity it finds, so writers naming one entity by different keys cannot deadlock (9qjh32, isolation
+  spec temporal_merge_key_kinds). The lock step materializes distinct multi-column keys (t8b97s: 95 s to 3.2 s).
+- A source row is resolved by every key it names; disagreeing keys give ambiguous/inconsistent ERROR feedback (mfky60).
+- A natural key holds one value per entity (40nwvn, owner's decision): reverse guard <key>_nk_consistency_excl, the
+  update adds it and refuses entities with two values, preflight lists them; values written only inside source time,
+  NULL never clears. XOR keys enforce at most one exclusive column per row: <key>_xor_check, update step, preflight,
+  per-row ERROR from both planners (bjd8v7, a gap since 9d8adef).
+- The two planners agree: native target read once per key set (aqqsgb: 6 s to 0.1 s), PL/pgSQL one equijoin per key
+  (38 s to 0.4 s); entity_keys name one entity (4h7png); a natural key sharing columns with a composite primary key
+  matches on all its columns; ambiguity lists in jsonb order. make test-native runs on macOS (xb9v0m).
+- Reviews by independent agents: tmp/review_1_15.md (deadlock B1, feedback S1), tmp/review_1_15b.md (composite key S1,
+  XOR N1/N2); all fixed with tests that fail before the fix. Upgrade gates RED on 1.14 code (one value per key 4
+  checks, XOR 6), GREEN on 1.15; restore harness knows the 1.15 layout and fails on an unknown one.
+- Benchmarks against a v1.14 build, fresh database per version: 112 SEED 7.3 s (9.8 s on 1.14), 114 equal or faster,
+  101/102 within spread; natural-key table native 1.3-1.6 s per batch (0.8 s on 1.14, which wrote NULL over the stored
+  new key: now pieces split at the key boundary, 2,000 inserts instead of 1,000); PL/pgSQL keyed by old_code 85-107 s
+  to 2.2 s, keyed by id 1.9 s (failed on 1.14).
+- Acceptance at 7011af1: make test fast 152/152; isolation 4/4; test-native 8/8; test-generator OK; local upgrade
+  matrix 15/15 GREEN (6097 checks, every release 1.0-1.14); restore 23 passed, 0 failed (old_dump_114 added); two
+  git-archive builds of sql_saga--1.15.sql and sql_saga--1.14--1.15.sql byte-identical to the tested install.
+
 ## 2026-11-24: Version 1.14, updates as a chain of steps; natural keys bound (tag v1.14 at 87085d0, CI 45314858890 green; hug 2q5nvf: qnzn33, mnntde, a5sdk3, k5zndr)
 
 - Updates as a chain (qnzn33, doc/design/update-chain.md): one step per release, run in sequence by
