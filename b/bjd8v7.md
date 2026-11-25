@@ -1,7 +1,7 @@
 ---
 id: bjd8v7
 title: "XOR natural key accepts a row that sets more than one exclusive column"
-state: "doing"
+state: "done"
 type: feature
 priority: ""
 assignee: ["fish"]
@@ -10,11 +10,10 @@ group: ""
 rank: "zzzzzzy"
 created: 2026-11-25
 updated: 2026-11-25
-doing_since: "2026-11-25T02:20"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-25T04:14"
 ---
 
 ## Goal
@@ -42,5 +41,7 @@ Second 1.15 review N2 (tmp/review_1_15b.md, repros tmp/review_115b/c6b.sql, c6c.
 check 1: 7011af1: test 167 shows the CHECK, NOTICE, catalog, drop, rename, drop protection, and check_integrity's report with its HINT
 check 2: update step adds the CHECK and refuses violating rows (DETAIL+HINT); preflight lists them; gate RED on the pre-change candidate from v1.14, upgrade_test GREEN for 15 baselines
 check 3: test 166 rows 7-9 get a per-row ERROR on both planners, with the same feedback and table; c6b/c6c repros SAME
+Reflection (unanswered, 2026-11-25, fish)
 ## History
 - 2026-11-25T02:20 todo -> doing/active (take)
+- 2026-11-25T04:14 doing/active -> done (done); was doing_since: 2026-11-25T02:20
