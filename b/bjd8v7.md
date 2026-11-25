@@ -1,15 +1,20 @@
 ---
 id: bjd8v7
 title: "XOR natural key accepts a row that sets more than one exclusive column"
-state: todo
+state: "doing"
 type: feature
 priority: ""
-assignee: []
+assignee: ["fish"]
 labels: []
 group: ""
 rank: "zzzzzzy"
 created: 2026-11-25
 updated: 2026-11-25
+doing_since: "2026-11-25T02:20"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ Second 1.15 review N2 (tmp/review_1_15b.md, repros tmp/review_115b/c6b.sql, c6c.
 - [ ] both planners give per-row ERROR for a row with two exclusive columns; batch continues
 
 ## Notes
+
+
+## History
+- 2026-11-25T02:20 todo -> doing/active (take)
