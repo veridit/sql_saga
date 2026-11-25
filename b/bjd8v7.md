@@ -14,6 +14,7 @@ model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
 done_at: "2026-11-25T04:14"
+parent: "pj849j"
 ---
 
 ## Goal
