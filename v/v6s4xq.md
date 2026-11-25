@@ -27,7 +27,6 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 
 ## Depends on
 
-- t1z6f5
 - axdept
 ## Acceptance
 - [ ] Each temporal_merge merge mode and delete mode has its syntax, its rules and an example traced to a regression test
