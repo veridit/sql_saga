@@ -131,12 +131,13 @@ TABLE ho;
 ROLLBACK;
 
 \echo '==== An entity found by a key its earlier pieces do not hold: the planner sees the whole entity'
-\echo '-- id 1: old_code X over [2020,2030), new_code W from 2025; the source names only W, from 2021.'
+\echo '-- id 1: old_code X over [2020,2030), new_code W from 2025; the source names only W, from 2021. Both planners name'
+\echo '-- one entity in the feedback, with its key values, also for the piece before W starts.'
 BEGIN;
 INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'), (1, 'X', 'W', 'a', '[2025-01-01,2030-01-01)');
 INSERT INTO src VALUES (1, NULL, NULL, 'W', 'c', '[2021-01-01,2026-01-01)');
 CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'PATCH_FOR_PORTION_OF');
-SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+SELECT source_row_id, status, target_entity_keys, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 TABLE ho ORDER BY valid_range;
 ROLLBACK;
 BEGIN;
@@ -144,7 +145,7 @@ SET LOCAL sql_saga.temporal_merge.use_plpgsql_planner = true;
 INSERT INTO ho VALUES (1, 'X', NULL, 'a', '[2020-01-01,2025-01-01)'), (1, 'X', 'W', 'a', '[2025-01-01,2030-01-01)');
 INSERT INTO src VALUES (1, NULL, NULL, 'W', 'c', '[2021-01-01,2026-01-01)');
 CALL sql_saga.temporal_merge(target_table => 'ho', source_table => 'src', mode => 'PATCH_FOR_PORTION_OF');
-SELECT source_row_id, status, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+SELECT source_row_id, status, target_entity_keys, error_message FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 TABLE ho ORDER BY valid_range;
 ROLLBACK;
 

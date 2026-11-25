@@ -1478,7 +1478,7 @@ BEGIN
             ) || ', COALESCE(final_seg.causal_id, target_seg.causal_id) as causal_id';
             -- The `entity_keys` payload must be built *only* from the stable, non-temporal identifier columns.
             v_plan_with_op_entity_id_json_build_expr_part_A := (SELECT COALESCE(string_agg(format('%L, d.%I', col, col), ', '), '') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
-            v_plan_with_op_entity_id_json_build_expr := format('jsonb_build_object(%s) || COALESCE(d.stable_pk_payload, ''{}''::jsonb)', v_plan_with_op_entity_id_json_build_expr_part_A);
+            v_plan_with_op_entity_id_json_build_expr := format('jsonb_build_object(%s) || COALESCE(d.entity_nk_json, ''{}''::jsonb) || COALESCE(d.stable_pk_payload, ''{}''::jsonb)', v_plan_with_op_entity_id_json_build_expr_part_A);
             v_skip_no_target_entity_id_json_build_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_row.%I', col, col), ', '), '')) FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
             -- The final sort order should be on the stable entity identifier.
             v_final_order_by_expr := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
@@ -2676,10 +2676,16 @@ BEGIN
                                     d.f_from,
                                     d.f_until
                             )
-                    END as update_rank
+                    END as update_rank%2$s
                 FROM diff d
             $SQL$,
-                v_ephemeral_columns /* %1$L */
+                v_ephemeral_columns /* %1$L */,
+                -- The entity's natural key values (hug 40nwvn) for entity_keys: a piece before the key starts holds NULL,
+                -- but names the same entity, as in the native planner.
+                CASE WHEN cardinality(v_nk_data_cols) > 0 THEN format(E',\n                    jsonb_strip_nulls(jsonb_build_object(%s)) AS entity_nk_json',
+                    (SELECT string_agg(format('%1$L, sql_saga.first(d.%1$I) FILTER (WHERE d.%1$I IS NOT NULL) OVER (PARTITION BY d.grouping_key)', c), ', ')
+                     FROM unnest(v_nk_data_cols) AS c))
+                ELSE E',\n                    NULL::jsonb AS entity_nk_json' END /* %2$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             

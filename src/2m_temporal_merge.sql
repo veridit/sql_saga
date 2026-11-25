@@ -203,7 +203,13 @@ BEGIN
         v_row_parts text[] := '{}';
         v_present text;
         v_hash_args text;
-        v_kind integer := 0;
+        -- A lock is per key, named by its columns (not its position, which depends on the source's columns), so every
+        -- writer hashes the same key alike.
+        v_identity_key text := to_jsonb(COALESCE(v_identity_cols_discovered, '{}'))::text;
+        v_id_hash_k text := (SELECT string_agg(pg_catalog.format('k.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o)
+                             FROM unnest(v_identity_cols_discovered) WITH ORDINALITY AS u(c, o)
+                             JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = u.c);
+        v_by_identity boolean;    -- this key is not the identity: also lock the identity of each target entity it finds
         v_whole_entity boolean;   -- lock whole entities for this key (a natural key outside the identity)
         v_id_t text := (SELECT string_agg(pg_catalog.format('t.%I', c), ', ') FROM unnest(v_identity_cols_discovered) AS c);
         v_id_k text := (SELECT string_agg(pg_catalog.format('k.%I', c), ', ') FROM unnest(v_identity_cols_discovered) AS c);
@@ -232,9 +238,13 @@ BEGIN
                                 AND a.attnum > 0 AND NOT a.attisdropped));
 
         FOREACH v_key IN ARRAY COALESCE(v_keys, '{}') LOOP
-            v_kind := v_kind + 1;
             SELECT array_agg(c ORDER BY o) INTO v_key_cols FROM jsonb_array_elements_text(v_key::jsonb) WITH ORDINALITY AS u(c, o);
-            v_whole_entity := v_kind > 1 AND cardinality(v_identity_cols_discovered) > 0
+            v_by_identity := v_key <> v_identity_key AND cardinality(v_identity_cols_discovered) > 0
+                -- An identity column the target lacks names no entity; the planner reports it.
+                AND (SELECT count(*) FROM unnest(v_identity_cols_discovered) AS c
+                     JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = c
+                                                    AND a.attnum > 0 AND NOT a.attisdropped) = cardinality(v_identity_cols_discovered);
+            v_whole_entity := v_by_identity
                 AND EXISTS (SELECT FROM unnest(v_key_cols) AS c WHERE c <> ALL (v_identity_cols_discovered));
             -- Each source value is cast to the target column's type, so the lock follows the target's equality.
             SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o),
@@ -245,8 +255,35 @@ BEGIN
             -- A key names an entity when any of its columns is not NULL (a natural key may hold mutually exclusive
             -- nullable columns); a NULL column hashes as NULL, so the lock covers exactly the columns present.
             v_lock_parts := v_lock_parts || pg_catalog.format(
-                'SELECT pg_catalog.hash_record_extended(ROW(%s, %s), 0) & 65535 AS stripe FROM %s AS s WHERE %s',
-                v_kind, v_hash_args, temporal_merge.source_table, v_present);
+                'SELECT pg_catalog.hash_record_extended(ROW(%L::text, %s), 0) & 65535 AS stripe FROM %s AS s WHERE %s',
+                v_key, v_hash_args, temporal_merge.source_table, v_present);
+            -- A key other than the identity also locks the identity of every target entity it finds, so two writers of
+            -- one entity share a lock however each names it. Without it, a writer naming entity 1 by identity and 2 by
+            -- natural key, and one naming them the other way round, took disjoint locks and then crossed on the row
+            -- locks: a deadlock (review of 1.15). The lookup takes no lock; a natural key never moves to another entity
+            -- (hug 40nwvn), and a writer that gives an entity a natural key value locks that value too.
+            IF v_by_identity THEN
+                v_lock_parts := v_lock_parts || (
+                    SELECT array_agg(pg_catalog.format(
+                        CASE WHEN cardinality(p.present) = 1
+                             THEN 'SELECT pg_catalog.hash_record_extended(ROW(%1$L::text, %2$s), 0) & 65535 AS stripe FROM %3$s AS k WHERE %4$s = ANY (ARRAY(SELECT %5$s FROM %6$s AS s WHERE %7$s))'
+                             ELSE 'SELECT pg_catalog.hash_record_extended(ROW(%1$L::text, %2$s), 0) & 65535 AS stripe FROM %3$s AS k WHERE (%4$s) IN (SELECT * FROM (SELECT DISTINCT %5$s FROM %6$s AS s WHERE %7$s OFFSET 0) AS keys)'
+                        END,
+                        v_identity_key,
+                        v_id_hash_k,
+                        temporal_merge.target_table,
+                        (SELECT string_agg(pg_catalog.format('k.%I', c), ', ' ORDER BY o) FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o) WHERE c = ANY (p.present)),
+                        (SELECT string_agg(pg_catalog.format('s.%I::%s', c, pg_catalog.format_type(a.atttypid, a.atttypmod)), ', ' ORDER BY o)
+                         FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
+                         JOIN pg_catalog.pg_attribute AS a ON a.attrelid = temporal_merge.target_table AND a.attname = u.c
+                         WHERE c = ANY (p.present)),
+                        temporal_merge.source_table,
+                        (SELECT string_agg(pg_catalog.format('s.%I IS %s NULL', c, CASE WHEN c = ANY (p.present) THEN 'NOT' ELSE '' END), ' AND ')
+                         FROM unnest(v_key_cols) AS c)))
+                    FROM (SELECT ARRAY(SELECT c FROM unnest(v_key_cols) WITH ORDINALITY AS u(c, o)
+                                       WHERE (m >> (o::integer - 1)) & 1 = 1) AS present
+                          FROM generate_series(1, (1 << cardinality(v_key_cols)) - 1) AS m) AS p);
+            END IF;
             -- The target rows of the key, by equality on the source's non-NULL columns, typed as the target's so the key's
             -- index applies; one statement per pattern of NULL columns (a natural key with mutually exclusive columns).
             -- A single column is matched with = ANY (ARRAY(...)), which the planner always serves from the index. Several
@@ -288,9 +325,9 @@ BEGIN
             EXECUTE pg_catalog.format(
                 'SELECT count(pg_catalog.pg_advisory_xact_lock(%s, stripe::integer)) FROM (SELECT DISTINCT stripe FROM (%s) AS k ORDER BY stripe) AS ordered',
                 temporal_merge.target_table::oid::bigint::bit(32)::integer, array_to_string(v_lock_parts, ' UNION ALL '));
-            -- One statement per key and pattern of present columns, so each uses its key's index. With the advisory
-            -- locks held no other merge locks these rows concurrently, so the order across statements cannot deadlock
-            -- between merges.
+            -- One statement per key and pattern of present columns, so each uses its key's index. Every row locked
+            -- here belongs to an entity whose identity lock is held (above), so no other merge locks these rows
+            -- concurrently, and the order across statements cannot deadlock between merges.
             FOREACH v_key IN ARRAY v_row_parts LOOP
                 EXECUTE v_key;
             END LOOP;

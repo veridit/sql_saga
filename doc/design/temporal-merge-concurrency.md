@@ -41,11 +41,12 @@ own:
    columns, and may also carry natural-key values. Every writer locks every key it names: one lock for the identity
    when it is not NULL, and one per natural key with at least one non-NULL column, over its non-NULL columns (a
    natural key may have mutually exclusive nullable columns; the planner matches it on the columns present, and the
-   lock does the same). Two writers that touch the same
-   entity therefore share a lock, whichever key each uses to name it, and also writers that create the same new
-   entity. The lock is `pg_advisory_xact_lock(<target table oid as int4>, <stripe>)`, the two-key form, which
+   lock does the same). A key other than the identity also locks the identity of every target entity it finds (a
+   lookup that takes no lock). Two writers that touch the same existing
+   entity therefore share a lock, whichever key each uses to name it, and so do writers that create the same new
+   entity by the same key. The lock is `pg_advisory_xact_lock(<target table oid as int4>, <stripe>)`, the two-key form, which
    PostgreSQL keeps apart from single-`bigint` advisory locks (StatBus's), with `<stripe> =
-   hash_record_extended(ROW(<key kind>, <values cast to the target's column types>), 0) & 65535`, one of 65,536
+   hash_record_extended(ROW(<key columns as JSON text>, <values cast to the target's column types>), 0) & 65535`, one of 65,536
    stripes per table (below). Casting to the target's types first makes the hash follow the target's equality
    (`1` and `1.0` as `numeric` hash alike), and `hash_record_extended` does not depend on `DateStyle` or
    `TimeZone`. The table oid is reinterpreted as a signed `int4` (`oid::bigint::bit(32)::int`), so no oid overflows.
@@ -80,13 +81,16 @@ a key violation at these levels in PostgreSQL. sql_saga does not add a layer of 
 
 ### Entities found by a natural key
 
-The rule in (1) needs no lookup before locking: a source row that names an entity only by its natural key locks that
-natural-key value, and any other writer of the same entity that carries the same natural-key value, as identity
-writers do when they write that column, locks it too. A writer that names the entity only by identity and does not
-carry its natural-key columns does not share a lock with a natural-key writer; it does lock the entity's rows (2), and
-a natural-key writer locks the same rows: every row of each entity its natural-key predicate finds, by identity,
+The rule in (1) locks, for a source row that names an entity only by its natural key, that natural-key value and the
+identity of the entity the value finds in the target. A writer of the same entity that names it by identity takes the
+same identity lock, so the two serialize before either takes a row lock. Without the identity lock (1.15 before
+release review) two writers that named entity 1 and 2 crosswise, one by identity and one by natural key, took
+disjoint advisory locks and then crossed on the row locks (40P01; isolation spec `temporal_merge_key_kinds`). The
+lookup reads committed rows without locking them; it cannot miss the entity a concurrent writer is changing, because
+a natural key never moves to another entity (hug 40nwvn), and a writer that gives an entity a natural-key value it
+did not hold locks that value too. A natural-key writer also locks the rows: every row of each entity its natural-key predicate finds, by identity,
 because a natural key outside the identity may be NULL on some of the entity's pieces (before the key starts, after it
-is retired; hug 40nwvn). Existing entities therefore still serialize, and the planner reads the same whole entities. A
+is retired; hug 40nwvn). The planner therefore reads the same whole entities. A
 multi-column key finds its rows through the source's distinct keys, materialized first: `(a, b) IN (subquery)` was
 planned as a nested loop over one column's index on the source view's estimates (48 s for 28,578 keys, hug t8b97s). The
 remaining case, two writers creating one new entity, one by identity alone and one by natural key alone, ends in an
@@ -95,8 +99,8 @@ generated identities and no natural key) take no lock: they cannot collide on a 
 
 ### Lock order and deadlocks
 
-All advisory locks of a call are taken in one statement in ascending order, then the row locks in one statement
-ordered by key. Two `temporal_merge` calls on one table never wait for each other in a cycle. Deadlocks remain
+All advisory locks of a call are taken in one statement in ascending order, then the row locks, only of entities
+whose identity lock the call holds. Two `temporal_merge` calls on one table never wait for each other in a cycle. Deadlocks remain
 possible, and PostgreSQL detects them (40P01), in two cases: two transactions that each merge into two tables in
 opposite orders, and a transaction that inserted a row referencing an entity (a foreign key check holds `FOR KEY
 SHARE` on the parent row) and then merges that entity while another merge of it waits on that row.

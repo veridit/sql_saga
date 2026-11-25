@@ -54,7 +54,7 @@ CALL sql_saga.temporal_merge(target_table => 'tn', source_table => 'src_one_zero
 SELECT count(*) AS locks_on_tn, bool_and(k = :'one_key') AS same_lock FROM entity_locks('tn') AS k;
 ROLLBACK TO SAVEPOINT typed;
 
-\echo '-- A source row naming an entity only by its natural key locks that key: one lock.'
+\echo '-- A source row naming an entity only by its natural key locks that key and the identity of the entity it finds: two locks.'
 CREATE TABLE tk (id int NOT NULL, code text, v text, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('tk', 'valid_range') AS ignored \gset
 SELECT sql_saga.add_unique_key('tk', ARRAY['id'], key_type => 'primary') AS ignored \gset

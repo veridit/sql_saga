@@ -1,0 +1,31 @@
+Parsed test spec with 4 sessions
+
+starting permutation: hlock sb sa hc sbc sac result
+step hlock: BEGIN; SELECT id FROM kk WHERE id = 1 FOR UPDATE;
+id
+--
+ 1
+(1 row)
+
+step sb: 
+  CREATE TEMP TABLE srcb (row_id int, id int, ident text, name text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO srcb VALUES (1, 1, NULL, 'b', '[2020-01-01,2030-01-01)'), (2, NULL, 'B', 'b', '[2020-01-01,2030-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'kk', source_table => 'srcb', mode => 'MERGE_ENTITY_PATCH');
+ <waiting ...>
+step sa: 
+  CREATE TEMP TABLE srca (row_id int, id int, ident text, name text, valid_range daterange) ON COMMIT DROP;
+  INSERT INTO srca VALUES (1, 2, NULL, 'a', '[2020-01-01,2030-01-01)'), (2, NULL, 'A', 'a', '[2020-01-01,2030-01-01)');
+  CALL sql_saga.temporal_merge(target_table => 'kk', source_table => 'srca', mode => 'MERGE_ENTITY_PATCH');
+ <waiting ...>
+step hc: COMMIT;
+step sb: <... completed>
+step sbc: COMMIT;
+step sa: <... completed>
+step sac: COMMIT;
+step result: SELECT id, ident, name, valid_range FROM kk ORDER BY id, valid_range;
+id|ident|name|valid_range            
+--+-----+----+-----------------------
+ 1|A    |a   |[2020-01-01,2030-01-01)
+ 2|B    |a   |[2020-01-01,2030-01-01)
+(2 rows)
+
