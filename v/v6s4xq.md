@@ -35,7 +35,7 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 - axdept
 ## Acceptance
 - [x] Each temporal_merge merge mode and delete mode has its syntax, its rules and an example traced to a regression test
-- [ ] The proposal states its behaviour under concurrent writes at READ COMMITTED
+- [x] The proposal states its behaviour under concurrent writes at READ COMMITTED
 
 ## Notes
 
@@ -43,5 +43,6 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 
 
 check 1: doc/upstream/temporal-dml.md: mode matrix maps all 8 modes + 3 delete modes; examples M1-M13 run by repro/temporal_dml_examples.sql (output committed), traced to tests 064, 163, 165, 089, 060, 062; M12 derived (no clause conditions in sql_saga)
+check 2: principle 10 + M13 row: serial result at READ COMMITTED, mechanism server's choice, sql_saga 1.15 protocol as evidence (test 164, isolation specs)
 ## History
 - 2026-11-25T10:35 todo -> doing/active (take)
