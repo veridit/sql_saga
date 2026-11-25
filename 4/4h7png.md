@@ -1,7 +1,7 @@
 ---
 id: 4h7png
 title: "PL/pgSQL planner reports one entity as two when its natural key starts late"
-state: "doing"
+state: "done"
 type: feature
 priority: ""
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzzx"
 created: 2026-11-25
 updated: 2026-11-25
 parent: "pj849j"
-doing_since: "2026-11-25T01:22"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
+done_at: "2026-11-25T01:22"
 ---
 
 ## Goal
@@ -40,5 +39,7 @@ Review 1.15 S1. Fixed in 98c3a82 via entity_nk_json per grouping key in diff_ran
 check 1: 166: old code lists {new_code:null} and {new_code:W}; fix gives one key on both planners (98c3a82)
 
 
+Reflection (unanswered, 2026-11-25, sabertooth)
 ## History
 - 2026-11-25T01:22 todo -> doing/active (take)
+- 2026-11-25T01:22 doing/active -> done (done); was doing_since: 2026-11-25T01:22
