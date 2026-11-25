@@ -299,4 +299,35 @@ CALL
 (1 row)
 
 ROLLBACK
+==== E15 add only the time the target lacks (M8), in plain SQL: insert the uncovered part of each import row
+BEGIN
+CALL
+CALL
+INSERT 0 2
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha  | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha2 |        | imp     | 2026-01-01 | 2027-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+ 10 | C    | Gamma  | West   | imp     | 2025-01-01 | infinity
+(6 rows)
+
+ROLLBACK
+==== E16 a WHERE that varies over time: rename the pieces where region is North, and only those
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 2
+CALL
+ id | code |  name   | region | edit_by | valid_from | valid_until 
+----+------+---------+--------+---------+------------+-------------
+  1 | A    | Renamed | North  | imp     | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha   | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha   | South  | load    | 2027-01-01 | infinity
+  2 | B    | Renamed | North  | imp     | 2020-01-01 | infinity
+(4 rows)
+
+ROLLBACK
 DROP SCHEMA

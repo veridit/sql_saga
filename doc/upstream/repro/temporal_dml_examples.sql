@@ -127,4 +127,20 @@ CALL sql_saga.temporal_merge('unit', 'import', mode => 'MERGE_ENTITY_PATCH');
 SELECT source_row_id AS row_id, status, error_message FROM pg_temp.temporal_merge_feedback;
 ROLLBACK;
 
+\echo '==== E15 add only the time the target lacks (M8), in plain SQL: insert the uncovered part of each import row'
+BEGIN; CALL reset(); CALL import_default();
+INSERT INTO unit (id, code, name, region, edit_by, valid_at)
+SELECT COALESCE(e.id, nextval('unit_id_seq')::int), s.code, s.name, s.region, s.edit_by, gap.r
+FROM import AS s
+LEFT JOIN LATERAL (SELECT DISTINCT t.id FROM unit AS t WHERE t.id = s.id OR t.code = s.code) AS e ON true
+CROSS JOIN LATERAL unnest(datemultirange(s.valid_at)
+    - COALESCE((SELECT range_agg(t.valid_at) FROM unit AS t WHERE t.id = e.id), '{}'::datemultirange)) AS gap(r);
+TABLE timeline ORDER BY id, valid_from; ROLLBACK;
+
+\echo '==== E16 a WHERE that varies over time: rename the pieces where region is North, and only those'
+BEGIN; CALL reset(); TRUNCATE import;
+INSERT INTO import SELECT row_number() OVER (), id, code, 'Renamed', NULL, 'imp', valid_at FROM unit WHERE region = 'North';
+CALL sql_saga.temporal_merge('unit', 'import', mode => 'PATCH_FOR_PORTION_OF');
+TABLE timeline ORDER BY id, valid_from; ROLLBACK;
+
 DROP SCHEMA dml CASCADE;
