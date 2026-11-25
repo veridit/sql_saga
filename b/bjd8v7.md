@@ -34,12 +34,13 @@ Second 1.15 review N2 (tmp/review_1_15b.md, repros tmp/review_115b/c6b.sql, c6c.
 ## Acceptance
 - [x] add_unique_key with mutually_exclusive_columns creates the CHECK; check_integrity reports it missing
 - [x] update step adds it, refuses violating rows; preflight lists them; upgrade gate red on 1.15
-- [ ] both planners give per-row ERROR for a row with two exclusive columns; batch continues
+- [x] both planners give per-row ERROR for a row with two exclusive columns; batch continues
 
 ## Notes
 
 
 check 1: 7011af1: test 167 shows the CHECK, NOTICE, catalog, drop, rename, drop protection, and check_integrity's report with its HINT
 check 2: update step adds the CHECK and refuses violating rows (DETAIL+HINT); preflight lists them; gate RED on the pre-change candidate from v1.14, upgrade_test GREEN for 15 baselines
+check 3: test 166 rows 7-9 get a per-row ERROR on both planners, with the same feedback and table; c6b/c6c repros SAME
 ## History
 - 2026-11-25T02:20 todo -> doing/active (take)
