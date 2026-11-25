@@ -1,16 +1,21 @@
 ---
 id: v6s4xq
 title: "Draft temporal_merge semantics and SQL syntax proposal"
-state: todo
+state: "doing"
 type: spike
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzy"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
+doing_since: "2026-11-25T10:35"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/sql_saga"
 ---
 
 ## Goal
@@ -35,3 +40,7 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 ## Notes
 
 2026-11-25 owner: do the syntax first, then the first message. Goal is consistency and clarity, not fewest reserved words; reuse sql_saga's vocabulary (entity, timeline, part of the timeline, whole timeline). Wants the design-space matrix, principles and concrete examples, covering INSERT, UPDATE, DELETE and MERGE.
+
+
+## History
+- 2026-11-25T10:35 todo -> doing/active (take)
