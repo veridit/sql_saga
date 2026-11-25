@@ -31,3 +31,5 @@ Found while drafting doc/upstream/temporal-dml.md. Repro: doc/upstream/repro/rep
 - [ ] both planners follow it: test red before, green after
 
 ## Notes
+
+StatBus uses MERGE_ENTITY_REPLACE/REPLACE_FOR_PORTION_OF in import procedures (legal_unit, location, contact, statistical variables, legal relationship), on the native planner: so the native behaviour (absent column kept) is what StatBus relies on. Changing native would change StatBus imports; check their source tables carry every column before deciding.
