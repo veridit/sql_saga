@@ -1283,8 +1283,10 @@ NOTICE:  Explaining:
                             id,
                             CASE
                                 WHEN d.is_new_entity AND d.canonical_nk_json IS NOT NULL
-                                THEN d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
-                                ELSE jsonb_build_object('id', d.id) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                -- Every key column, NULL where no row of the new entity gives it, as for existing entities
+                                -- and in the native planner.
+                                THEN jsonb_build_object('id', d.id) || d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                ELSE jsonb_build_object('id', d.id) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb)
                             END as entity_keys_json,
                             jsonb_build_object('id', d.id) as identity_keys,
                             jsonb_build_object() as lookup_keys,
@@ -1303,7 +1305,7 @@ NOTICE:  Explaining:
                             END as feedback,
                             d.b_a_relation, d.grouping_key,
                             CASE WHEN 'f'::boolean
-                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('id', d.id), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('id', d.id) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
+                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('id', d.id), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('id', d.id) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
                                 ELSE NULL
                             END as trace
                         FROM diff_ranked d
@@ -2802,8 +2804,10 @@ NOTICE:  Explaining:
                             lu_id, type,
                             CASE
                                 WHEN d.is_new_entity AND d.canonical_nk_json IS NOT NULL
-                                THEN d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
-                                ELSE jsonb_build_object('lu_id', d.lu_id, 'type', d.type) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                -- Every key column, NULL where no row of the new entity gives it, as for existing entities
+                                -- and in the native planner.
+                                THEN jsonb_build_object('lu_id', d.lu_id, 'type', d.type) || d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                ELSE jsonb_build_object('lu_id', d.lu_id, 'type', d.type) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb)
                             END as entity_keys_json,
                             jsonb_build_object('type', d.type, 'lu_id', d.lu_id) as identity_keys,
                             jsonb_build_object() as lookup_keys,
@@ -2822,7 +2826,7 @@ NOTICE:  Explaining:
                             END as feedback,
                             d.b_a_relation, d.grouping_key,
                             CASE WHEN 'f'::boolean
-                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('lu_id', d.lu_id, 'type', d.type), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('lu_id', d.lu_id, 'type', d.type) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
+                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('lu_id', d.lu_id, 'type', d.type), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('lu_id', d.lu_id, 'type', d.type) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
                                 ELSE NULL
                             END as trace
                         FROM diff_ranked d
@@ -4391,8 +4395,10 @@ NOTICE:  Explaining:
                             es_id, lu_id, type,
                             CASE
                                 WHEN d.is_new_entity AND d.canonical_nk_json IS NOT NULL
-                                THEN d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
-                                ELSE jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                -- Every key column, NULL where no row of the new entity gives it, as for existing entities
+                                -- and in the native planner.
+                                THEN jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type) || d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                ELSE jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb)
                             END as entity_keys_json,
                             jsonb_build_object('type', d.type, 'lu_id', d.lu_id, 'es_id', d.es_id) as identity_keys,
                             jsonb_build_object() as lookup_keys,
@@ -4411,7 +4417,7 @@ NOTICE:  Explaining:
                             END as feedback,
                             d.b_a_relation, d.grouping_key,
                             CASE WHEN 'f'::boolean
-                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type) || COALESCE(d.entity_nk_json, '{}'::jsonb) || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
+                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('es_id', d.es_id, 'lu_id', d.lu_id, 'type', d.type) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, '{}'::jsonb) ELSE '{}'::jsonb END || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
                                 ELSE NULL
                             END as trace
                         FROM diff_ranked d

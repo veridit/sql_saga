@@ -717,6 +717,21 @@ mod tests {
     }
 
     #[test]
+    fn test_natural_key_includes_its_identity_columns() {
+        use crate::sweep::build_key_for_cols;
+        let cols = vec!["a".to_string(), "code".to_string()];
+        let lookup = |code: serde_json::Value| serde_json::json!({ "code": code }).as_object().unwrap().clone();
+        let identity = |a: i64| serde_json::json!({ "a": a, "b": 1 }).as_object().unwrap().clone();
+        // A natural key (a, code) on the primary key (a, b): `a` comes from the identity, so code X in a=1 and in a=2
+        // are different keys (review of 1.15: both were "code=X" and made every row ambiguous).
+        assert_eq!(build_key_for_cols(&lookup("X".into()), &identity(1), &cols), "a=1__code=X");
+        assert_ne!(build_key_for_cols(&lookup("X".into()), &identity(1), &cols),
+                   build_key_for_cols(&lookup("X".into()), &identity(2), &cols));
+        // Without a value of the key's own column the row names nothing through this key.
+        assert_eq!(build_key_for_cols(&lookup(serde_json::Value::Null), &identity(1), &cols), "");
+    }
+
+    #[test]
     fn test_parse_typed_value_numeric_is_exact() {
         use crate::reader::parse_typed_value;
         // numeric keeps every digit and its scale (it went through f64 before 1.11).

@@ -162,6 +162,50 @@ SELECT sql_saga.check_integrity();
 ROLLBACK TO SAVEPOINT report;
 ROLLBACK;
 
+\echo '==== An XOR natural key (lu or es): both planners give the same writes and feedback'
+\echo '-- id 1 lu 10, id 2 es 10, id 3 lu 20 from 2025. Rows: by lu, by es, by lu over time before lu 20 starts, a new'
+\echo '-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone.'
+CREATE TABLE xk (id int NOT NULL DEFAULT 100, lu int, es int, v text, valid_range daterange NOT NULL, CHECK (num_nonnulls(lu, es) <= 1));
+SELECT sql_saga.add_era('xk', 'valid_range') AS ignored \gset
+SELECT sql_saga.add_unique_key('xk', ARRAY['id'], key_type => 'primary') AS ignored \gset
+SELECT sql_saga.add_unique_key('xk', ARRAY['lu', 'es'], key_type => 'natural', mutually_exclusive_columns => ARRAY['lu', 'es']) AS ignored \gset
+CREATE TABLE xk_src (row_id int, id int, lu int, es int, v text, valid_range daterange);
+INSERT INTO xk_src VALUES (1, NULL, 10, NULL, 'lu10', '[2022-01-01,2023-01-01)'), (2, NULL, NULL, 10, 'es10', '[2022-01-01,2023-01-01)'),
+    (3, NULL, 20, NULL, 'lu20', '[2021-01-01,2026-01-01)'), (4, NULL, NULL, 30, 'new', '[2022-01-01,2023-01-01)'),
+    (5, 1, NULL, 10, 'conflict', '[2024-01-01,2025-01-01)'), (6, 2, NULL, NULL, 'byid', '[2026-01-01,2027-01-01)');
+CREATE TABLE xk_out (planner text, feedback jsonb, result jsonb);
+DO $xk$
+DECLARE
+    v_planner text;
+    v_feedback jsonb;
+    v_result jsonb;
+BEGIN
+    FOREACH v_planner IN ARRAY ARRAY['native', 'plpgsql'] LOOP
+        BEGIN
+            INSERT INTO xk VALUES (1, 10, NULL, 'a', '[2020-01-01,2030-01-01)'), (2, NULL, 10, 'a', '[2020-01-01,2030-01-01)'),
+                                  (3, NULL, NULL, 'a', '[2020-01-01,2025-01-01)'), (3, 20, NULL, 'a', '[2025-01-01,2030-01-01)');
+            PERFORM set_config('sql_saga.temporal_merge.use_plpgsql_planner', (v_planner = 'plpgsql')::text, true);
+            CALL sql_saga.temporal_merge(target_table => 'xk', source_table => 'xk_src', mode => 'MERGE_ENTITY_PATCH');
+            SELECT jsonb_agg(jsonb_build_object('row', f.source_row_id, 'status', f.status, 'keys', f.target_entity_keys, 'error', f.error_message) ORDER BY f.source_row_id)
+            INTO v_feedback FROM pg_temp.temporal_merge_feedback AS f;
+            SELECT jsonb_agg(to_jsonb(x) ORDER BY x.id, x.valid_range) INTO v_result FROM xk AS x;
+            RAISE EXCEPTION 'undo the case';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLERRM <> 'undo the case' THEN RAISE; END IF;
+        END;
+        INSERT INTO xk_out VALUES (v_planner, v_feedback, v_result);
+    END LOOP;
+END;
+$xk$;
+\echo '-- The native planner:'
+SELECT (f->>'row')::int AS row_id, f->>'status' AS status, f->'keys' AS target_entity_keys, f->>'error' AS error
+FROM xk_out AS o, jsonb_array_elements(o.feedback) AS f WHERE o.planner = 'native' ORDER BY 1;
+SELECT x.id, x.lu, x.es, x.v, x.valid_range
+FROM xk_out AS o, jsonb_populate_recordset(NULL::xk, o.result) AS x WHERE o.planner = 'native' ORDER BY x.id, x.valid_range;
+\echo '-- The PL/pgSQL planner gives the same feedback and table:'
+SELECT n.feedback = p.feedback AS same_feedback, n.result = p.result AS same_table
+FROM xk_out AS n, xk_out AS p WHERE n.planner = 'native' AND p.planner = 'plpgsql';
+
 \set ECHO none
 \set QUIET 1
 \set VERBOSITY default

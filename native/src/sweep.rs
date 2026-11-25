@@ -151,7 +151,7 @@ fn correlate_entities(
     for key_set in &ctx.lookup_key_sets {
         let mut index: HashMap<String, Vec<(usize, &TargetRow)>> = HashMap::new();
         for (i, tr) in target_rows.iter().enumerate() {
-            let key = build_key_for_cols(&tr.lookup_keys, key_set);
+            let key = build_key_for_cols(&tr.lookup_keys, &tr.identity_keys, key_set);
             if !key.is_empty() {
                 index.entry(key).or_default().push((i, tr));
             }
@@ -195,7 +195,7 @@ fn correlate_entities(
         }
         if !sr.lookup_keys.is_empty() && !sr.lookup_cols_are_null {
             for (ks_idx, key_set) in ctx.lookup_key_sets.iter().enumerate() {
-                let nk_key = build_key_for_cols(&sr.lookup_keys, key_set);
+                let nk_key = build_key_for_cols(&sr.lookup_keys, &sr.identity_keys, key_set);
                 if nk_key.is_empty() {
                     continue; // All columns in this key set are NULL in source
                 }
@@ -220,7 +220,27 @@ fn correlate_entities(
             // so is_new_entity = false, and discovered_identity comes from first match.
             is_new = false;
             discovered_identity = first_discovered_identity;
-            let conflicting_ids: Vec<String> = all_matched_id_maps.iter()
+            // In jsonb order, as the PL/pgSQL planner lists them (jsonb_agg(DISTINCT ...)): identity objects all have the
+            // same keys, so they sort by their values in key order, numbers numerically.
+            let mut sorted_id_maps = all_matched_id_maps.clone();
+            sorted_id_maps.sort_by(|x, y| {
+                let mut keys: Vec<&String> = x.keys().collect();
+                keys.sort_by(|p, q| p.len().cmp(&q.len()).then(p.cmp(q)));
+                for k in keys {
+                    let ord = match (x.get(k), y.get(k)) {
+                        (Some(serde_json::Value::Number(p)), Some(serde_json::Value::Number(q))) => p
+                            .as_f64()
+                            .partial_cmp(&q.as_f64())
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                        (p, q) => p.map(json_value_to_str).cmp(&q.map(json_value_to_str)),
+                    };
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+                std::cmp::Ordering::Equal
+            });
+            let conflicting_ids: Vec<String> = sorted_id_maps.iter()
                 .map(|m| json_to_pg_text(&serde_json::Value::Object(m.clone())))
                 .collect();
             early_feedback = Some(EarlyFeedback {
@@ -320,6 +340,9 @@ fn canonicalize_new_entity_nks(
     let nk_maps: Vec<serde_json::Map<String, serde_json::Value>> = new_indices.iter()
         .map(|&i| strip_nulls(&matched[i].source.lookup_keys))
         .collect();
+    let id_maps: Vec<serde_json::Map<String, serde_json::Value>> = new_indices.iter()
+        .map(|&i| strip_nulls(&matched[i].source.identity_keys))
+        .collect();
 
     // Union-find: group rows that share any NK value
     let n = new_indices.len();
@@ -343,7 +366,7 @@ fn canonicalize_new_entity_nks(
     for key_set in &ctx.lookup_key_sets {
         let mut val_to_idx: HashMap<String, Vec<usize>> = HashMap::new();
         for (local_idx, nk_map) in nk_maps.iter().enumerate() {
-            let key = build_key_for_cols(nk_map, key_set);
+            let key = build_key_for_cols(nk_map, &id_maps[local_idx], key_set);
             if !key.is_empty() {
                 val_to_idx.entry(key).or_default().push(local_idx);
             }
@@ -390,18 +413,33 @@ fn canonicalize_new_entity_nks(
     matched
 }
 
-/// Build a lookup key string using only the specified columns from a JSON map.
-/// Null values are excluded; returns empty string if all columns are null/missing.
-fn build_key_for_cols(map: &serde_json::Map<String, serde_json::Value>, cols: &[String]) -> String {
+/// The key of `cols` over the non-NULL columns a row gives, or "" when the row gives none of the key's own columns.
+/// A key column that is also an identity column is read from the row's identity map (`fallback`), as it is not repeated
+/// among the lookup keys: a natural key (a, code) on the primary key (a, b) matches on `a` too, as in the PL/pgSQL
+/// planner, where code X alone found the entities of every `a` (review of 1.15). A key that lies wholly inside the
+/// identity names nothing the identity does not.
+pub(crate) fn build_key_for_cols(
+    map: &serde_json::Map<String, serde_json::Value>,
+    fallback: &serde_json::Map<String, serde_json::Value>,
+    cols: &[String],
+) -> String {
     let mut parts: Vec<String> = Vec::new();
+    let mut own = false;
     for col in cols {
-        if let Some(v) = map.get(col) {
+        let v = match map.get(col) {
+            Some(v) => {
+                own |= !v.is_null();
+                Some(v)
+            }
+            None => fallback.get(col),
+        };
+        if let Some(v) = v {
             if !v.is_null() {
                 parts.push(format!("{}={}", col, json_value_to_str(v)));
             }
         }
     }
-    parts.join("__")
+    if own { parts.join("__") } else { String::new() }
 }
 
 fn build_grouping_key(

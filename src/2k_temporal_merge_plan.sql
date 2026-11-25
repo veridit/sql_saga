@@ -523,7 +523,12 @@ BEGIN
         -- Phase 3: Dynamic SQL Fragment Generation
         --
         v_coalesced_id_cols_list := (
-            SELECT string_agg(format('COALESCE(p.%1$I, p.discovered_id_%2$s) AS %1$I', col, ord), ', ')
+            -- An ambiguous row (its keys find several entities) names the first entity found, as in the native planner,
+            -- but keeps its own natural key values: no entity's are its.
+            SELECT string_agg(CASE WHEN col = ANY (v_identity_columns)
+                                   THEN format('COALESCE(p.%1$I, p.discovered_id_%2$s) AS %1$I', col, ord)
+                                   ELSE format('CASE WHEN p.is_ambiguous THEN p.%1$I ELSE COALESCE(p.%1$I, p.discovered_id_%2$s) END AS %1$I', col, ord)
+                              END, ', ')
             FROM unnest(v_original_entity_segment_key_cols) WITH ORDINALITY AS c(col, ord)
             WHERE col <> ALL(v_temporal_cols)
         );
@@ -1478,7 +1483,7 @@ BEGIN
             ) || ', COALESCE(final_seg.causal_id, target_seg.causal_id) as causal_id';
             -- The `entity_keys` payload must be built *only* from the stable, non-temporal identifier columns.
             v_plan_with_op_entity_id_json_build_expr_part_A := (SELECT COALESCE(string_agg(format('%L, d.%I', col, col), ', '), '') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
-            v_plan_with_op_entity_id_json_build_expr := format('jsonb_build_object(%s) || COALESCE(d.entity_nk_json, ''{}''::jsonb) || COALESCE(d.stable_pk_payload, ''{}''::jsonb)', v_plan_with_op_entity_id_json_build_expr_part_A);
+            v_plan_with_op_entity_id_json_build_expr := format('jsonb_build_object(%s) || CASE WHEN d.is_ambiguous IS NOT TRUE THEN COALESCE(d.entity_nk_json, ''{}''::jsonb) ELSE ''{}''::jsonb END || COALESCE(d.stable_pk_payload, ''{}''::jsonb)', v_plan_with_op_entity_id_json_build_expr_part_A);
             v_skip_no_target_entity_id_json_build_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_row.%I', col, col), ', '), '')) FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
             -- The final sort order should be on the stable entity identifier.
             v_final_order_by_expr := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
@@ -2681,9 +2686,10 @@ BEGIN
             $SQL$,
                 v_ephemeral_columns /* %1$L */,
                 -- The entity's natural key values (hug 40nwvn) for entity_keys: a piece before the key starts holds NULL,
-                -- but names the same entity, as in the native planner.
+                -- but names the same entity, as in the native planner. A refused (ambiguous) row neither takes them nor
+                -- gives its own.
                 CASE WHEN cardinality(v_nk_data_cols) > 0 THEN format(E',\n                    jsonb_strip_nulls(jsonb_build_object(%s)) AS entity_nk_json',
-                    (SELECT string_agg(format('%1$L, sql_saga.first(d.%1$I) FILTER (WHERE d.%1$I IS NOT NULL) OVER (PARTITION BY d.grouping_key)', c), ', ')
+                    (SELECT string_agg(format('%1$L, sql_saga.first(d.%1$I) FILTER (WHERE d.%1$I IS NOT NULL AND d.is_ambiguous IS NOT TRUE) OVER (PARTITION BY d.grouping_key)', c), ', ')
                      FROM unnest(v_nk_data_cols) AS c))
                 ELSE E',\n                    NULL::jsonb AS entity_nk_json' END /* %2$s */
             );
@@ -2713,7 +2719,9 @@ BEGIN
                             %1$s,
                             CASE
                                 WHEN d.is_new_entity AND d.canonical_nk_json IS NOT NULL
-                                THEN d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                -- Every key column, NULL where no row of the new entity gives it, as for existing entities
+                                -- and in the native planner.
+                                THEN jsonb_build_object(%8$s) || d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
                                 ELSE %2$s
                             END as entity_keys_json,
                             %3$s as identity_keys,

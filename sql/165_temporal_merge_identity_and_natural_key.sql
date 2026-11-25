@@ -76,4 +76,40 @@ ORDER BY n.mode, n.sid;
 
 ROLLBACK;
 
+\echo '==== A natural key sharing a column with a composite primary key matches on all its columns'
+\echo '-- primary key (a, b), natural key (a, code): code X is unique per a, so (1, X) and (2, X) are two entities, and (3, X)'
+\echo '-- is a new one. Both planners apply all three rows.'
+BEGIN;
+CREATE TABLE ck (a int NOT NULL, b int NOT NULL DEFAULT 100, code text, v text, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('ck', 'valid_range') AS ignored \gset
+SELECT sql_saga.add_unique_key('ck', ARRAY['a', 'b'], key_type => 'primary') AS ignored \gset
+SELECT sql_saga.add_unique_key('ck', ARRAY['a', 'code'], key_type => 'natural') AS ignored \gset
+CREATE TEMP TABLE ck_src (row_id int, a int, b int, code text, v text, valid_range daterange) ON COMMIT DROP;
+INSERT INTO ck_src VALUES (1, 1, NULL, 'X', 'new', '[2022-01-01,2023-01-01)'), (2, 2, NULL, 'X', 'new', '[2022-01-01,2023-01-01)'),
+                          (3, 3, NULL, 'X', 'new', '[2022-01-01,2023-01-01)');
+CREATE TEMP TABLE ck_out (planner text, row_id int, status text, error text, written text) ON COMMIT DROP;
+DO $ck$
+DECLARE
+    v_planner text;
+    v_rows jsonb;
+BEGIN
+    FOREACH v_planner IN ARRAY ARRAY['native', 'plpgsql'] LOOP
+        BEGIN
+            INSERT INTO ck VALUES (1, 1, 'X', 'old', '[2020-01-01,2030-01-01)'), (2, 1, 'X', 'old', '[2020-01-01,2030-01-01)');
+            PERFORM set_config('sql_saga.temporal_merge.use_plpgsql_planner', (v_planner = 'plpgsql')::text, true);
+            CALL sql_saga.temporal_merge(target_table => 'ck', source_table => 'ck_src', mode => 'MERGE_ENTITY_PATCH');
+            SELECT jsonb_agg(jsonb_build_object('row_id', f.source_row_id, 'status', f.status, 'error', f.error_message,
+                   'written', (SELECT string_agg(format('%s/%s', t.a, t.b), ' ' ORDER BY t.a, t.b) FROM ck AS t WHERE t.v = 'new' AND t.a = f.source_row_id)))
+            INTO v_rows FROM pg_temp.temporal_merge_feedback AS f;
+            RAISE EXCEPTION 'undo the case';
+        EXCEPTION WHEN OTHERS THEN
+            IF SQLERRM <> 'undo the case' THEN RAISE; END IF;
+        END;
+        INSERT INTO ck_out SELECT v_planner, (r->>'row_id')::int, r->>'status', r->>'error', r->>'written' FROM jsonb_array_elements(v_rows) AS r;
+    END LOOP;
+END;
+$ck$;
+SELECT planner, row_id, status, written, error FROM ck_out ORDER BY planner, row_id;
+ROLLBACK;
+
 \i sql/include/test_teardown.sql
