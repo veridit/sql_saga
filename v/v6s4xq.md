@@ -33,3 +33,5 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 - [ ] The proposal states its behaviour under concurrent writes at READ COMMITTED
 
 ## Notes
+
+2026-11-25 owner: do the syntax first, then the first message. Goal is consistency and clarity, not fewest reserved words; reuse sql_saga's vocabulary (entity, timeline, part of the timeline, whole timeline). Wants the design-space matrix, principles and concrete examples, covering INSERT, UPDATE, DELETE and MERGE.
