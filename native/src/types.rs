@@ -487,6 +487,9 @@ pub struct PlannerContext {
     /// Individual natural key sets for independent entity matching.
     /// PL/pgSQL tries each set with OR logic: match on ANY set succeeds.
     pub lookup_key_sets: Vec<Vec<String>>,
+    /// Natural keys with mutually exclusive columns the source carries (hug bjd8v7): a source row giving more than one
+    /// column of a set is refused with its own ERROR.
+    pub xor_sets: Vec<(String, Vec<String>)>,
     pub original_entity_key_cols: Vec<String>,
     pub original_entity_segment_key_cols: Vec<String>,
     pub temporal_cols: Vec<String>,

@@ -120,26 +120,8 @@ BEGIN
                 RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
                     unique_key_row.check_constraint, sql_saga.__internal_display_name(table_oid);
             END IF;
-            IF unique_key_row.mutually_exclusive_columns IS NOT NULL THEN
-                DECLARE
-                    alter_parts text[];
-                    object_name name;
-                BEGIN
-                    -- Build a list of constraints to drop in a single ALTER TABLE command.
-                    alter_parts := ARRAY[]::text[];
-
-                    -- No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT.
-
-                    -- 3. Execute the ALTER TABLE command for all constraints.
-                    IF cardinality(alter_parts) > 0 THEN
-                        PERFORM sql_saga.__internal_execute_as_caller(format('ALTER TABLE %I.%I %s',
-                            unique_key_row.table_schema,
-                            unique_key_row.table_name,
-                            array_to_string(alter_parts, ', ')
-                        ));
-                    END IF;
-                END;
-            ELSIF unique_key_row.key_type = 'predicated' THEN
+            -- An XOR key's NULLS NOT DISTINCT unique constraint is dropped as any natural key's (below).
+            IF unique_key_row.key_type = 'predicated' THEN
                 BEGIN
                     IF unique_object_attributable THEN
                         IF unique_key_row.unique_constraint IS NOT NULL THEN

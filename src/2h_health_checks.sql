@@ -684,7 +684,11 @@ AS $__internal_unique_key_inventory$
                       WHERE (x.n <= pg_catalog.cardinality(uk.column_names) AND o.oprname <> '=')
                          OR (x.n = pg_catalog.cardinality(k.expected_attnums) AND o.oprname <> '&&')))
         END AS exclude_attributable,
-        uk.check_constraint IS NULL AS check_attributable,
+        uk.check_constraint IS NULL OR EXISTS (
+            SELECT 1 FROM pg_catalog.pg_constraint AS c
+            WHERE c.conrelid = k.table_oid AND c.conname = uk.check_constraint AND c.contype = 'c' AND c.convalidated
+              AND uk.mutually_exclusive_columns IS NOT NULL
+              AND pg_catalog.pg_get_constraintdef(c.oid) = sql_saga.__internal_xor_check_definition(uk.mutually_exclusive_columns)) AS check_attributable,
         k.table_oid IS NULL
         OR (uk.unique_constraint IS NOT NULL
             AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c
@@ -759,7 +763,11 @@ AS $__internal_unique_key_attribution$
                        WHERE (x.n <= pg_catalog.cardinality(k.column_names) AND o.oprname <> '=')
                           OR (x.n = pg_catalog.cardinality(k.expected_attnums) AND o.oprname <> '&&'))
            END,
-           k.check_constraint IS NULL
+           k.check_constraint IS NULL OR EXISTS (
+               SELECT 1 FROM pg_catalog.pg_constraint AS c
+               WHERE c.conrelid = k.table_oid AND c.conname = k.check_constraint AND c.contype = 'c' AND c.convalidated
+                 AND k.mutually_exclusive_columns IS NOT NULL
+                 AND pg_catalog.pg_get_constraintdef(c.oid) = sql_saga.__internal_xor_check_definition(k.mutually_exclusive_columns))
     FROM expected AS k
     LEFT JOIN pg_catalog.pg_constraint AS uc
       ON k.key_type <> 'predicated' AND uc.conrelid = k.table_oid AND uc.conname = k.unique_constraint
@@ -861,7 +869,9 @@ BEGIN
     IF NOT FOUND THEN RETURN false; END IF;
 
     IF object_kind = 'exclude' AND uk.exclude_constraint IS NULL THEN RETURN true; END IF;
-    IF object_kind = 'check' THEN RETURN uk.check_constraint IS NULL; END IF;
+    IF object_kind = 'check' THEN
+        RETURN (SELECT a.check_attributable FROM sql_saga.__internal_unique_key_attribution(uk.unique_key_name) AS a);
+    END IF;
 
     IF object_kind = 'unique' AND uk.key_type <> 'predicated' THEN
         table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
@@ -1250,6 +1260,17 @@ BEGIN
         IF r.object_missing THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": managed constraint or index is missing; repair with drop_unique_key and add_unique_key',
                 r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+
+        /* 1.15 (hug bjd8v7): a natural key with mutually exclusive columns limits a row to one of them. */
+        IF r.mutually_exclusive_columns IS NOT NULL AND (r.check_constraint IS NULL OR NOT r.check_attributable) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": the CHECK that allows at most one of its mutually exclusive columns % per row is missing or not as add_unique_key builds it; repair with drop_unique_key and add_unique_key',
+                r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass),
+                pg_catalog.array_to_string(r.mutually_exclusive_columns, ', ')
+                USING HINT = pg_catalog.format('Or add it and record it: ALTER TABLE %s ADD CONSTRAINT %I %s; UPDATE sql_saga.unique_keys SET check_constraint = %L WHERE unique_key_name = %L;',
+                    base_oid::regclass, sql_saga.__internal_make_name(ARRAY[r.unique_key_name], 'xor_check'),
+                    sql_saga.__internal_xor_check_definition(r.mutually_exclusive_columns),
+                    sql_saga.__internal_make_name(ARRAY[r.unique_key_name], 'xor_check'), r.unique_key_name);
         END IF;
 
         IF NOT r.unique_attributable OR NOT r.exclude_attributable OR NOT r.check_attributable THEN

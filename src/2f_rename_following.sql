@@ -1886,7 +1886,7 @@ BEGIN
         AND c.contype = 'c'
         AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
         AND pc.oid = ANY (v_touched_relation_oids)
-        AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
+        AND sql_saga.__internal_constraintdef_if_touched(c.oid, c.conrelid, v_touched_relation_oids) = sql_saga.__internal_xor_check_definition(uk.mutually_exclusive_columns)
     LOOP
         EXECUTE sql;
     END LOOP;

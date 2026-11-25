@@ -6,6 +6,7 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_trigger_is_attributable(oid, name, re
 REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_view_is_attributable(oid, oid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_inventory(name) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_attribution(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_xor_check_definition(name[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_temporal_foreign_key_is_attributable(name) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_object_is_attributable(name, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_display_name(name, name) FROM PUBLIC;

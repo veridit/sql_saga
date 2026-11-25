@@ -2588,10 +2588,12 @@ SELECT sql_saga.add_unique_key(table_oid => 'person_for_unit', key_type => 'natu
     mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'person_for_unit_natural_key_valid');
 -- Unrelated DDL: the baseline sorts the catalog list of the XOR key.
 ALTER TABLE person_for_unit ADD COLUMN note text;
--- 1 = (person 10, role 20, legal unit 30, establishment 40) for the regular child, 4 = (12, 22, 32, 42) for the
--- temporal child, 3 = (11, 21, 31, 41) unreferenced; no row (40, 30, 10, 20).
+-- 1 = (person 10, role 20, legal unit 30) for the regular child, 4 = (12, 22, 32) for the temporal child, 3 = (11, 21, 31)
+-- unreferenced. An XOR key row gives one of its exclusive columns (the update adds the CHECK, hug bjd8v7), so every
+-- child row has a NULL and a MATCH SIMPLE foreign key to the key never checks it: the pairing is shown by the
+-- objects (catalog, native constraint), not by refused rows.
 INSERT INTO person_for_unit (id, person_id, person_role_id, legal_unit_id, establishment_id, valid_range)
-VALUES (1, 10, 20, 30, 40, '[2020-01-01,infinity)'), (3, 11, 21, 31, 41, '[2020-01-01,infinity)'), (4, 12, 22, 32, 42, '[2020-01-01,infinity)');
+VALUES (1, 10, 20, 30, NULL, '[2020-01-01,infinity)'), (3, 11, 21, 31, NULL, '[2020-01-01,infinity)'), (4, 12, 22, 32, NULL, '[2020-01-01,infinity)');
 CREATE TABLE person_ref (id int PRIMARY KEY, a_person int, b_role int, c_lu int, d_est int);
 CREATE TABLE person_tref (id int, a_person int, b_role int, c_lu int, d_est int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('person_tref', 'valid_range', 'valid');
@@ -2600,10 +2602,9 @@ SELECT sql_saga.add_foreign_key('person_ref', ARRAY['a_person', 'b_role', 'c_lu'
     ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id']::name[], foreign_key_name => 'person_ref_fkey');
 SELECT sql_saga.add_foreign_key('person_tref', ARRAY['a_person', 'b_role', 'c_lu', 'd_est']::name[], 'person_for_unit',
     ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id']::name[], foreign_key_name => 'person_tref_fkey');
--- Key row 1 read through the mispairing (a_person = establishment 40, b_role = legal unit 30, ...): accepted
--- by the baseline, an orphan once paired as intended.
-INSERT INTO person_ref VALUES (9, 40, 30, 10, 20);
-INSERT INTO person_tref VALUES (9, 40, 30, 10, 20, '[2021-01-01,2022-01-01)');
+-- A child row of the crossed shape; it has a NULL, so it is unchecked before and after the repair.
+INSERT INTO person_ref VALUES (9, NULL, 30, 10, 20);
+INSERT INTO person_tref VALUES (9, NULL, 30, 10, 20, '[2021-01-01,2022-01-01)');
 SQL
 )
 printf '%s\n' "$out" | grep -q '^ERROR' && die "mispaired FK fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
@@ -2626,8 +2627,8 @@ XORFK_TREF_HINT="$XORFK_UPGRADE_STEPS The foreign key may have accepted rows tha
 # The shape this section is about. If the baseline did not mispair, the section proves nothing.
 FAILURE_CLASS=prerequisite
 check "mispaired FKs: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,legal_unit_id,person_id,person_role_id}" "$(q "$XORFK" "$XORFK_CATALOG_SQL")"
-check "mispaired FKs: the $BASELINE_VERSION regular FK refuses the intended key" "refused" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40)")"
-check "mispaired FKs: the $BASELINE_VERSION temporal FK refuses the intended key" "refused" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 10, 20, 30, 40, '[2021-01-01,2022-01-01)')")"
+check "mispaired FKs: the $BASELINE_VERSION regular FK leaves a reference to the XOR key unchecked" "accepted" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 10, 20, 30, NULL)")"
+check "mispaired FKs: the $BASELINE_VERSION temporal FK leaves a reference to the XOR key unchecked" "accepted" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 10, 20, 30, NULL, '[2021-01-01,2022-01-01)')")"
 check "mispaired FKs: the native temporal FK references the sorted list" \
     "FOREIGN KEY (a_person, b_role, c_lu, d_est, PERIOD valid_range) REFERENCES person_for_unit(establishment_id, legal_unit_id, person_id, person_role_id, PERIOD valid_range) DEFERRABLE" \
     "$(q "$XORFK" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'person_tref'::regclass AND conname = 'person_tref_fkey'")"
@@ -2651,7 +2652,7 @@ check "mispaired FKs: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VE
 check "mispaired FKs: refusal leaves extension objects, user schema and catalog rows unchanged" "$xorfk_before" "$(xorfk_state "$XORFK")"
 # 2. The hint's scan, run verbatim on the baseline, lists the orphan. The add part cannot run on the baseline
 # (its add_foreign_key only finds the key by the sorted list), so it is not tried there. Then the drop part.
-check "mispaired FKs: the hint's scan lists the row the mispaired regular FK let in" "9|40|30|10|20" "$(q "$XORFK" "$XORFK_REF_SCAN")"
+check "mispaired FKs: the hint's scan lists nothing (every child row has a NULL)" "" "$(q "$XORFK" "$XORFK_REF_SCAN")"
 check "mispaired FKs: the drop part of the regular repair succeeds on $BASELINE_VERSION" "" \
     "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_REF_DROP" | sql "$XORFK" | grep -m1 '^ERROR')"
 xorfk_between=$(xorfk_state "$XORFK") || die "mispaired FK fixture: state capture failed: $xorfk_between"
@@ -2670,25 +2671,19 @@ check "mispaired FKs: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$XORFK" "SELECT
 check "mispaired FKs: the XOR key catalog is in constraint order after the update" "{person_id,person_role_id,legal_unit_id,establishment_id}" "$(q "$XORFK" "$XORFK_CATALOG_SQL")"
 XORFK_LEFTOVERS_SQL="SELECT (SELECT count(*) FROM sql_saga.foreign_keys WHERE table_name IN ('person_ref', 'person_tref')) || '|' || (SELECT count(*) FROM pg_constraint WHERE conrelid IN ('person_ref'::regclass, 'person_tref'::regclass) AND (contype = 'f' OR (contype = 'c' AND pg_get_constraintdef(oid) LIKE '%person_for_unit%'))) || '|' || (SELECT count(*) FROM pg_trigger WHERE tgrelid = 'person_for_unit'::regclass AND NOT tgisinternal AND tgname LIKE 'person_%ref_fkey%')"
 check "mispaired FKs: no foreign key objects left after the drops" "0|0|0" "$(q "$XORFK" "$XORFK_LEFTOVERS_SQL")"
-check "mispaired FKs: the regular add part is refused while its orphan exists" "ERROR" \
-    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_REF_ADD" | sql "$XORFK" | grep -m1 -o '^ERROR')"
-check "mispaired FKs: the temporal add part is refused while its orphan exists" "ERROR" \
-    "$(printf 'SET client_min_messages = warning;\n%s;\n' "$XORFK_TREF_ADD" | sql "$XORFK" | grep -m1 -o '^ERROR')"
-check "mispaired FKs: the refused add parts leave no constraint, trigger or catalog row behind" "0|0|0" "$(q "$XORFK" "$XORFK_LEFTOVERS_SQL")"
-check "mispaired FKs: the add parts of both repairs succeed on $NEW_VERSION once the orphans are resolved" "" \
-    "$(printf 'SET client_min_messages = warning;\nDELETE FROM person_ref WHERE id = 9;\nDELETE FROM person_tref WHERE id = 9;\n%s;\n%s;\n' "$XORFK_REF_ADD" "$XORFK_TREF_ADD" | sql "$XORFK" | grep -m1 '^ERROR')"
+check "mispaired FKs: the add parts of both repairs succeed on $NEW_VERSION (no child row is checked, so none is an orphan)" "" \
+    "$(printf 'SET client_min_messages = warning;\n%s;\n%s;\n' "$XORFK_REF_ADD" "$XORFK_TREF_ADD" | sql "$XORFK" | grep -m1 '^ERROR')"
 check "mispaired FKs: check_integrity passes after the repair" "" "$(q "$XORFK" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
-check "mispaired FKs: repaired regular FK accepts the intended key" "accepted" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40)")"
-check "mispaired FKs: repaired regular FK refuses the crossed key" "refused" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, 40, 30, 10, 20)")"
-check "mispaired FKs: repaired temporal FK accepts the intended key" "accepted" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)')")"
-check "mispaired FKs: repaired temporal FK refuses the crossed key" "refused" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, 40, 30, 10, 20, '[2021-01-01,2022-01-01)')")"
+check "mispaired FKs: the repaired native temporal FK references the constraint order" \
+    "FOREIGN KEY (a_person, b_role, c_lu, d_est, PERIOD valid_range) REFERENCES person_for_unit(person_id, person_role_id, legal_unit_id, establishment_id, PERIOD valid_range) DEFERRABLE" \
+    "$(q "$XORFK" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'person_tref'::regclass AND conname = 'person_tref_fkey'")"
+check "mispaired FKs: repaired regular FK leaves a crossed reference unchecked (it has a NULL)" "accepted" "$(xorfk_probe "INSERT INTO person_ref VALUES (1, NULL, 30, 10, 20)")"
+check "mispaired FKs: repaired temporal FK leaves a crossed reference unchecked (it has a NULL)" "accepted" "$(xorfk_probe "INSERT INTO person_tref VALUES (1, NULL, 30, 10, 20, '[2021-01-01,2022-01-01)')")"
 # Parent side: one parent row per child type, the reference inserted (and checked) first, kept.
 check "mispaired FKs: references from the repaired regular child (row 1) and temporal child (row 4) inserted" "" \
-    "$(printf "INSERT INTO person_ref VALUES (1, 10, 20, 30, 40);\nINSERT INTO person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)');\n" | sql "$XORFK" | grep -m1 '^ERROR')"
-check "mispaired FKs: deleting the key row referenced only by the regular child is refused" "refused" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 1")"
-check "mispaired FKs: updating the key referenced only by the regular child is refused" "refused" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 1")"
-check "mispaired FKs: deleting the key row referenced only by the temporal child is refused" "refused" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 4")"
-check "mispaired FKs: updating the key referenced only by the temporal child is refused" "refused" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 4")"
+    "$(printf "INSERT INTO person_ref VALUES (1, 10, 20, 30, NULL);\nINSERT INTO person_tref VALUES (1, 12, 22, 32, NULL, '[2021-01-01,2022-01-01)');\n" | sql "$XORFK" | grep -m1 '^ERROR')"
+check "mispaired FKs: deleting the key row of an (unchecked) regular reference is not refused" "accepted" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 1")"
+check "mispaired FKs: deleting the key row of an (unchecked) temporal reference is not refused" "accepted" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 4")"
 check "mispaired FKs: an unreferenced key row can be deleted" "accepted" "$(xorfk_probe "DELETE FROM person_for_unit WHERE id = 3")"
 check "mispaired FKs: an unreferenced key can be updated" "accepted" "$(xorfk_probe "UPDATE person_for_unit SET person_role_id = 29 WHERE id = 3")"
 
@@ -3022,13 +3017,13 @@ CREATE TABLE unit_role (id int NOT NULL, kind text NOT NULL, legal_unit_id int, 
 SELECT sql_saga.add_era('unit_role', 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'unit_role', key_type => 'natural', column_names => ARRAY['kind', 'legal_unit_id', 'establishment_id'],
     mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id'], unique_key_name => 'unit_role_kind_valid');
-INSERT INTO unit_role VALUES (1, 'a', 30, 40, '[2020-01-01,infinity)'), (2, 'b', 31, 41, '[2020-01-01,infinity)');
+INSERT INTO unit_role VALUES (1, 'a', 30, NULL, '[2020-01-01,infinity)'), (2, 'b', 31, NULL, '[2020-01-01,infinity)');
 ALTER EVENT TRIGGER sql_saga_rename_following DISABLE;
 SELECT sql_saga.add_foreign_key('role_ref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_ref_fkey');
 SELECT sql_saga.add_foreign_key('role_tref', ARRAY['r_kind', 'r_lu', 'r_est']::name[], 'unit_role', ARRAY['kind', 'legal_unit_id', 'establishment_id']::name[], foreign_key_name => 'role_tref_fkey');
 ALTER EVENT TRIGGER sql_saga_rename_following ENABLE;
-INSERT INTO role_ref VALUES (1, 'a', 30, 40);
-INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');"
+INSERT INTO role_ref VALUES (1, 'a', 30, NULL);
+INSERT INTO role_tref VALUES (1, 'b', 31, NULL, '[2021-01-01,2022-01-01)');"
     FAILURE_CLASS=prerequisite
     local key_sql="SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'"
     check "$label: before the sort the catalog holds the constraint order" "{kind,legal_unit_id,establishment_id}" "$(q "$db" "$key_sql")"
@@ -3043,17 +3038,17 @@ INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');"
         "$(q "$db" "SELECT (SELECT pg_get_constraintdef(c.oid) LIKE '%(r_kind, r_lu, r_est))' FROM pg_constraint AS c WHERE c.conrelid = 'role_ref'::regclass AND c.conname = (SELECT fk_check_constraint FROM sql_saga.foreign_keys WHERE foreign_key_name = 'role_ref_fkey'))::text
             || '|' || (SELECT regexp_replace(p.prosrc, '\s+', ' ', 'g') ~ 'uk\.kind (OPERATOR\(pg_catalog\.=\)|=) \\\$1 AND uk\.legal_unit_id (OPERATOR\(pg_catalog\.=\)|=) \\\$2 AND uk\.establishment_id (OPERATOR\(pg_catalog\.=\)|=) \\\$3'
                 FROM pg_proc AS p WHERE p.oid = (SELECT fk_helper_function::regprocedure FROM sql_saga.foreign_keys WHERE foreign_key_name = 'role_ref_fkey'))::text" | sed 's/true/t/g; s/false/f/g')"
-    check "$label: before the sort the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
-    check "$label: before the sort the regular FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
-    check "$label: before the sort the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
-    check "$label: before the sort the temporal FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 40, 30, '[2021-01-01,2022-01-01)')")"
+    check "$label: before the sort the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, NULL)")"
+    check "$label: before the sort the regular FK leaves the crossed key unchecked (it has a NULL)" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', NULL, 31)")"
+    check "$label: before the sort the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, NULL, '[2021-01-01,2022-01-01)')")"
+    check "$label: before the sort the temporal FK leaves the crossed key unchecked (it has a NULL)" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', NULL, 30, '[2021-01-01,2022-01-01)')")"
     # The tested sort: the unrelated statement, run by the user with following enabled.
     check "$label: the sorting statement runs" "" "$(q "$db" "$sorter" | grep '^ERROR')"
     check "$label: the $BASELINE_VERSION baseline sorted the XOR key catalog" "{establishment_id,kind,legal_unit_id}" \
         "$(q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
-    check "$label: before the update the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
-    check "$label: before the update the regular FK refuses the crossed key" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
-    check "$label: before the update the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
+    check "$label: before the update the regular FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, NULL)")"
+    check "$label: before the update the regular FK leaves the crossed key unchecked (it has a NULL)" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', NULL, 31)")"
+    check "$label: before the update the temporal FK accepts the intended key" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, NULL, '[2021-01-01,2022-01-01)')")"
     FAILURE_CLASS="expected RED"
     v13_restart "$db"
     got=$(q "$db" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')
@@ -3065,11 +3060,11 @@ INSERT INTO role_tref VALUES (1, 'b', 31, 41, '[2021-01-01,2022-01-01)');"
         "FOREIGN KEY (r_kind, r_lu, r_est, PERIOD valid_range) REFERENCES unit_role(kind, legal_unit_id, establishment_id, PERIOD valid_range) DEFERRABLE" \
         "$(q "$db" "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'role_tref'::regclass AND conname = 'role_tref_fkey'")"
     check "$label: check_integrity passes after the update" "" "$(q "$db" "SELECT sql_saga.check_integrity()" | grep '^ERROR')"
-    check "$label: the regular FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, 41)")"
-    check "$label: the regular FK refuses the crossed key after the update" "refused" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 41, 31)")"
-    check "$label: the temporal FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, 40, '[2021-01-01,2022-01-01)')")"
-    check "$label: the temporal FK refuses the crossed key after the update" "refused" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 40, 30, '[2021-01-01,2022-01-01)')")"
-    check "$label: deleting a referenced parent is refused after the update" "refused" "$(v13_probe "$db" "DELETE FROM unit_role WHERE id = 1")"
+    check "$label: the regular FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', 31, NULL)")"
+    check "$label: the regular FK leaves the crossed key unchecked (it has a NULL) after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_ref VALUES (9, 'b', NULL, 31)")"
+    check "$label: the temporal FK accepts the intended key after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', 30, NULL, '[2021-01-01,2022-01-01)')")"
+    check "$label: the temporal FK leaves the crossed key unchecked (it has a NULL) after the update" "accepted" "$(v13_probe "$db" "INSERT INTO role_tref VALUES (9, 'a', NULL, 30, '[2021-01-01,2022-01-01)')")"
+    check "$label: deleting the parent of an unchecked reference is not refused after the update" "accepted" "$(v13_probe "$db" "DELETE FROM unit_role WHERE id = 1")"
     check "$label: unrelated DDL after the update keeps the constraint order" "{kind,legal_unit_id,establishment_id}" \
         "$(q "$db" "ALTER TABLE unit_role ADD COLUMN later text" | grep '^ERROR'; q "$db" "SELECT column_names::text FROM sql_saga.unique_keys WHERE unique_key_name = 'unit_role_kind_valid'")"
 }
@@ -3736,6 +3731,53 @@ UPDATE nk_one SET old_code = 'q' WHERE id = 1 AND valid_from = '2025-01-01';"
     check "after correcting the rows the update succeeds" "" \
         "$(q "$NK1_BAD_DB" "UPDATE nk_one SET old_code = 'x' WHERE id = 1 AND old_code = 'q'; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     assert_integrity "$NK1_BAD_DB"
+fi
+
+# 1.15: a natural key with mutually exclusive columns allows at most one of them per row (hug bjd8v7). Since 1.0 the
+# CHECK saying so was not built, so a row could give two. The update adds CHECK (num_nonnulls(<columns>) <= 1) to every
+# such key and records it in check_constraint; a row giving two refuses the update, by name, unchanged, with the
+# query that finds it; the preflight lists it.
+if ! version_lt "$NEW_VERSION" 1.15; then
+    section "$BASELINE_VERSION mutually exclusive natural key columns are exclusive after the update to $NEW_VERSION" "expected RED"
+    XC_DB=${PREFIX}_xorcheck
+    XC_FIXTURE="CREATE TABLE xc (id integer NOT NULL, lu integer, es integer, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('xc', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('xc', ARRAY['id']::name[], key_type => 'primary');
+SELECT sql_saga.add_unique_key('xc', ARRAY['lu', 'es']::name[], key_type => 'natural', mutually_exclusive_columns => ARRAY['lu', 'es']::name[], unique_key_name => 'xc_unit');
+INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES
+    (1, 10, NULL, '2020-01-01', 'infinity'), (2, NULL, 10, '2020-01-01', 'infinity'), (3, NULL, NULL, '2020-01-01', 'infinity');"
+    v13_db "$XC_DB" "$XC_FIXTURE"
+    check "preflight accepts rows giving one mutually exclusive column or none" "" \
+        "$(run_preflight "$XC_DB" | grep -m1 'mutually exclusive column')"
+    v13_restart "$XC_DB"
+    XC_STATE="SELECT uk.unique_key_name || '=' || coalesce(uk.check_constraint, 'null') || ':' || coalesce((SELECT pg_get_constraintdef(c.oid) FROM pg_constraint AS c WHERE c.conrelid = 'xc'::regclass AND c.conname = uk.check_constraint), 'none') FROM sql_saga.unique_keys AS uk WHERE uk.unique_key_name = 'xc_unit'"
+    check "update succeeds" "" "$(q "$XC_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "the key records its CHECK" "xc_unit=xc_unit_xor_check:CHECK ((num_nonnulls(lu, es) <= 1))" "$(q "$XC_DB" "$XC_STATE")"
+    check "a row giving both columns is now refused" "refused" \
+        "$(v13_probe "$XC_DB" "INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, 20, 20, '2020-01-01', 'infinity')")"
+    check "a row giving neither is still accepted" "accepted" \
+        "$(v13_probe "$XC_DB" "INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, NULL, NULL, '2010-01-01', '2011-01-01')")"
+    assert_integrity "$XC_DB"
+
+    XC_BAD_DB=${PREFIX}_xorcheck_conflict
+    v13_db "$XC_BAD_DB" "$XC_FIXTURE
+INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, 20, 30, '2020-01-01', 'infinity');"
+    check "preflight names the row giving both columns" \
+        "public.xc natural key xc_unit columns lu, es: (20, 30)" \
+        "$(run_preflight "$XC_BAD_DB" | grep -m1 '^public.xc natural key')"
+    v13_restart "$XC_BAD_DB"
+    XC_BEFORE=$(q "$XC_BAD_DB" "$XC_STATE")
+    check "a row giving both columns refuses the update, by name" \
+        "ERROR:  sql_saga: natural key xc_unit on table public.xc has rows giving more than one of its mutually exclusive columns lu, es" \
+        "$(q "$XC_BAD_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    check "the refusal lists the rows in its DETAIL and gives the query that finds them" \
+        "DETAIL:  Rows giving (lu, es): (20, 30).|HINT:  sql_saga 1.15 enforces at most one of them per row. Find the rows with SELECT * FROM public.xc WHERE num_nonnulls(lu, es) > 1; correct them so that each gives at most one, then retry." \
+        "$(printf '%s\n' "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | sql "$XC_BAD_DB" | grep -E '^(DETAIL|HINT):' | paste -sd '|' -)"
+    check "the refused update leaves version and catalog unchanged" "$BASELINE_VERSION|$XC_BEFORE" \
+        "$(q "$XC_BAD_DB" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")|$(q "$XC_BAD_DB" "$XC_STATE")"
+    check "after correcting the row the update succeeds" "" \
+        "$(q "$XC_BAD_DB" "UPDATE xc SET es = NULL WHERE id = 4; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    assert_integrity "$XC_BAD_DB"
 fi
 
 # 1.14: a disabled era synchronization trigger (valid_from/valid_until stop following the range column) refuses the

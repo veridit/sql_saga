@@ -1,0 +1,191 @@
+\set ECHO none
+\set QUIET 0
+\set VERBOSITY terse
+SET client_min_messages = notice;
+SET
+\echo '==== add_unique_key adds the CHECK, says so, and records it'
+==== add_unique_key adds the CHECK, says so, and records it
+SELECT sql_saga.add_unique_key('xc', ARRAY['lu', 'es'], key_type => 'natural', mutually_exclusive_columns => ARRAY['lu', 'es']);
+NOTICE:  sql_saga: Added constraints to table xc_167.xc: ADD CONSTRAINT xc_lu_es_valid UNIQUE NULLS NOT DISTINCT (lu, es, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT xc_lu_es_valid_xor_check CHECK ((num_nonnulls(lu, es) <= 1)); ADD CONSTRAINT xc_lu_es_valid_lu_pk_consistency_excl EXCLUDE USING gist (lu WITH =, id WITH <>) WHERE (((lu IS NOT NULL) AND (es IS NULL))); ADD CONSTRAINT xc_lu_es_valid_es_pk_consistency_excl EXCLUDE USING gist (es WITH =, id WITH <>) WHERE (((es IS NOT NULL) AND (lu IS NULL))); ADD CONSTRAINT xc_lu_es_valid_lu_nk_consistency_excl EXCLUDE USING gist (id WITH =, lu WITH <>); ADD CONSTRAINT xc_lu_es_valid_es_nk_consistency_excl EXCLUDE USING gist (id WITH =, es WITH <>)
+ add_unique_key 
+----------------
+ xc_lu_es_valid
+(1 row)
+
+SET client_min_messages = warning;
+SET
+SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint
+WHERE conrelid = 'xc'::regclass AND contype = 'c' AND conname LIKE '%xor%';
+         conname          |             definition              
+--------------------------+-------------------------------------
+ xc_lu_es_valid_xor_check | CHECK ((num_nonnulls(lu, es) <= 1))
+(1 row)
+
+SELECT unique_key_name, check_constraint FROM sql_saga.unique_keys WHERE table_name = 'xc' ORDER BY 1;
+ unique_key_name |     check_constraint     
+-----------------+--------------------------
+ xc_id_valid     | 
+ xc_lu_es_valid  | xc_lu_es_valid_xor_check
+(2 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+\echo '-- one column, or none (before the key starts), is allowed; two are refused'
+-- one column, or none (before the key starts), is allowed; two are refused
+BEGIN;
+BEGIN
+INSERT INTO xc VALUES (1, 10, NULL, '[2020-01-01,2030-01-01)'), (2, NULL, 10, '[2020-01-01,2030-01-01)'),
+                      (3, NULL, NULL, '[2020-01-01,2030-01-01)');
+INSERT 0 3
+SAVEPOINT two_columns;
+SAVEPOINT
+INSERT INTO xc VALUES (4, 20, 20, '[2020-01-01,2030-01-01)');
+ERROR:  new row for relation "xc" violates check constraint "xc_lu_es_valid_xor_check"
+ROLLBACK TO SAVEPOINT two_columns;
+ROLLBACK
+ROLLBACK;
+ROLLBACK
+\echo '==== a direct DROP CONSTRAINT is refused (drop protection)'
+==== a direct DROP CONSTRAINT is refused (drop protection)
+BEGIN;
+BEGIN
+ALTER TABLE xc DROP CONSTRAINT xc_lu_es_valid_xor_check;
+ERROR:  cannot drop constraint "xc_lu_es_valid_xor_check" on table "xc_167.xc" because it is used in era unique key "xc_lu_es_valid"
+ROLLBACK;
+ROLLBACK
+\echo '==== a renamed CHECK is followed'
+==== a renamed CHECK is followed
+BEGIN;
+BEGIN
+ALTER TABLE xc RENAME CONSTRAINT xc_lu_es_valid_xor_check TO xc_one_of_lu_es;
+ALTER TABLE
+SELECT unique_key_name, check_constraint FROM sql_saga.unique_keys WHERE table_name = 'xc' AND check_constraint IS NOT NULL;
+ unique_key_name | check_constraint 
+-----------------+------------------
+ xc_lu_es_valid  | xc_one_of_lu_es
+(1 row)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+\echo '==== check_integrity reports a missing CHECK with the repair'
+==== check_integrity reports a missing CHECK with the repair
+\echo '-- the state 1.14 left (no CHECK), bypassing the event triggers as a restore would:'
+-- the state 1.14 left (no CHECK), bypassing the event triggers as a restore would:
+BEGIN;
+BEGIN
+SET LOCAL session_replication_role = replica;
+SET
+ALTER TABLE xc DROP CONSTRAINT xc_lu_es_valid_xor_check;
+ALTER TABLE
+UPDATE sql_saga.unique_keys SET check_constraint = NULL WHERE unique_key_name = 'xc_lu_es_valid';
+UPDATE 1
+RESET session_replication_role;
+RESET
+\set VERBOSITY default
+SAVEPOINT report;
+SAVEPOINT
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for unique key "xc_lu_es_valid" on table "xc_167.xc": the CHECK that allows at most one of its mutually exclusive columns lu, es per row is missing or not as add_unique_key builds it; repair with drop_unique_key and add_unique_key
+HINT:  Or add it and record it: ALTER TABLE xc_167.xc ADD CONSTRAINT xc_lu_es_valid_xor_check CHECK ((num_nonnulls(lu, es) <= 1)); UPDATE sql_saga.unique_keys SET check_constraint = 'xc_lu_es_valid_xor_check' WHERE unique_key_name = 'xc_lu_es_valid';
+CONTEXT:  PL/pgSQL function check_integrity() line 343 at RAISE
+ROLLBACK TO SAVEPOINT report;
+ROLLBACK
+\set VERBOSITY terse
+\echo '-- the repair named in the hint makes it clean:'
+-- the repair named in the hint makes it clean:
+ALTER TABLE xc_167.xc ADD CONSTRAINT xc_lu_es_valid_xor_check CHECK ((num_nonnulls(lu, es) <= 1));
+ALTER TABLE
+UPDATE sql_saga.unique_keys SET check_constraint = 'xc_lu_es_valid_xor_check' WHERE unique_key_name = 'xc_lu_es_valid';
+UPDATE 1
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+ROLLBACK;
+ROLLBACK
+\echo '-- a CHECK of that name with another definition is not the key''s:'
+-- a CHECK of that name with another definition is not the key's:
+BEGIN;
+BEGIN
+SET LOCAL session_replication_role = replica;
+SET
+ALTER TABLE xc DROP CONSTRAINT xc_lu_es_valid_xor_check;
+ALTER TABLE
+ALTER TABLE xc ADD CONSTRAINT xc_lu_es_valid_xor_check CHECK (num_nonnulls(lu, es) <= 2);
+ALTER TABLE
+RESET session_replication_role;
+RESET
+SAVEPOINT report;
+SAVEPOINT
+SELECT sql_saga.check_integrity();
+ERROR:  sql_saga: integrity violation for unique key "xc_lu_es_valid" on table "xc_167.xc": the CHECK that allows at most one of its mutually exclusive columns lu, es per row is missing or not as add_unique_key builds it; repair with drop_unique_key and add_unique_key
+ROLLBACK TO SAVEPOINT report;
+ROLLBACK
+ROLLBACK;
+ROLLBACK
+\echo '==== drop_unique_key drops the CHECK with the key'
+==== drop_unique_key drops the CHECK with the key
+SELECT sql_saga.drop_unique_key('xc', ARRAY['lu', 'es']);
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT conname FROM pg_constraint WHERE conrelid = 'xc'::regclass AND contype IN ('c', 'u', 'x') ORDER BY 1;
+    conname     
+----------------
+ xc_valid_check
+(1 row)
+
+\echo '==== add_unique_key adopts a CHECK of that name and definition, and refuses existing rows that give two'
+==== add_unique_key adopts a CHECK of that name and definition, and refuses existing rows that give two
+ALTER TABLE xc ADD CONSTRAINT xc_lu_es_valid_xor_check CHECK (num_nonnulls(lu, es) <= 1);
+ALTER TABLE
+SELECT sql_saga.add_unique_key('xc', ARRAY['lu', 'es'], key_type => 'natural', mutually_exclusive_columns => ARRAY['lu', 'es']) AS key_name;
+    key_name    
+----------------
+ xc_lu_es_valid
+(1 row)
+
+SELECT unique_key_name, check_constraint FROM sql_saga.unique_keys WHERE table_name = 'xc' AND check_constraint IS NOT NULL;
+ unique_key_name |     check_constraint     
+-----------------+--------------------------
+ xc_lu_es_valid  | xc_lu_es_valid_xor_check
+(1 row)
+
+SELECT sql_saga.drop_unique_key('xc', ARRAY['lu', 'es']);
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT conname FROM pg_constraint WHERE conrelid = 'xc'::regclass AND contype = 'c' AND conname LIKE '%xor%';
+ conname 
+---------
+(0 rows)
+
+BEGIN;
+BEGIN
+INSERT INTO xc VALUES (5, 30, 30, '[2020-01-01,2030-01-01)');
+INSERT 0 1
+SAVEPOINT refuse;
+SAVEPOINT
+SELECT sql_saga.add_unique_key('xc', ARRAY['lu', 'es'], key_type => 'natural', mutually_exclusive_columns => ARRAY['lu', 'es']);
+ERROR:  check constraint "xc_lu_es_valid_xor_check" of relation "xc" is violated by some row
+ROLLBACK TO SAVEPOINT refuse;
+ROLLBACK
+ROLLBACK;
+ROLLBACK
+\set ECHO none

@@ -1,4 +1,20 @@
 /*
+ * 1.15 (hug bjd8v7): the CHECK of a natural key with mutually_exclusive_columns, as PostgreSQL deparses it
+ * (pg_get_constraintdef), so add_unique_key, check_integrity, rename following and the update step compare text with
+ * text. At most one of the columns holds a value per row; all NULL is allowed (before the key starts).
+ */
+CREATE FUNCTION sql_saga.__internal_xor_check_definition(mutually_exclusive_columns name[])
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_xor_check_definition$
+    SELECT pg_catalog.format('CHECK ((num_nonnulls(%s) <= 1))',
+        (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(c), ', ' ORDER BY n)
+         FROM pg_catalog.unnest(mutually_exclusive_columns) WITH ORDINALITY AS u(c, n)));
+$__internal_xor_check_definition$;
+
+/*
  * The guards that bind a natural key to its entity, both ways.
  * (1) 1.14, hug mnntde: a value belongs to one entity. For each stable primary key column (the primary key's columns
  * without the range), EXCLUDE (natural key WITH =, that column WITH <>). Together they refuse a natural key value on
@@ -492,8 +508,23 @@ BEGIN
 
             alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
 
-            -- Clear XOR-specific metadata (no longer using partial constraints)
-            v_check_constraint := NULL;
+            -- 1.15 (hug bjd8v7): at most one mutually exclusive column holds a value per row; all NULL is allowed
+            -- (before the key starts). A constraint of that name with exactly this definition is adopted.
+            v_check_constraint := sql_saga.__internal_make_name(ARRAY[unique_key_name], 'xor_check');
+            pass := 0;
+            WHILE EXISTS (
+                SELECT FROM pg_catalog.pg_constraint AS c
+                WHERE c.conrelid = table_oid
+                  AND c.conname = v_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END
+                  AND pg_catalog.pg_get_constraintdef(c.oid) <> sql_saga.__internal_xor_check_definition(mutually_exclusive_columns))
+            LOOP
+                pass := pass + 1;
+            END LOOP;
+            v_check_constraint := v_check_constraint || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = v_check_constraint) THEN
+                alter_cmds := alter_cmds || pg_catalog.format('ADD CONSTRAINT %I %s', v_check_constraint,
+                    sql_saga.__internal_xor_check_definition(mutually_exclusive_columns));
+            END IF;
             exclude_constraint := NULL;
         END;
     END IF;

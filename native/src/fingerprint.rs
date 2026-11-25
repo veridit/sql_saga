@@ -48,7 +48,13 @@ pub fn schema_fingerprint(source_oid: u32, target_oid: u32) -> u64 {
               FROM sql_saga.era AS e \
               JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name \
               JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.table_schema \
-              WHERE c.oid = {tgt}::oid) \
+              WHERE c.oid = {tgt}::oid), \
+           (SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(uk.unique_key_name, uk.mutually_exclusive_columns) \
+                        ORDER BY uk.unique_key_name), '[]'::jsonb) \
+              FROM sql_saga.unique_keys AS uk \
+              JOIN pg_catalog.pg_class AS c ON c.relname = uk.table_name \
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = uk.table_schema \
+              WHERE c.oid = {tgt}::oid AND uk.mutually_exclusive_columns IS NOT NULL) \
          )::text",
         src = source_oid,
         tgt = target_oid,

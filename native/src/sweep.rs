@@ -174,6 +174,8 @@ fn correlate_entities(
         let mut discovered_identity = None;
         let mut canonical_nk = None;
         let mut early_feedback = None;
+        // A row giving more than one column of a mutually exclusive set names no entity (hug bjd8v7).
+        let xor_conflict = xor_conflict_message(sr, ctx);
         // A row names its entity by every key it carries: its identity, and each natural key on its non-NULL columns.
         // All keys that find a target entity must find the same one (hug mfky60): a natural key is bound to one primary
         // key, so a row whose keys disagree is contradictory and gets an ERROR, never a write to one of the entities.
@@ -214,7 +216,14 @@ fn correlate_entities(
             }
         }
 
-        if all_matched_entities.len() > 1 {
+        if let Some(message) = xor_conflict {
+            // As the PL/pgSQL planner: the row still finds its entity (for grouping), but its feedback is this ERROR.
+            if let Some(found) = first_discovered_identity {
+                is_new = false;
+                discovered_identity = Some(found);
+            }
+            early_feedback = Some(EarlyFeedback { action: PlanAction::Error, message: Some(message) });
+        } else if all_matched_entities.len() > 1 {
             // Ambiguous: source row matches multiple distinct target entities.
             // PL/pgSQL: target_entity_exists = true (discovered_stable_pk_payload IS NOT NULL),
             // so is_new_entity = false, and discovered_identity comes from first match.
@@ -312,6 +321,32 @@ fn correlate_entities(
     }
 
     matched
+}
+
+/// The ERROR message for a source row that gives more than one column of a mutually exclusive set of a natural key
+/// (hug bjd8v7), or None. Same text as the PL/pgSQL planner.
+fn xor_conflict_message(sr: &SourceRow, ctx: &PlannerContext) -> Option<String> {
+    for (name, cols) in &ctx.xor_sets {
+        let given: Vec<&str> = cols
+            .iter()
+            .filter(|c| {
+                [&sr.lookup_keys, &sr.identity_keys, &sr.data_payload, &sr.ephemeral_payload, &sr.stable_pk_payload]
+                    .iter()
+                    .find_map(|m| m.get(c.as_str()))
+                    .map_or(false, |v| !v.is_null())
+            })
+            .map(|c| c.as_str())
+            .collect();
+        if given.len() > 1 {
+            return Some(format!(
+                "Source row is inconsistent. Mutually exclusive columns {} of natural key {} {} have values.",
+                given.join(", "),
+                name,
+                if given.len() == 2 { "both" } else { "all" }
+            ));
+        }
+    }
+    None
 }
 
 /// Canonical NK resolution for new entities (matches PL/pgSQL CTE 9.2).

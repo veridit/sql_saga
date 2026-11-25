@@ -129,61 +129,59 @@ temporal: missing key refused after the renames: refused
 temporal parent: update referenced key refused after the renames: refused
 --- part 3: correctly paired foreign keys to the XOR key
 integrity: ok
---- part 3: the mispaired foreign keys (the 1.0/1.1 state) enforce the wrong pairing
-regular: intended key refused: refused
-temporal: intended key refused: refused
-regular: crossed key accepted and kept: ok
-temporal: crossed key accepted and kept: ok
---- part 3: check_integrity names the mispaired regular foreign key, the caveated repair and the orphan scan
+--- part 3: an XOR key row gives one of its exclusive columns, so a child row always has a NULL and the
+--- part 3: MATCH SIMPLE foreign keys never check it, mispaired or not (README)
+regular: intended key unchecked: accepted
+temporal: intended key unchecked: accepted
+regular: crossed key unchecked: accepted
+temporal: crossed key unchecked: accepted
+--- part 3: check_integrity names the mispaired regular foreign key from the catalog, with the caveated repair and the orphan scan
 reported exactly as expected
---- part 3: the orphan scan of the hint, run verbatim, lists the row the mispaired foreign key let in
-orphan: (9,40,30,10,20)
---- part 3: the repair, run verbatim while the orphan exists, is refused and leaves the mispaired foreign key as it was
-repair person_ref_fkey with the orphan present: refused
-person_ref_fkey objects unchanged (no unvalidated constraint left behind): true
-still reported exactly as expected
---- part 3: the repair, run verbatim once the orphan is resolved
+--- part 3: the orphan scan of the hint, run verbatim, lists nothing (every child row has a NULL)
+orphans: 0
+--- part 3: the repair, run verbatim
 repair person_ref_fkey: ok
 --- part 3: check_integrity then names the mispaired temporal foreign key
 reported exactly as expected
-repair person_tref_fkey with the orphan present: refused
-person_tref_fkey objects unchanged (no unvalidated constraint left behind): true
-still reported exactly as expected
 repair person_tref_fkey: ok
 integrity after both repairs: ok
---- part 3: the repaired foreign keys pair as intended
-regular: intended key accepted: accepted
-regular: crossed key refused: refused
+--- part 3: the repaired foreign keys pair as intended (in the catalog); references stay unchecked
 regular: reference to key row 1 inserted: ok
-temporal: intended key accepted: accepted
-temporal: crossed key refused: refused
 temporal: reference to key row 4 inserted: ok
-parent: delete key row referenced only by the regular child refused: refused
-parent: update key referenced only by the regular child refused: refused
-parent: delete key row referenced only by the temporal child refused: refused
-parent: update key referenced only by the temporal child refused: refused
-parent: delete unreferenced key row accepted: accepted
-parent: update unreferenced key accepted: accepted
+parent: delete key row referenced by the regular child unchecked: accepted
+parent: delete key row referenced by the temporal child unchecked: accepted
 integrity: ok
+--- part 3b: correctly paired
+integrity: ok
+intended key accepted: accepted
+crossed key refused: refused
+--- part 3b: the mispaired regular foreign key enforces the wrong pairing
+intended key refused: refused
+crossed key accepted and kept: ok
+--- part 3b: check_integrity names it; the orphan scan of its hint lists the row it let in
+message: sql_saga: integrity violation for foreign key plain_ref_fkey: pairs child column person_id with referenced column establishment_id, but unique key person_plain_key pairs it with referenced column person_id; repair with SELECT sql_saga.drop_foreign_key_by_name('fkp.plain_ref', 'plain_ref_fkey'); SELECT sql_saga.add_foreign_key('fkp.plain_ref', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], 'fkp.person_plain', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], foreign_key_name => 'plain_ref_fkey')
+hint: The repair pairs the child columns with the unique key columns by position; confirm that this is the intended pairing first. Inspect and resolve affected rows before re-adding. The foreign key may have accepted rows that reference a missing key, and add_foreign_key refuses while they exist; list them with SELECT fk.* FROM fkp.plain_ref AS fk WHERE fk.person_id IS NOT NULL AND fk.person_role_id IS NOT NULL AND fk.legal_unit_id IS NOT NULL AND fk.establishment_id IS NOT NULL AND NOT EXISTS (SELECT FROM fkp.person_plain AS uk WHERE uk.person_id = fk.person_id AND uk.person_role_id = fk.person_role_id AND uk.legal_unit_id = fk.legal_unit_id AND uk.establishment_id = fk.establishment_id)
+orphan: (9,40,30,10,20)
+--- part 3b: the repair, run verbatim while the orphan exists, is refused and leaves the foreign key as it was
+repair plain_ref_fkey with the orphan present: refused
+plain_ref_fkey objects unchanged: true
+--- part 3b: once the orphan is resolved the repair is applied and pairs as intended
+repair plain_ref_fkey: ok
+integrity after the repair: ok
+intended key accepted: accepted
+crossed key refused: refused
 --- part 4: correctly paired foreign keys with quoted names
 integrity: ok
---- part 4: the mispaired foreign keys with quoted names enforce the wrong pairing
-regular: intended key refused: refused
-temporal: intended key refused: refused
-regular: crossed key accepted and kept: ok
-temporal: crossed key accepted and kept: ok
+--- part 4: references to the XOR key always have a NULL, so they are never checked
+regular: intended key unchecked: accepted
+temporal: crossed key unchecked: accepted
 --- part 4: check_integrity reports the regular foreign key with correctly quoted repair and scan
 reported exactly as expected
-orphan: (9,2,1)
+orphans: 0
 repair fk "odd" 'r': ok
 --- part 4: then the temporal foreign key
 reported exactly as expected
 repair fk "odd" 't': ok
-integrity after both repairs: ok
-regular: intended key accepted: accepted
-regular: crossed key refused: refused
-temporal: intended key accepted: accepted
-temporal: crossed key refused: refused
 integrity at the end: ok
 --- part 5: plain key, healthy foreign keys
 integrity: ok
@@ -210,5 +208,5 @@ integrity after the repair: ok
 options kept: true
 repaired native foreign key: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5_other(z, a, b, PERIOD valid_range) MATCH FULL DEFERRABLE
 the other foreign key on the same columns is untouched: FOREIGN KEY (x, y, v, PERIOD valid_range) REFERENCES p5(z, a, b, PERIOD valid_range) DEFERRABLE
-intended key accepted: accepted
+intended key refused (no key row gives both a and b): refused
 crossed key refused: refused

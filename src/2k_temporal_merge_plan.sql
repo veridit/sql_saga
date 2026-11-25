@@ -107,6 +107,10 @@ DECLARE
     v_not_null_no_default_columns TEXT[];
     -- Optimization: mutually_exclusive_columns metadata for performance
     v_mutually_exclusive_cols name[];
+    -- 1.15 (hug bjd8v7): the target's natural keys with mutually exclusive columns, restricted to the columns the source
+    -- carries: [{"name": key, "cols": [...]}]. A source row giving more than one of a set gets an ERROR of its own.
+    v_xor_sets jsonb;
+    v_xor_conflict_expr text;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -161,6 +165,20 @@ BEGIN
       AND uk.era_name = temporal_merge_plan.era_name
       AND uk.mutually_exclusive_columns IS NOT NULL
     LIMIT 1;
+
+    SELECT COALESCE(jsonb_agg(jsonb_build_object('name', x.unique_key_name, 'cols', x.cols) ORDER BY x.unique_key_name), '[]'::jsonb)
+    INTO v_xor_sets
+    FROM (
+        SELECT uk.unique_key_name,
+               ARRAY(SELECT u.c FROM unnest(uk.mutually_exclusive_columns) WITH ORDINALITY AS u(c, n)
+                     WHERE EXISTS (SELECT FROM pg_attribute AS a WHERE a.attrelid = source_table AND a.attname = u.c
+                                   AND a.attnum > 0 AND NOT a.attisdropped)
+                     ORDER BY u.n) AS cols
+        FROM sql_saga.unique_keys AS uk
+        WHERE uk.table_schema = v_target_schema_name AND uk.table_name = v_target_table_name_only
+          AND uk.mutually_exclusive_columns IS NOT NULL
+    ) AS x
+    WHERE cardinality(x.cols) > 1;
 
     v_temporal_cols := ARRAY[v_range_col];
     IF v_valid_from_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_from_col; END IF;
@@ -364,6 +382,15 @@ BEGIN
             v_source_temporal_cols_expr := format('%s as valid_from, %s as valid_until', v_from_expr, v_until_expr);
         END IF;
 
+        -- 1.15 (hug bjd8v7): the message for a source row giving more than one column of a mutually exclusive set.
+        SELECT COALESCE('CASE ' || string_agg(format(
+                   $$WHEN num_nonnulls(%1$s) > 1 THEN 'Source row is inconsistent. Mutually exclusive columns ' || array_to_string(ARRAY[%2$s], ', ') || ' of natural key ' || %3$L || CASE WHEN num_nonnulls(%1$s) = 2 THEN ' both have values.' ELSE ' all have values.' END$$,
+                   (SELECT string_agg(format('source_table.%I', c), ', ' ORDER BY n) FROM jsonb_array_elements_text(k->'cols') WITH ORDINALITY AS u(c, n)),
+                   (SELECT string_agg(format('CASE WHEN source_table.%I IS NOT NULL THEN %L END', c, c), ', ' ORDER BY n) FROM jsonb_array_elements_text(k->'cols') WITH ORDINALITY AS u(c, n)),
+                   k->>'name'), ' ' ORDER BY o) || ' END', 'NULL::text')
+        INTO v_xor_conflict_expr
+        FROM jsonb_array_elements(v_xor_sets) WITH ORDINALITY AS x(k, o);
+
         -- Build consistency check.
         IF v_source_has_valid_until AND v_source_has_valid_to THEN
             v_consistency_check_expr := format($$((source_table.%1$I IS NULL OR source_table.%2$I IS NULL) OR (((source_table.%1$I + %3$s)::%4$s) IS NOT DISTINCT FROM source_table.%2$I))$$, v_valid_to_col, v_valid_until_col, v_interval, v_range_subtype);
@@ -402,7 +429,7 @@ BEGIN
     -- between sessions: a shared cache of executable SQL lets one role make another role run SQL
     -- of its choosing (cache poisoning).
     -- The cache key includes source_table OID for within-session uniqueness.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         target_table::oid,
         source_table::oid,
         identity_columns,
@@ -416,6 +443,7 @@ BEGIN
         delete_mode,
         COALESCE(lookup_keys, '[]'::jsonb),
         p_log_trace,
+        v_xor_sets,
         source_table::regclass::text -- Add source table name to key to differentiate plans for different temp tables.
     );
 
@@ -1865,7 +1893,8 @@ BEGIN
                         %8$s /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
                         %9$s /* v_lookup_cols_are_null_expr */ as lookup_columns_unavailable,
                         %10$s /* v_is_identifiable_expr */ as is_identifiable,
-                        %11$s /* v_consistency_check_expr */ as temporal_columns_are_consistent
+                        %11$s /* v_consistency_check_expr */ as temporal_columns_are_consistent,
+                        %14$s /* v_xor_conflict_expr */ as xor_conflict
                     FROM %12$s /* v_source_table_ident */ source_table
                 )
                 SELECT 
@@ -1887,7 +1916,8 @@ BEGIN
                 v_is_identifiable_expr,                              /* %10$s */
                 v_consistency_check_expr,                            /* %11$s */
                 v_source_table_ident,                                /* %12$s */
-                v_range_constructor                                  /* %13$I */
+                v_range_constructor,                                 /* %13$I */
+                v_xor_conflict_expr                                  /* %14$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
@@ -2064,7 +2094,7 @@ BEGIN
                     (p.stable_identity_columns_are_null AND p.discovered_stable_pk_payload IS NULL) as stable_identity_columns_are_null,
                     p.lookup_columns_unavailable, p.is_identifiable,
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
-                    p.temporal_columns_are_consistent,
+                    p.temporal_columns_are_consistent, p.xor_conflict,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
                     -- The identity the row names (its non-NULL columns) must be the entity's its natural key found (hug
                     -- mfky60); values compare as text, as the native planner does.
@@ -2134,7 +2164,7 @@ BEGIN
                             ELSE (
                                 SELECT s2_inner.nk_json
                                 FROM source_rows_with_nk_json s2_inner
-                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.xor_conflict IS NULL AND s2_inner.nk_json @> s1.nk_json
                                 ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
                                 LIMIT 1
                             )
@@ -2156,7 +2186,7 @@ BEGIN
                         SELECT s.source_row_id, s.grouping_key, s.stable_pk_payload, x.col, x.val
                         FROM source_rows_with_canonical_key AS s
                         CROSS JOIN LATERAL (VALUES %1$s) AS x(col, val)
-                        WHERE NOT s.is_ambiguous AND s.identity_conflict IS NULL AND (s.is_identifiable OR NOT s.is_new_entity)
+                        WHERE s.xor_conflict IS NULL AND NOT s.is_ambiguous AND s.identity_conflict IS NULL AND (s.is_identifiable OR NOT s.is_new_entity)
                           AND s.temporal_columns_are_consistent AND x.val IS NOT NULL
                     ),
                     held AS (
@@ -2200,6 +2230,8 @@ BEGIN
                 SELECT
                     s.*,
                     CASE
+                        WHEN s.xor_conflict IS NOT NULL
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', s.xor_conflict )
                         WHEN s.is_ambiguous
                         THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
                         WHEN s.identity_conflict IS NOT NULL

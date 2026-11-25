@@ -20,6 +20,9 @@ pub struct IntrospectionResult {
     /// Map of target column name → whether the column is NOT NULL (attnotnull).
     /// Used for partition-by-NULL optimization in parameterized target filters.
     pub target_col_notnull: std::collections::HashMap<String, bool>,
+    /// Natural keys with mutually exclusive columns (hug bjd8v7): (key name, its columns the source carries), in key
+    /// name order, only those with two or more such columns.
+    pub xor_sets: Vec<(String, Vec<String>)>,
 }
 
 /// Perform all introspection in a single SPI connection scope.
@@ -213,7 +216,34 @@ pub fn introspect_all(
             .into_iter()
             .collect();
 
+        // 7. Natural keys with mutually exclusive columns (hug bjd8v7), as the PL/pgSQL planner reads them.
+        let xor_query = format!(
+            "SELECT uk.unique_key_name::text, \
+                    ARRAY(SELECT u.c::text FROM unnest(uk.mutually_exclusive_columns) WITH ORDINALITY AS u(c, n) \
+                          WHERE EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = {src}::oid \
+                                        AND a.attname = u.c AND a.attnum > 0 AND NOT a.attisdropped) \
+                          ORDER BY u.n) \
+             FROM sql_saga.unique_keys AS uk \
+             JOIN pg_catalog.pg_class AS c ON c.relname = uk.table_name \
+             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = uk.table_schema \
+             WHERE c.oid = {tgt}::oid AND uk.mutually_exclusive_columns IS NOT NULL \
+             ORDER BY uk.unique_key_name",
+            src = source_oid,
+            tgt = target_oid
+        );
+        let mut xor_sets = Vec::new();
+        for row in client.select(&xor_query, None, &[]).map_err(|e| format!("SPI error: {e}"))? {
+            let name: Option<String> = row.get::<String>(1).map_err(|e| format!("{e}"))?;
+            let cols: Vec<String> = row.get::<Vec<String>>(2).map_err(|e| format!("{e}"))?.unwrap_or_default();
+            if let Some(name) = name {
+                if cols.len() > 1 {
+                    xor_sets.push((name, cols));
+                }
+            }
+        }
+
         Ok(IntrospectionResult {
+            xor_sets,
             era,
             pk_cols,
             target_ident,
@@ -241,6 +271,7 @@ pub fn build_planner_context(
     row_id_column: String,
     log_trace: bool,
     exclude_if_null_columns: std::collections::HashSet<String>,
+    xor_sets: Vec<(String, Vec<String>)>,
 ) -> PlannerContext {
     // Exclude all temporal columns from data payload: range, valid_from, valid_until, valid_to.
     // valid_to is computed from valid_until after coalescing (in classify_operations).
@@ -300,6 +331,7 @@ pub fn build_planner_context(
         identity_columns,
         all_lookup_cols,
         lookup_key_sets,
+        xor_sets,
         original_entity_key_cols: entity_key_cols,
         original_entity_segment_key_cols: segment_key_cols,
         temporal_cols,

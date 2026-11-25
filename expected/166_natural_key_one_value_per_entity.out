@@ -286,8 +286,10 @@ ROLLBACK
 ==== An XOR natural key (lu or es): both planners give the same writes and feedback
 \echo '-- id 1 lu 10, id 2 es 10, id 3 lu 20 from 2025. Rows: by lu, by es, by lu over time before lu 20 starts, a new'
 -- id 1 lu 10, id 2 es 10, id 3 lu 20 from 2025. Rows: by lu, by es, by lu over time before lu 20 starts, a new
-\echo '-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone.'
--- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone.
+\echo '-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone, and rows giving'
+-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone, and rows giving
+\echo '-- both lu and es (hug bjd8v7): each gets its own ERROR, the rest of the batch is applied, the table keeps its CHECK.'
+-- both lu and es (hug bjd8v7): each gets its own ERROR, the rest of the batch is applied, the table keeps its CHECK.
 CREATE TABLE xk (id int NOT NULL DEFAULT 100, lu int, es int, v text, valid_range daterange NOT NULL, CHECK (num_nonnulls(lu, es) <= 1));
 CREATE TABLE
 SELECT sql_saga.add_era('xk', 'valid_range') AS ignored \gset
@@ -297,8 +299,10 @@ CREATE TABLE xk_src (row_id int, id int, lu int, es int, v text, valid_range dat
 CREATE TABLE
 INSERT INTO xk_src VALUES (1, NULL, 10, NULL, 'lu10', '[2022-01-01,2023-01-01)'), (2, NULL, NULL, 10, 'es10', '[2022-01-01,2023-01-01)'),
     (3, NULL, 20, NULL, 'lu20', '[2021-01-01,2026-01-01)'), (4, NULL, NULL, 30, 'new', '[2022-01-01,2023-01-01)'),
-    (5, 1, NULL, 10, 'conflict', '[2024-01-01,2025-01-01)'), (6, 2, NULL, NULL, 'byid', '[2026-01-01,2027-01-01)');
-INSERT 0 6
+    (5, 1, NULL, 10, 'conflict', '[2024-01-01,2025-01-01)'), (6, 2, NULL, NULL, 'byid', '[2026-01-01,2027-01-01)'),
+    (7, NULL, 10, 10, 'both', '[2022-01-01,2023-01-01)'), (8, NULL, 40, 40, 'both new', '[2022-01-01,2023-01-01)'),
+    (9, 3, 20, 50, 'both by id', '[2026-01-01,2027-01-01)');
+INSERT 0 9
 CREATE TABLE xk_out (planner text, feedback jsonb, result jsonb);
 CREATE TABLE
 DO $xk$
@@ -329,15 +333,18 @@ DO
 -- The native planner:
 SELECT (f->>'row')::int AS row_id, f->>'status' AS status, f->'keys' AS target_entity_keys, f->>'error' AS error
 FROM xk_out AS o, jsonb_array_elements(o.feedback) AS f WHERE o.planner = 'native' ORDER BY 1;
- row_id | status  |         target_entity_keys          |                                             error                                             
---------+---------+-------------------------------------+-----------------------------------------------------------------------------------------------
+ row_id | status  |         target_entity_keys          |                                                     error                                                     
+--------+---------+-------------------------------------+---------------------------------------------------------------------------------------------------------------
       1 | APPLIED | [{"es": null, "id": 1, "lu": 10}]   | 
       2 | APPLIED | [{"es": 10, "id": 2, "lu": null}]   | 
       3 | APPLIED | [{"es": null, "id": 3, "lu": 20}]   | 
       4 | APPLIED | [{"es": 30, "id": 100, "lu": null}] | 
       5 | ERROR   | [{"es": 10, "id": 1, "lu": null}]   | Source row is ambiguous. It matches multiple distinct target entities: [{"id": 1}, {"id": 2}]
       6 | APPLIED | [{"es": 10, "id": 2, "lu": null}]   | 
-(6 rows)
+      7 | ERROR   | [{"es": 10, "id": null, "lu": 10}]  | Source row is inconsistent. Mutually exclusive columns lu, es of natural key xk_lu_es_valid both have values.
+      8 | ERROR   | [{"es": 40, "id": null, "lu": 40}]  | Source row is inconsistent. Mutually exclusive columns lu, es of natural key xk_lu_es_valid both have values.
+      9 | ERROR   | [{"es": 50, "id": 3, "lu": 20}]     | Source row is inconsistent. Mutually exclusive columns lu, es of natural key xk_lu_es_valid both have values.
+(9 rows)
 
 SELECT x.id, x.lu, x.es, x.v, x.valid_range
 FROM xk_out AS o, jsonb_populate_recordset(NULL::xk, o.result) AS x WHERE o.planner = 'native' ORDER BY x.id, x.valid_range;

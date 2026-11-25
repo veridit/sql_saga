@@ -15,6 +15,74 @@ COMMENT ON TYPE sql_saga.temporal_merge_delete_mode IS
 - DELETE_MISSING_ENTITIES: Any entity in the target that is not present in the source is completely deleted.
 - DELETE_MISSING_TIMELINE_AND_ENTITIES: A combination of both timeline and entity deletion.';
 
+/* 1.15: the CHECK of a natural key with mutually exclusive columns is recorded in check_constraint (hug bjd8v7). */
+-- handles: COMMENT ON COLUMN sql_saga.unique_keys.check_constraint
+COMMENT ON COLUMN sql_saga.unique_keys.check_constraint IS 'For natural keys with mutually_exclusive_columns, the name of the CHECK (num_nonnulls(<columns>) <= 1) constraint: at most one of those columns holds a value per row (all NULL is allowed, before the key starts). NULL for other keys.';
+-- handles: COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns
+COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns IS 'For natural keys, the subset of columns that are mutually exclusive: at most one holds a value per row (enforced by check_constraint); uniqueness uses NULLS NOT DISTINCT.';
+
+/*
+ * 1.15: a natural key with mutually exclusive columns allows at most one of them per row (hug bjd8v7). Since 1.0 the
+ * CHECK that said so was not built. Every such key gets the CHECK a fresh 1.15 add_unique_key builds, recorded in
+ * check_constraint; one of that name and definition is adopted. A row giving two of the columns refuses the update,
+ * shown by PostgreSQL's DETAIL with the repair; no row changes.
+ */
+DO $add_xor_checks$
+DECLARE
+    k record;
+    def text;
+    cname name;
+    pass integer;
+    conflict text;
+    n integer := 0;
+BEGIN
+    FOR k IN
+        SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.mutually_exclusive_columns,
+               pg_catalog.format('%I.%I', uk.table_schema, uk.table_name)::pg_catalog.regclass AS table_oid
+        FROM sql_saga.unique_keys AS uk
+        WHERE uk.mutually_exclusive_columns IS NOT NULL
+        ORDER BY uk.table_schema, uk.table_name, uk.unique_key_name
+    LOOP
+        def := sql_saga.__internal_xor_check_definition(k.mutually_exclusive_columns);
+        cname := sql_saga.__internal_make_name(ARRAY[k.unique_key_name], 'xor_check');
+        pass := 0;
+        WHILE EXISTS (
+            SELECT FROM pg_catalog.pg_constraint AS c
+            WHERE c.conrelid = k.table_oid AND c.conname = cname || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END
+              AND pg_catalog.pg_get_constraintdef(c.oid) <> def)
+        LOOP
+            pass := pass + 1;
+        END LOOP;
+        cname := cname || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE (c.conrelid, c.conname) = (k.table_oid, cname)) THEN
+            BEGIN
+                EXECUTE pg_catalog.format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s', k.table_schema, k.table_name, cname, def);
+            EXCEPTION WHEN check_violation THEN
+                -- ALTER TABLE ADD CONSTRAINT names no row; DETAIL lists the first five, as the preflight does.
+                EXECUTE pg_catalog.format(
+                    'SELECT pg_catalog.string_agg(r, '', '') FROM (SELECT pg_catalog.format(''(%%s)'', concat_ws('', '', %1$s)) AS r FROM %2$I.%3$I WHERE num_nonnulls(%1$s) > 1 ORDER BY 1 LIMIT 5) AS x',
+                    (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(c), ', ') FROM pg_catalog.unnest(k.mutually_exclusive_columns) AS c),
+                    k.table_schema, k.table_name)
+                INTO conflict;
+                conflict := pg_catalog.format('Rows giving (%s): %s.', pg_catalog.array_to_string(k.mutually_exclusive_columns, ', '), conflict);
+                RAISE EXCEPTION 'sql_saga: natural key % on table %.% has rows giving more than one of its mutually exclusive columns %',
+                    pg_catalog.quote_ident(k.unique_key_name), pg_catalog.quote_ident(k.table_schema), pg_catalog.quote_ident(k.table_name),
+                    pg_catalog.array_to_string(k.mutually_exclusive_columns, ', ')
+                    USING ERRCODE = 'check_violation', DETAIL = conflict,
+                          HINT = pg_catalog.format('sql_saga 1.15 enforces at most one of them per row. Find the rows with SELECT * FROM %I.%I WHERE num_nonnulls(%s) > 1; correct them so that each gives at most one, then retry.',
+                              k.table_schema, k.table_name,
+                              (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(c), ', ') FROM pg_catalog.unnest(k.mutually_exclusive_columns) AS c));
+            END;
+            n := n + 1;
+        END IF;
+        UPDATE sql_saga.unique_keys AS uk SET check_constraint = cname WHERE uk.unique_key_name = k.unique_key_name;
+    END LOOP;
+    IF n > 0 THEN
+        RAISE NOTICE 'sql_saga: Added the mutually exclusive column CHECK to % natural keys', n;
+    END IF;
+END;
+$add_xor_checks$;
+
 /*
  * 1.15: a natural key holds one value per entity (hug 40nwvn). Every natural key on a table with a primary key gets the
  * guards a fresh 1.15 add_unique_key builds: the 1.14 guard (a value belongs to one entity) and, for each natural key

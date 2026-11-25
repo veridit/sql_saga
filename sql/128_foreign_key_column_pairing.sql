@@ -476,9 +476,9 @@ SELECT sql_saga.add_unique_key(table_oid => 'fkp.person_for_unit'::regclass, key
 -- 1 = (10, 20, 30, 40) for the regular child, 4 = (12, 22, 32, 42) for the temporal child, 3 = (11, 21, 31, 41)
 -- unreferenced. No row (40, 30, 10, 20): a child row with those values is a reference to row 1 read through the
 -- sorted list, and an orphan otherwise.
-INSERT INTO fkp.person_for_unit VALUES (1, 10, 20, 30, 40, '[2020-01-01,infinity)'),
-                                       (3, 11, 21, 31, 41, '[2020-01-01,infinity)'),
-                                       (4, 12, 22, 32, 42, '[2020-01-01,infinity)');
+INSERT INTO fkp.person_for_unit VALUES (1, 10, 20, 30, NULL, '[2020-01-01,infinity)'),
+                                       (3, 11, 21, 31, NULL, '[2020-01-01,infinity)'),
+                                       (4, 12, 22, 32, NULL, '[2020-01-01,infinity)');
 CREATE TABLE fkp.person_ref (id int PRIMARY KEY, person_id int, person_role_id int, legal_unit_id int, establishment_id int);
 CREATE TABLE fkp.person_tref (id int, person_id int, person_role_id int, legal_unit_id int, establishment_id int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('fkp.person_tref', 'valid_range', 'valid');
@@ -496,12 +496,12 @@ BEGIN;
 SELECT fkp.mispair('person_for_unit_natural_key_valid', ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id'],
                    'person_ref_fkey', 'person_tref_fkey');
 \o
-\echo '--- part 3: the mispaired foreign keys (the 1.0/1.1 state) enforce the wrong pairing'
-SELECT 'regular: intended key refused: ' || fkp.probe($$INSERT INTO fkp.person_ref VALUES (1, 10, 20, 30, 40)$$);
-SELECT 'temporal: intended key refused: ' || fkp.probe($$INSERT INTO fkp.person_tref VALUES (1, 10, 20, 30, 40, '[2021-01-01,2022-01-01)')$$);
--- (40, 30, 10, 20) exists only if read through the sorted list, as key row 1. Kept: data the damage let in.
-SELECT 'regular: crossed key accepted and kept: ' || fkp.run($$INSERT INTO fkp.person_ref VALUES (9, 40, 30, 10, 20)$$);
-SELECT 'temporal: crossed key accepted and kept: ' || fkp.run($$INSERT INTO fkp.person_tref VALUES (9, 40, 30, 10, 20, '[2021-01-01,2022-01-01)')$$);
+\echo '--- part 3: an XOR key row gives one of its exclusive columns, so a child row always has a NULL and the'
+\echo '--- part 3: MATCH SIMPLE foreign keys never check it, mispaired or not (README)'
+SELECT 'regular: intended key unchecked: ' || fkp.probe($$INSERT INTO fkp.person_ref VALUES (1, 10, 20, 30, NULL)$$);
+SELECT 'temporal: intended key unchecked: ' || fkp.probe($$INSERT INTO fkp.person_tref VALUES (1, 10, 20, 30, NULL, '[2021-01-01,2022-01-01)')$$);
+SELECT 'regular: crossed key unchecked: ' || fkp.probe($$INSERT INTO fkp.person_ref VALUES (9, 40, 30, 10, NULL)$$);
+SELECT 'temporal: crossed key unchecked: ' || fkp.probe($$INSERT INTO fkp.person_tref VALUES (9, 40, 30, 10, NULL, '[2021-01-01,2022-01-01)')$$);
 
 \o /dev/null
 \set ref_repair 'SELECT sql_saga.drop_foreign_key_by_name(''fkp.person_ref'', ''person_ref_fkey''); SELECT sql_saga.add_foreign_key(''fkp.person_ref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_for_unit'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], foreign_key_name => ''person_ref_fkey'')'
@@ -519,55 +519,78 @@ INSERT INTO fkp.expected_report VALUES
  :'tref_repair', NULL);
 \o
 
-\echo '--- part 3: check_integrity names the mispaired regular foreign key, the caveated repair and the orphan scan'
+\echo '--- part 3: check_integrity names the mispaired regular foreign key from the catalog, with the caveated repair and the orphan scan'
 SELECT CASE WHEN fkp.integrity() = report THEN 'reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
 FROM fkp.expected_report WHERE fk = 'person_ref_fkey';
-\echo '--- part 3: the orphan scan of the hint, run verbatim, lists the row the mispaired foreign key let in'
+\echo '--- part 3: the orphan scan of the hint, run verbatim, lists nothing (every child row has a NULL)'
 \o /dev/null
 SELECT format('CREATE TEMP VIEW ref_scan AS %s', scan) FROM fkp.expected_report WHERE fk = 'person_ref_fkey' \gexec
 \o
-SELECT 'orphan: ' || s::text FROM pg_temp.ref_scan AS s;
-\echo '--- part 3: the repair, run verbatim while the orphan exists, is refused and leaves the mispaired foreign key as it was'
-\o /dev/null
-CREATE TEMP TABLE objects_before AS SELECT fkp.fk_objects('person_ref_fkey') AS ref, fkp.fk_objects('person_tref_fkey') AS tref;
-\o
-SELECT 'repair person_ref_fkey with the orphan present: ' || fkp.run_or_refuse(repair) FROM fkp.expected_report WHERE fk = 'person_ref_fkey';
-SELECT 'person_ref_fkey objects unchanged (no unvalidated constraint left behind): ' || (fkp.fk_objects('person_ref_fkey') = ref) FROM pg_temp.objects_before;
-SELECT CASE WHEN fkp.integrity() = report THEN 'still reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
-FROM fkp.expected_report WHERE fk = 'person_ref_fkey';
-\o /dev/null
-DELETE FROM fkp.person_ref AS r USING pg_temp.ref_scan AS s WHERE r.id = s.id;
-\o
-\echo '--- part 3: the repair, run verbatim once the orphan is resolved'
+SELECT 'orphans: ' || count(*) FROM pg_temp.ref_scan AS s;
+\echo '--- part 3: the repair, run verbatim'
 SELECT 'repair person_ref_fkey: ' || fkp.run(repair) FROM fkp.expected_report WHERE fk = 'person_ref_fkey';
-
 \echo '--- part 3: check_integrity then names the mispaired temporal foreign key'
 SELECT CASE WHEN fkp.integrity() = report THEN 'reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
 FROM fkp.expected_report WHERE fk = 'person_tref_fkey';
-SELECT 'repair person_tref_fkey with the orphan present: ' || fkp.run_or_refuse(repair) FROM fkp.expected_report WHERE fk = 'person_tref_fkey';
-SELECT 'person_tref_fkey objects unchanged (no unvalidated constraint left behind): ' || (fkp.fk_objects('person_tref_fkey') = tref) FROM pg_temp.objects_before;
-SELECT CASE WHEN fkp.integrity() = report THEN 'still reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
-FROM fkp.expected_report WHERE fk = 'person_tref_fkey';
-\o /dev/null
-DELETE FROM fkp.person_tref WHERE id = 9;
-\o
 SELECT 'repair person_tref_fkey: ' || fkp.run(repair) FROM fkp.expected_report WHERE fk = 'person_tref_fkey';
 SELECT 'integrity after both repairs: ' || fkp.integrity();
-
-\echo '--- part 3: the repaired foreign keys pair as intended'
-SELECT 'regular: intended key accepted: ' || fkp.probe($$INSERT INTO fkp.person_ref VALUES (1, 10, 20, 30, 40)$$);
-SELECT 'regular: crossed key refused: ' || fkp.probe($$INSERT INTO fkp.person_ref VALUES (1, 40, 30, 10, 20)$$);
-SELECT 'regular: reference to key row 1 inserted: ' || fkp.run($$INSERT INTO fkp.person_ref VALUES (1, 10, 20, 30, 40)$$);
-SELECT 'temporal: intended key accepted: ' || fkp.probe($$INSERT INTO fkp.person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)')$$);
-SELECT 'temporal: crossed key refused: ' || fkp.probe($$INSERT INTO fkp.person_tref VALUES (1, 40, 30, 10, 20, '[2021-01-01,2022-01-01)')$$);
-SELECT 'temporal: reference to key row 4 inserted: ' || fkp.run($$INSERT INTO fkp.person_tref VALUES (1, 12, 22, 32, 42, '[2021-01-01,2022-01-01)')$$);
-SELECT 'parent: delete key row referenced only by the regular child refused: ' || fkp.probe($$DELETE FROM fkp.person_for_unit WHERE id = 1$$);
-SELECT 'parent: update key referenced only by the regular child refused: ' || fkp.probe($$UPDATE fkp.person_for_unit SET person_role_id = 29 WHERE id = 1$$);
-SELECT 'parent: delete key row referenced only by the temporal child refused: ' || fkp.probe($$DELETE FROM fkp.person_for_unit WHERE id = 4$$);
-SELECT 'parent: update key referenced only by the temporal child refused: ' || fkp.probe($$UPDATE fkp.person_for_unit SET person_role_id = 29 WHERE id = 4$$);
-SELECT 'parent: delete unreferenced key row accepted: ' || fkp.probe($$DELETE FROM fkp.person_for_unit WHERE id = 3$$);
-SELECT 'parent: update unreferenced key accepted: ' || fkp.probe($$UPDATE fkp.person_for_unit SET person_role_id = 29 WHERE id = 3$$);
+\echo '--- part 3: the repaired foreign keys pair as intended (in the catalog); references stay unchecked'
+SELECT 'regular: reference to key row 1 inserted: ' || fkp.run($$INSERT INTO fkp.person_ref VALUES (1, 10, 20, 30, NULL)$$);
+SELECT 'temporal: reference to key row 4 inserted: ' || fkp.run($$INSERT INTO fkp.person_tref VALUES (1, 12, 22, 32, NULL, '[2021-01-01,2022-01-01)')$$);
+SELECT 'parent: delete key row referenced by the regular child unchecked: ' || fkp.probe($$DELETE FROM fkp.person_for_unit WHERE id = 1$$);
+SELECT 'parent: delete key row referenced by the temporal child unchecked: ' || fkp.probe($$DELETE FROM fkp.person_for_unit WHERE id = 4$$);
 SELECT 'integrity: ' || fkp.integrity();
+ROLLBACK;
+
+/* ---------------------------------------------------------------------------------------------------------
+ * Part 3b: the same columns as a plain natural key (no mutually exclusive columns), where every child row is
+ * checked: a regular foreign key mispaired as 1.0/1.1 built it (helper and referenced-side trigger from the sorted
+ * list) enforces the wrong pairing and lets in an orphan; check_integrity names it with the orphan scan (from the
+ * referenced-side trigger arguments, as part 5b); the repair is refused while the orphan exists, and applied once
+ * it is resolved. The temporal side of this (a native foreign key validating its replacement) is PostgreSQL's.
+ * --------------------------------------------------------------------------------------------------------- */
+\o /dev/null
+CREATE TABLE fkp.person_plain (id int NOT NULL, person_id int NOT NULL, person_role_id int NOT NULL,
+                               legal_unit_id int NOT NULL, establishment_id int NOT NULL, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('fkp.person_plain', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'fkp.person_plain'::regclass, key_type => 'natural',
+    column_names => ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], unique_key_name => 'person_plain_key');
+INSERT INTO fkp.person_plain VALUES (1, 10, 20, 30, 40, '[2020-01-01,infinity)');
+CREATE TABLE fkp.plain_ref (id int PRIMARY KEY, person_id int, person_role_id int, legal_unit_id int, establishment_id int);
+SELECT sql_saga.add_foreign_key('fkp.plain_ref', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'],
+    'fkp.person_plain', ARRAY['person_id', 'person_role_id', 'legal_unit_id', 'establishment_id'], foreign_key_name => 'plain_ref_fkey');
+\o
+\echo '--- part 3b: correctly paired'
+SELECT 'integrity: ' || fkp.integrity();
+SELECT 'intended key accepted: ' || fkp.probe($$INSERT INTO fkp.plain_ref VALUES (1, 10, 20, 30, 40)$$);
+SELECT 'crossed key refused: ' || fkp.probe($$INSERT INTO fkp.plain_ref VALUES (9, 40, 30, 10, 20)$$);
+BEGIN;
+\o /dev/null
+SELECT fkp.mispair('person_plain_key', ARRAY['establishment_id', 'legal_unit_id', 'person_id', 'person_role_id'], 'plain_ref_fkey', NULL);
+\o
+\echo '--- part 3b: the mispaired regular foreign key enforces the wrong pairing'
+SELECT 'intended key refused: ' || fkp.probe($$INSERT INTO fkp.plain_ref VALUES (1, 10, 20, 30, 40)$$);
+-- (40, 30, 10, 20) exists only if read through the sorted list, as key row 1. Kept: data the damage let in.
+SELECT 'crossed key accepted and kept: ' || fkp.run($$INSERT INTO fkp.plain_ref VALUES (9, 40, 30, 10, 20)$$);
+\echo '--- part 3b: check_integrity names it; the orphan scan of its hint lists the row it let in'
+SELECT fkp.integrity();
+\o /dev/null
+\set plain_repair 'SELECT sql_saga.drop_foreign_key_by_name(''fkp.plain_ref'', ''plain_ref_fkey''); SELECT sql_saga.add_foreign_key(''fkp.plain_ref'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], ''fkp.person_plain'', ARRAY[''person_id'', ''person_role_id'', ''legal_unit_id'', ''establishment_id''], foreign_key_name => ''plain_ref_fkey'')'
+CREATE TEMP VIEW plain_scan AS SELECT fk.* FROM fkp.plain_ref AS fk WHERE fk.person_id IS NOT NULL AND fk.person_role_id IS NOT NULL AND fk.legal_unit_id IS NOT NULL AND fk.establishment_id IS NOT NULL AND NOT EXISTS (SELECT FROM fkp.person_plain AS uk WHERE uk.person_id = fk.person_id AND uk.person_role_id = fk.person_role_id AND uk.legal_unit_id = fk.legal_unit_id AND uk.establishment_id = fk.establishment_id);
+CREATE TEMP TABLE plain_before AS SELECT fkp.fk_objects('plain_ref_fkey') AS ref;
+\o
+SELECT 'orphan: ' || s::text FROM pg_temp.plain_scan AS s;
+\echo '--- part 3b: the repair, run verbatim while the orphan exists, is refused and leaves the foreign key as it was'
+SELECT 'repair plain_ref_fkey with the orphan present: ' || fkp.run_or_refuse(:'plain_repair');
+SELECT 'plain_ref_fkey objects unchanged: ' || (fkp.fk_objects('plain_ref_fkey') = ref) FROM pg_temp.plain_before;
+\o /dev/null
+DELETE FROM fkp.plain_ref AS r USING pg_temp.plain_scan AS s WHERE r.id = s.id;
+\o
+\echo '--- part 3b: once the orphan is resolved the repair is applied and pairs as intended'
+SELECT 'repair plain_ref_fkey: ' || fkp.run(:'plain_repair');
+SELECT 'integrity after the repair: ' || fkp.integrity();
+SELECT 'intended key accepted: ' || fkp.probe($$INSERT INTO fkp.plain_ref VALUES (1, 10, 20, 30, 40)$$);
+SELECT 'crossed key refused: ' || fkp.probe($$INSERT INTO fkp.plain_ref VALUES (9, 40, 30, 10, 20)$$);
 ROLLBACK;
 
 /* ---------------------------------------------------------------------------------------------------------
@@ -582,7 +605,7 @@ CREATE TABLE "odd ""s'ch"."Par'ent ""T""" (id int NOT NULL, "ro'le" int, "Pers""
 SELECT sql_saga.add_era('"odd ""s''ch"."Par''ent ""T"""', 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => '"odd ""s''ch"."Par''ent ""T"""', key_type => 'natural', column_names => ARRAY['ro''le', 'Pers"on'],
     mutually_exclusive_columns => ARRAY['ro''le', 'Pers"on'], unique_key_name => 'uk "odd" ''k''');
-INSERT INTO "odd ""s'ch"."Par'ent ""T""" VALUES (1, 1, 2, '[2020-01-01,infinity)');
+INSERT INTO "odd ""s'ch"."Par'ent ""T""" VALUES (1, 1, NULL, '[2020-01-01,infinity)');
 CREATE TABLE "odd ""s'ch"."Chi'ld ""R""" (id int PRIMARY KEY, "my ""role""" int, "my 'person'" int);
 CREATE TABLE "odd ""s'ch"."Chi'ld ""T""" (id int, "my ""role""" int, "my 'person'" int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('"odd ""s''ch"."Chi''ld ""T"""', 'valid_range', 'valid');
@@ -606,34 +629,21 @@ hint: The repair pairs the child columns with the unique key columns by position
  $repair$SELECT sql_saga.drop_foreign_key_by_name('"odd ""s''ch"."Chi''ld ""T"""', 'fk "odd" ''t'''); SELECT sql_saga.add_foreign_key('"odd ""s''ch"."Chi''ld ""T"""', ARRAY['my "role"', 'my ''person'''], '"odd ""s''ch"."Par''ent ""T"""', ARRAY['ro''le', 'Pers"on'], fk_era_name => 'valid', foreign_key_name => 'fk "odd" ''t''')$repair$,
  NULL);
 \o
-\echo '--- part 4: the mispaired foreign keys with quoted names enforce the wrong pairing'
-SELECT 'regular: intended key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (1, 1, 2)$$);
-SELECT 'temporal: intended key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, 1, 2, '[2021-01-01,2022-01-01)')$$);
-SELECT 'regular: crossed key accepted and kept: ' || fkp.run($$INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (9, 2, 1)$$);
-SELECT 'temporal: crossed key accepted and kept: ' || fkp.run($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (9, 2, 1, '[2021-01-01,2022-01-01)')$$);
+\echo '--- part 4: references to the XOR key always have a NULL, so they are never checked'
+SELECT 'regular: intended key unchecked: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (1, 1, NULL)$$);
+SELECT 'temporal: crossed key unchecked: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, NULL, 1, '[2021-01-01,2022-01-01)')$$);
 \echo '--- part 4: check_integrity reports the regular foreign key with correctly quoted repair and scan'
 SELECT CASE WHEN fkp.integrity() = report THEN 'reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
 FROM fkp.expected_report WHERE fk = 'fk "odd" ''r''';
 \o /dev/null
 SELECT format('CREATE TEMP VIEW odd_scan AS %s', scan) FROM fkp.expected_report WHERE fk = 'fk "odd" ''r''' \gexec
 \o
-SELECT 'orphan: ' || s::text FROM pg_temp.odd_scan AS s;
-\o /dev/null
-DELETE FROM "odd ""s'ch"."Chi'ld ""R""" AS r USING pg_temp.odd_scan AS s WHERE r.id = s.id;
-\o
+SELECT 'orphans: ' || count(*) FROM pg_temp.odd_scan AS s;
 SELECT 'repair fk "odd" ''r'': ' || fkp.run(repair) FROM fkp.expected_report WHERE fk = 'fk "odd" ''r''';
 \echo '--- part 4: then the temporal foreign key'
 SELECT CASE WHEN fkp.integrity() = report THEN 'reported exactly as expected' ELSE E'unexpected report:\n' || fkp.integrity() END
 FROM fkp.expected_report WHERE fk = 'fk "odd" ''t''';
-\o /dev/null
-DELETE FROM "odd ""s'ch"."Chi'ld ""T""" WHERE id = 9;
-\o
 SELECT 'repair fk "odd" ''t'': ' || fkp.run(repair) FROM fkp.expected_report WHERE fk = 'fk "odd" ''t''';
-SELECT 'integrity after both repairs: ' || fkp.integrity();
-SELECT 'regular: intended key accepted: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (1, 1, 2)$$);
-SELECT 'regular: crossed key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""R""" VALUES (1, 2, 1)$$);
-SELECT 'temporal: intended key accepted: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, 1, 2, '[2021-01-01,2022-01-01)')$$);
-SELECT 'temporal: crossed key refused: ' || fkp.probe($$INSERT INTO "odd ""s'ch"."Chi'ld ""T""" VALUES (1, 2, 1, '[2021-01-01,2022-01-01)')$$);
 SELECT 'integrity at the end: ' || fkp.integrity();
 ROLLBACK;
 
@@ -660,7 +670,7 @@ SELECT sql_saga.add_unique_key(table_oid => 'fkp.p5_other'::regclass, key_type =
     mutually_exclusive_columns => ARRAY['a', 'b'], unique_key_name => 'p5_other_key');
 -- Key row 1 = (z 1, a 2, b 3), in both parents.
 INSERT INTO fkp.p5 VALUES (1, 1, 2, 3, '[2020-01-01,infinity)');
-INSERT INTO fkp.p5_other VALUES (1, 1, 2, 3, '[2020-01-01,infinity)');
+INSERT INTO fkp.p5_other VALUES (1, 1, 2, NULL, '[2020-01-01,infinity)');
 CREATE TABLE fkp.t5 (id int, x int, y int, v int, valid_range daterange NOT NULL);
 SELECT sql_saga.add_era('fkp.t5', 'valid_range', 'valid');
 CREATE TABLE fkp.r5 (id int PRIMARY KEY, x int, y int, v int);
@@ -773,7 +783,9 @@ SELECT 'repaired native foreign key: ' || pg_catalog.pg_get_constraintdef(c.oid)
 FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = 'fkp.t5'::regclass AND c.conname = 't5_other_fkey';
 SELECT 'the other foreign key on the same columns is untouched: ' || pg_catalog.pg_get_constraintdef(c.oid)
 FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = 'fkp.t5'::regclass AND c.conname = 't5_fkey';
-SELECT 'intended key accepted: ' || fkp.probe($$INSERT INTO fkp.t5 VALUES (1, 1, 2, 3, '[2021-01-01,2022-01-01)')$$);
+-- p5_other_key is an XOR key: no key row gives both a and b, and MATCH FULL refuses a row with a NULL, so every
+-- child row is refused. The pairing is shown by pg_get_constraintdef above; enforcement of a checked key by parts 1, 2, 3b.
+SELECT 'intended key refused (no key row gives both a and b): ' || fkp.probe($$INSERT INTO fkp.t5 VALUES (1, 1, 2, 3, '[2021-01-01,2022-01-01)')$$);
 SELECT 'crossed key refused: ' || fkp.probe($$INSERT INTO fkp.t5 VALUES (1, 2, 3, 1, '[2021-01-01,2022-01-01)')$$);
 ROLLBACK;
 

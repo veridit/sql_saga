@@ -164,7 +164,8 @@ ROLLBACK;
 
 \echo '==== An XOR natural key (lu or es): both planners give the same writes and feedback'
 \echo '-- id 1 lu 10, id 2 es 10, id 3 lu 20 from 2025. Rows: by lu, by es, by lu over time before lu 20 starts, a new'
-\echo '-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone.'
+\echo '-- entity by es, an identity whose es belongs to another entity (ambiguous), the identity alone, and rows giving'
+\echo '-- both lu and es (hug bjd8v7): each gets its own ERROR, the rest of the batch is applied, the table keeps its CHECK.'
 CREATE TABLE xk (id int NOT NULL DEFAULT 100, lu int, es int, v text, valid_range daterange NOT NULL, CHECK (num_nonnulls(lu, es) <= 1));
 SELECT sql_saga.add_era('xk', 'valid_range') AS ignored \gset
 SELECT sql_saga.add_unique_key('xk', ARRAY['id'], key_type => 'primary') AS ignored \gset
@@ -172,7 +173,9 @@ SELECT sql_saga.add_unique_key('xk', ARRAY['lu', 'es'], key_type => 'natural', m
 CREATE TABLE xk_src (row_id int, id int, lu int, es int, v text, valid_range daterange);
 INSERT INTO xk_src VALUES (1, NULL, 10, NULL, 'lu10', '[2022-01-01,2023-01-01)'), (2, NULL, NULL, 10, 'es10', '[2022-01-01,2023-01-01)'),
     (3, NULL, 20, NULL, 'lu20', '[2021-01-01,2026-01-01)'), (4, NULL, NULL, 30, 'new', '[2022-01-01,2023-01-01)'),
-    (5, 1, NULL, 10, 'conflict', '[2024-01-01,2025-01-01)'), (6, 2, NULL, NULL, 'byid', '[2026-01-01,2027-01-01)');
+    (5, 1, NULL, 10, 'conflict', '[2024-01-01,2025-01-01)'), (6, 2, NULL, NULL, 'byid', '[2026-01-01,2027-01-01)'),
+    (7, NULL, 10, 10, 'both', '[2022-01-01,2023-01-01)'), (8, NULL, 40, 40, 'both new', '[2022-01-01,2023-01-01)'),
+    (9, 3, 20, 50, 'both by id', '[2026-01-01,2027-01-01)');
 CREATE TABLE xk_out (planner text, feedback jsonb, result jsonb);
 DO $xk$
 DECLARE

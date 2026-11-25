@@ -147,9 +147,9 @@ GRANT SELECT ON TABLE sql_saga.unique_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
 
 COMMENT ON TABLE sql_saga.unique_keys IS 'A registry of UNIQUE/PRIMARY keys using era WITHOUT OVERLAPS';
-COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns IS 'For complex keys, stores the subset of columns that are mutually exclusive (handled by NULLS NOT DISTINCT semantics).';
+COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns IS 'For natural keys, the subset of columns that are mutually exclusive: at most one holds a value per row (enforced by check_constraint); uniqueness uses NULLS NOT DISTINCT.';
 COMMENT ON COLUMN sql_saga.unique_keys.pk_consistency_constraint_names IS 'For natural keys, stores the state of primary key consistency enforcement. A populated array contains the constraint name(s) (enforced), an empty array means enforcement is pending a primary key, and NULL means the user opted out.';
-COMMENT ON COLUMN sql_saga.unique_keys.check_constraint IS 'For mutually exclusive keys, stores the name of the CHECK constraint that enforces the XOR logic (exactly one column is NOT NULL). Deprecated with NULLS NOT DISTINCT implementation.';
+COMMENT ON COLUMN sql_saga.unique_keys.check_constraint IS 'For natural keys with mutually_exclusive_columns, the name of the CHECK (num_nonnulls(<columns>) <= 1) constraint: at most one of those columns holds a value per row (all NULL is allowed, before the key starts). NULL for other keys.';
 
 CREATE TABLE sql_saga.foreign_keys (
     foreign_key_name name NOT NULL,

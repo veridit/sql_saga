@@ -409,6 +409,37 @@ BEGIN
                       HINT = 'The 1.15 update lets an entity hold one value of each natural key column. An identifier that changes belongs in another natural key column. Correct the rows so that each entity holds one value.';
         END IF;
     END;
+
+    /* 1.15 (hug bjd8v7): a natural key with mutually exclusive columns allows at most one of them per row. The update
+       adds CHECK (num_nonnulls(<columns>) <= 1) to every such key; a row giving more than one refuses it. */
+    DECLARE
+        k record;
+        rows_text text;
+        cols text;
+    BEGIN
+        policy_list := NULL;
+        FOR k IN
+            SELECT uk.unique_key_name, uk.table_schema, uk.table_name, uk.mutually_exclusive_columns
+            FROM sql_saga.unique_keys AS uk
+            WHERE uk.mutually_exclusive_columns IS NOT NULL
+            ORDER BY uk.table_schema, uk.table_name, uk.unique_key_name
+        LOOP
+            cols := (SELECT pg_catalog.string_agg(pg_catalog.quote_ident(c), ', ') FROM pg_catalog.unnest(k.mutually_exclusive_columns) AS c);
+            EXECUTE pg_catalog.format(
+                'SELECT pg_catalog.string_agg(r, '', '') FROM (SELECT pg_catalog.format(''(%%s)'', concat_ws('', '', %s)) AS r FROM %I.%I WHERE num_nonnulls(%s) > 1 ORDER BY 1 LIMIT 5) AS x',
+                cols, k.table_schema, k.table_name, cols)
+            INTO rows_text;
+            IF rows_text IS NOT NULL THEN
+                policy_list := pg_catalog.concat_ws(E'\n', policy_list,
+                    pg_catalog.format('%I.%I natural key %I columns %s: %s', k.table_schema, k.table_name, k.unique_key_name, cols, rows_text));
+            END IF;
+        END LOOP;
+        IF policy_list IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: rows giving more than one mutually exclusive column of a natural key prevent upgrade:%', E'\n' || policy_list
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'The 1.15 update allows at most one mutually exclusive column per row (CHECK num_nonnulls(...) <= 1). Correct the rows so that each gives at most one.';
+        END IF;
+    END;
 END;
 $preflight$;
 

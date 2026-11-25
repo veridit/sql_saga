@@ -244,6 +244,7 @@ fn temporal_merge_plan_native(
             row_id_column.to_string(),
             p_log_trace,
             result.exclude_if_null_columns,
+            result.xor_sets,
         );
 
         // Build SQL templates from pre-fetched column data (no SPI calls)

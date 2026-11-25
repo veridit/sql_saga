@@ -120,6 +120,10 @@ the entity moves to it through a source row that carries both the old and the ne
   other than its entity's, or than another row of the batch gives. It writes a natural
   key value only inside the source row's time, and a NULL never clears one. Before, the
   default planner could write one entity's value over another piece's.
+- A natural key with `mutually_exclusive_columns` gets `CHECK (num_nonnulls(<columns>) <= 1)`
+  (recorded in `unique_keys.check_constraint`; the update adds it, and refuses rows giving two,
+  which the preflight lists). `temporal_merge` gives such a source row `ERROR` feedback.
+  Before, the row was accepted as a new entity.
 
 **A source row is resolved by every key it names.** A row carrying an identity and a
 natural key that find different entities gets "ambiguous" or "inconsistent" `ERROR`

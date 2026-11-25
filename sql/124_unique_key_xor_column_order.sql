@@ -157,30 +157,30 @@ INSERT INTO xko.legal_unit VALUES (1, '[2020-01-01,infinity)'), (2, '[2020-01-01
 INSERT INTO xko.establishment VALUES (7, '[2020-01-01,infinity)');
 -- Key rows (person, role, legal unit, establishment). sql_saga does not require the XOR columns to be
 -- exclusive (a num_nonnulls CHECK is the user's own), so all four are set here.
---   1 = (10, 20, 1, 7) referenced by person_ref only
---   2 = (11, 20, 2, 7) not referenced (yet)
---   3 = (12, 20, 2, 7) referenced by person_tref only
-INSERT INTO xko.person_for_unit VALUES (1, 10, 20, 1, 7, '[2020-01-01,infinity)'),
-                                       (2, 11, 20, 2, 7, '[2020-01-01,infinity)'),
-                                       (3, 12, 20, 2, 7, '[2020-01-01,infinity)');
+--   1 = (10, 20, 1, NULL) referenced by person_ref only
+--   2 = (11, 20, 2, NULL) not referenced (yet)
+--   3 = (12, 20, 2, NULL) referenced by person_tref only
+INSERT INTO xko.person_for_unit VALUES (1, 10, 20, 1, NULL, '[2020-01-01,infinity)'),
+                                       (2, 11, 20, 2, NULL, '[2020-01-01,infinity)'),
+                                       (3, 12, 20, 2, NULL, '[2020-01-01,infinity)');
 INSERT INTO xko.activity (id, type, legal_unit_id, establishment_id, valid_range) VALUES (1, 'primary', 1, NULL, '[2021-01-01,infinity)');
 
 \echo '--- Valid references are accepted'
-INSERT INTO xko.person_ref VALUES (1, 10, 20, 1, 7);
-INSERT INTO xko.person_tref VALUES (1, 12, 20, 2, 7, '[2021-01-01,2022-01-01)');
+INSERT INTO xko.person_ref VALUES (1, 10, 20, 1, NULL);
+INSERT INTO xko.person_tref VALUES (1, 12, 20, 2, NULL, '[2021-01-01,2022-01-01)');
 SELECT count(*) AS person_ref_rows FROM xko.person_ref;
 SELECT count(*) AS person_tref_rows FROM xko.person_tref;
 
-\echo '--- Invalid references are refused, valid ones accepted'
-SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (2, 10, 20, 2, 7)$$) AS regular_fk_missing_key;
-SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (2, 11, 20, 2, 7)$$) AS regular_fk_existing_key;
-SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 10, 20, 2, 7, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_missing_key;
-SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 11, 20, 2, 7, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_existing_key;
+\echo '--- References to the XOR key are never checked (a child row always has a NULL); the activity keys are'
+SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (2, 10, 20, 2, NULL)$$) AS regular_fk_missing_key;
+SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (2, 11, 20, 2, NULL)$$) AS regular_fk_existing_key;
+SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 10, 20, 2, NULL, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_missing_key;
+SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 11, 20, 2, NULL, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_existing_key;
 SELECT xko.probe($$INSERT INTO xko.activity (id, type, legal_unit_id, valid_range) VALUES (2, 'primary', 99, '[2021-01-01,infinity)')$$) AS activity_missing_legal_unit;
 SELECT xko.probe($$INSERT INTO xko.activity (id, type, legal_unit_id, valid_range) VALUES (2, 'secondary', 2, '[2021-01-01,infinity)')$$) AS activity_existing_legal_unit;
 SELECT xko.probe($$INSERT INTO xko.activity (id, type, legal_unit_id, valid_range) VALUES (2, 'primary', 1, '[2022-01-01,infinity)')$$) AS activity_duplicate_xor_key;
 
-\echo '--- Deleting a referenced key row is refused, an unreferenced one is not'
+\echo '--- Deleting or changing a key row referenced through the XOR key is not refused either'
 SELECT xko.probe($$DELETE FROM xko.person_for_unit WHERE id = 1$$) AS delete_key_of_regular_fk;
 SELECT xko.probe($$DELETE FROM xko.person_for_unit WHERE id = 3$$) AS delete_key_of_temporal_fk;
 SELECT xko.probe($$DELETE FROM xko.person_for_unit WHERE id = 2$$) AS delete_unreferenced_key;
@@ -192,15 +192,15 @@ ALTER TABLE xko.person_for_unit RENAME COLUMN person_role_id TO role_id;
 TABLE xko.key_order;
 SELECT xko.integrity('after RENAME COLUMN');
 
-\echo '--- Foreign keys still work after the rename'
+\echo '--- Foreign keys after the rename: XOR references still unchecked, the activity keys checked'
 SELECT fk.foreign_key_name, fk.type, fk.column_names, uk.column_names AS referenced_columns
 FROM sql_saga.foreign_keys AS fk JOIN sql_saga.unique_keys AS uk USING (unique_key_name)
 WHERE fk.table_schema = 'xko' AND fk.unique_key_name = 'person_for_unit_natural_key_valid'
 ORDER BY 1;
-INSERT INTO xko.person_ref VALUES (3, 11, 20, 2, 7);
+INSERT INTO xko.person_ref VALUES (3, 11, 20, 2, NULL);
 SELECT count(*) AS person_ref_rows FROM xko.person_ref;
-SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (4, 11, 21, 2, 7)$$) AS regular_fk_missing_key;
-SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 11, 21, 2, 7, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_missing_key;
+SELECT xko.probe($$INSERT INTO xko.person_ref VALUES (4, 11, 21, 2, NULL)$$) AS regular_fk_missing_key;
+SELECT xko.probe($$INSERT INTO xko.person_tref VALUES (2, 11, 21, 2, NULL, '[2021-01-01,2022-01-01)')$$) AS temporal_fk_missing_key;
 SELECT xko.probe($$DELETE FROM xko.person_for_unit WHERE id = 2$$) AS delete_key_of_regular_fk;
 SELECT xko.probe($$DELETE FROM xko.person_for_unit WHERE id = 3$$) AS delete_key_of_temporal_fk;
 SELECT xko.probe($$INSERT INTO xko.activity (id, type, legal_unit_ident, valid_range) VALUES (2, 'primary', 99, '[2021-01-01,infinity)')$$) AS activity_missing_legal_unit;
