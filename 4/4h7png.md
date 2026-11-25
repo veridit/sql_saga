@@ -28,6 +28,8 @@ Review 1.15 S1. Fixed in 98c3a82 via entity_nk_json per grouping key in diff_ran
 ## Depends on
 
 ## Acceptance
-- [ ] test 166 whole-entity scenario: red before, both planners one key after
+- [x] test 166 whole-entity scenario: red before, both planners one key after
 
 ## Notes
+
+check 1: 166: old code lists {new_code:null} and {new_code:W}; fix gives one key on both planners (98c3a82)
