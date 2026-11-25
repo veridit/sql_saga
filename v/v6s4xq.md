@@ -34,7 +34,7 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 
 - axdept
 ## Acceptance
-- [ ] Each temporal_merge merge mode and delete mode has its syntax, its rules and an example traced to a regression test
+- [x] Each temporal_merge merge mode and delete mode has its syntax, its rules and an example traced to a regression test
 - [ ] The proposal states its behaviour under concurrent writes at READ COMMITTED
 
 ## Notes
@@ -42,5 +42,6 @@ Sketch to start from: MERGE INTO t USING s ON ... FOR PORTION OF t.valid USING s
 2026-11-25 owner: do the syntax first, then the first message. Goal is consistency and clarity, not fewest reserved words; reuse sql_saga's vocabulary (entity, timeline, part of the timeline, whole timeline). Wants the design-space matrix, principles and concrete examples, covering INSERT, UPDATE, DELETE and MERGE.
 
 
+check 1: doc/upstream/temporal-dml.md: mode matrix maps all 8 modes + 3 delete modes; examples M1-M13 run by repro/temporal_dml_examples.sql (output committed), traced to tests 064, 163, 165, 089, 060, 062; M12 derived (no clause conditions in sql_saga)
 ## History
 - 2026-11-25T10:35 todo -> doing/active (take)
