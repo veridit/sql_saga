@@ -1,0 +1,302 @@
+SET
+SET
+CREATE EXTENSION
+CREATE EXTENSION
+DROP SCHEMA
+CREATE SCHEMA
+SET
+CREATE SEQUENCE
+CREATE TABLE
+CREATE TABLE
+CREATE PROCEDURE
+CREATE PROCEDURE
+CREATE VIEW
+==== The target timeline
+CALL
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | infinity
+(4 rows)
+
+==== The import
+CALL
+ row_id | id | code |  name  | region | edit_by |        valid_at         
+--------+----+------+--------+--------+---------+-------------------------
+      1 |  1 | A    | Alpha2 |        | imp     | [2023-01-01,2027-01-01)
+      2 |    | C    | Gamma  | West   | imp     | [2025-01-01,infinity)
+(2 rows)
+
+==== E1 MERGE_ENTITY_UPSERT: matched time updated (NULL is a value), gap and new entity inserted
+BEGIN
+CALL
+CALL
+CALL
+ row_id | status  |          entity           
+--------+---------+---------------------------
+      1 | APPLIED | [{"id": 1, "code": "A"}]
+      2 | APPLIED | [{"id": 10, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha2 |        | imp     | 2023-01-01 | 2027-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+ 10 | C    | Gamma  | West   | imp     | 2025-01-01 | infinity
+(5 rows)
+
+ROLLBACK
+==== E2 MERGE_ENTITY_PATCH: as E1, but a NULL keeps the value at each point
+BEGIN
+CALL
+CALL
+CALL
+ row_id | status  |          entity           
+--------+---------+---------------------------
+      1 | APPLIED | [{"id": 1, "code": "A"}]
+      2 | APPLIED | [{"id": 10, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha2 | North  | imp     | 2023-01-01 | 2024-01-01
+  1 | A    | Alpha2 | South  | imp     | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha2 |        | imp     | 2026-01-01 | 2027-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+ 10 | C    | Gamma  | West   | imp     | 2025-01-01 | infinity
+(7 rows)
+
+ROLLBACK
+==== E3 UPDATE_FOR_PORTION_OF: matched time only; the gap and the new entity are skipped
+BEGIN
+CALL
+CALL
+CALL
+ row_id |      status       |           entity            
+--------+-------------------+-----------------------------
+      1 | APPLIED           | [{"id": 1, "code": "A"}]
+      2 | SKIPPED_NO_TARGET | [{"id": null, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha2 |        | imp     | 2023-01-01 | 2026-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+(4 rows)
+
+ROLLBACK
+==== E4 PATCH_FOR_PORTION_OF
+BEGIN
+CALL
+CALL
+CALL
+ row_id |      status       |           entity            
+--------+-------------------+-----------------------------
+      1 | APPLIED           | [{"id": 1, "code": "A"}]
+      2 | SKIPPED_NO_TARGET | [{"id": null, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha2 | North  | imp     | 2023-01-01 | 2024-01-01
+  1 | A    | Alpha2 | South  | imp     | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+(5 rows)
+
+ROLLBACK
+==== E5 DELETE_FOR_PORTION_OF
+BEGIN
+CALL
+CALL
+CALL
+ row_id |      status       |           entity            
+--------+-------------------+-----------------------------
+      1 | APPLIED           | [{"id": 1, "code": "A"}]
+      2 | SKIPPED_NO_TARGET | [{"id": null, "code": "C"}]
+(2 rows)
+
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | infinity
+(3 rows)
+
+ROLLBACK
+==== E6 INSERT_NEW_ENTITIES: only an entity the target does not have
+BEGIN
+CALL
+CALL
+CALL
+ row_id |      status      |          entity           
+--------+------------------+---------------------------
+      1 | SKIPPED_FILTERED | [{"id": 1, "code": "A"}]
+      2 | APPLIED          | [{"id": 10, "code": "C"}]
+(2 rows)
+
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | infinity
+ 10 | C    | Gamma | West   | imp     | 2025-01-01 | infinity
+(5 rows)
+
+ROLLBACK
+==== E7 MERGE_ENTITY_PATCH + DELETE_MISSING_TIMELINE: the import states the whole timeline of entity 1
+BEGIN
+CALL
+CALL
+CALL
+ row_id | status  |          entity           
+--------+---------+---------------------------
+      1 | APPLIED | [{"id": 1, "code": "A"}]
+      2 | APPLIED | [{"id": 10, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha2 | North  | imp     | 2023-01-01 | 2024-01-01
+  1 | A    | Alpha2 | South  | imp     | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha2 |        | imp     | 2026-01-01 | 2027-01-01
+  2 | B    | Beta   | North  | load    | 2020-01-01 | infinity
+ 10 | C    | Gamma  | West   | imp     | 2025-01-01 | infinity
+(5 rows)
+
+ROLLBACK
+==== E8 MERGE_ENTITY_PATCH + DELETE_MISSING_ENTITIES: entities the import does not name are removed
+BEGIN
+CALL
+CALL
+CALL
+ row_id | status  |          entity           
+--------+---------+---------------------------
+      1 | APPLIED | [{"id": 1, "code": "A"}]
+      2 | APPLIED | [{"id": 10, "code": "C"}]
+(2 rows)
+
+ id | code |  name  | region | edit_by | valid_from | valid_until 
+----+------+--------+--------+---------+------------+-------------
+  1 | A    | Alpha  | North  | load    | 2020-01-01 | 2023-01-01
+  1 | A    | Alpha2 | North  | imp     | 2023-01-01 | 2024-01-01
+  1 | A    | Alpha2 | South  | imp     | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha2 |        | imp     | 2026-01-01 | 2027-01-01
+  1 | A    | Alpha  | South  | load    | 2027-01-01 | infinity
+ 10 | C    | Gamma  | West   | imp     | 2025-01-01 | infinity
+(6 rows)
+
+ROLLBACK
+==== E9 the whole timeline of entity 1: region West at every point (PATCH_FOR_PORTION_OF over all time)
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 1
+CALL
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | West   | imp     | 2020-01-01 | 2026-01-01
+  1 | A    | Alpha | West   | imp     | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | infinity
+(3 rows)
+
+ROLLBACK
+==== E10 an entity named by its natural key only
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 1
+CALL
+ row_id | status  |          entity          
+--------+---------+--------------------------
+      1 | APPLIED | [{"id": 2, "code": "B"}]
+(1 row)
+
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | 2022-01-01
+  2 | B    | Beta  | East   | imp     | 2022-01-01 | 2023-01-01
+  2 | B    | Beta  | North  | load    | 2023-01-01 | infinity
+(6 rows)
+
+ROLLBACK
+==== E11 one new entity over two import rows: one generated id
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 2
+CALL
+ row_id | status  |          entity           
+--------+---------+---------------------------
+      1 | APPLIED | [{"id": 10, "code": "D"}]
+      2 | APPLIED | [{"id": 10, "code": "D"}]
+(2 rows)
+
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | infinity
+ 10 | D    | Delta | East   | imp     | 2020-01-01 | 2022-01-01
+ 10 | D    | Delta | West   | imp     | 2022-01-01 | infinity
+(6 rows)
+
+ROLLBACK
+==== E12 two import rows overlapping in time for one entity: the later row wins where they overlap
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 2
+CALL
+ id | code | name  | region | edit_by | valid_from | valid_until 
+----+------+-------+--------+---------+------------+-------------
+  1 | A    | Alpha | North  | load    | 2020-01-01 | 2024-01-01
+  1 | A    | Alpha | South  | load    | 2024-01-01 | 2026-01-01
+  1 | A    | Alpha | South  | load    | 2027-01-01 | infinity
+  2 | B    | Beta  | North  | load    | 2020-01-01 | 2021-01-01
+  2 | B    | One   | East   | imp     | 2021-01-01 | 2022-01-01
+  2 | B    | Two   | East   | imp     | 2022-01-01 | 2023-01-01
+  2 | B    | Two   | North  | imp     | 2023-01-01 | 2024-01-01
+  2 | B    | Beta  | North  | load    | 2024-01-01 | infinity
+(8 rows)
+
+ROLLBACK
+==== E13 an import identical to the target: nothing written
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 1
+CALL
+ row_id |      status       |          entity          
+--------+-------------------+--------------------------
+      1 | SKIPPED_IDENTICAL | [{"id": 2, "code": "B"}]
+(1 row)
+
+ROLLBACK
+==== E14 contradicting keys: identity 2 with the natural key of entity 1
+BEGIN
+CALL
+TRUNCATE TABLE
+INSERT 0 1
+CALL
+ row_id | status |                                         error_message                                         
+--------+--------+-----------------------------------------------------------------------------------------------
+      1 | ERROR  | Source row is ambiguous. It matches multiple distinct target entities: [{"id": 1}, {"id": 2}]
+(1 row)
+
+ROLLBACK
+DROP SCHEMA
