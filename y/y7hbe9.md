@@ -33,7 +33,7 @@ Found drafting doc/upstream/temporal-dml.md (open question 5). Repro: doc/upstre
 ## Depends on
 
 ## Acceptance
-- [ ] A regression test runs REPLACE, UPSERT and PATCH (merge and portion modes) with a source lacking a target column, on both planners; it fails on the PL/pgSQL planner before the fix
+- [x] A regression test runs REPLACE, UPSERT and PATCH (merge and portion modes) with a source lacking a target column, on both planners; it fails on the PL/pgSQL planner before the fix
 - [ ] Both planners give the native result for every case of that test, and make test fast passes
 
 ## Notes
@@ -41,5 +41,6 @@ Found drafting doc/upstream/temporal-dml.md (open question 5). Repro: doc/upstre
 StatBus uses MERGE_ENTITY_REPLACE/REPLACE_FOR_PORTION_OF in import procedures (legal_unit, location, contact, statistical variables, legal relationship), on the native planner: so the native behaviour (absent column kept) is what StatBus relies on. Changing native would change StatBus imports; check their source tables carry every column before deciding.
 
 
+check 1: test 168 (3 sources x 9 modes, both planners): before the fix PL/pgSQL differs in 10 of 27 cases (and refused a source without the natural key column); commit 6d3856a
 ## History
 - 2026-11-26T22:39 todo -> doing/active (take)
