@@ -22,7 +22,7 @@ Parallel pg_restore -j of any sql_saga database fails intermittently; only an up
 The owner signs in; the agent fills the form from the approved text, shows it, and submits only after the owner confirms. Never in a client's browser window
 
 ## Relevant details
-Files (in the repository): doc/upstream/pg-dump-config-fk-order/README.md (index), pgsql_bugs_report.txt (the approved text, 2026-11-13), config_fk_order.control and config_fk_order--1.0.sql (reproducer), parallel_restore_failure.log. Re-run on PostgreSQL 18.3: serial restore works, pg_restore -j 2 failed 5/5. Same code in REL_18_STABLE (18.7) and master. Form: https://www.postgresql.org/account/submitbug/, mails pgsql-bugs@lists.postgresql.org. Moved 2026-11-26 from tmp/upstream_repro_20261113/, which is gitignored.
+Files are attached to this task (hug task show hsa1hp, FILES): pgsql_bugs_report.txt (the approved text, 2026-11-13), config_fk_order.control and config_fk_order--1.0.sql (reproducer), parallel_restore_failure.log. Re-run on PostgreSQL 18.3: serial restore works, pg_restore -j 2 failed 5/5. Same code in REL_18_STABLE (18.7) and master. Form: https://www.postgresql.org/account/submitbug/, mails pgsql-bugs@lists.postgresql.org. Originally in tmp/upstream_repro_20261113/ (gitignored).
 
 ## Depends on
 
