@@ -28,8 +28,8 @@ Found drafting doc/upstream/temporal-dml.md (open question 5). Repro: doc/upstre
 ## Depends on
 
 ## Acceptance
-- [ ] a rule for absent columns under REPLACE is written in doc/upstream/temporal-dml.md and README
-- [ ] both planners follow it: test red before, green after
+- [ ] A regression test runs REPLACE, UPSERT and PATCH (merge and portion modes) with a source lacking a target column, on both planners; it fails on the PL/pgSQL planner before the fix
+- [ ] Both planners give the native result for every case of that test, and make test fast passes
 
 ## Notes
 
