@@ -28,7 +28,7 @@ If the PostgreSQL temporal authors are interested, a precise proposal (rules plu
 Waits for the owner's decision after the first conversation; drafting earlier is allowed only if the owner asks. Build on SQL's MERGE and SQL:2011 temporal terms rather than inventing new statements. Every rule is backed by an existing sql_saga regression test.
 
 ## Details
-Files: doc/upstream/temporal-dml.md (the design: vocabulary, history, 10 principles, design space, syntax, examples M1-M13, open questions); doc/upstream/repro/temporal_dml_examples.sql and .out (every example run against sql_saga 1.15; M12 not run); doc/upstream/syntax-candidates.md (earlier MERGE-only candidates, superseded in part); tmp/review_temporal_dml.md (independent review, folded in at 5687123; scratch, not in git). Related: y7hbe9 (REPLACE, open question 5). The first message t1z6f5 depends on this task.
+Files: doc/upstream/temporal-dml.md (the design: vocabulary, history, 10 principles, design space, syntax, examples M1-M13, open questions); doc/upstream/repro/temporal_dml_examples.sql and .out (every example run against sql_saga 1.15; M12 not run); doc/upstream/syntax-candidates.md (earlier MERGE-only candidates, superseded in part). Attached: review_temporal_dml.md (independent review, folded in at 5687123). Related: y7hbe9 (absent columns, open question 5). The first message t1z6f5 depends on this task.
 
 ## Depends on
 
