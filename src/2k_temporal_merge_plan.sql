@@ -483,10 +483,8 @@ BEGIN
                     -- lookup_columns must exist in target
                     SELECT 'lookup_column (target)', unnest(v_all_lookup_cols), target_table
                     WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
-                    UNION ALL
-                    -- lookup_columns must exist in source
-                    SELECT 'lookup_column (source)', unnest(v_all_lookup_cols), source_table
-                    WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
+                    -- A lookup column the source does not have names nothing, as a NULL one (hug y7hbe9); source_initial
+                    -- projects NULL for it, as the native planner reads it.
                 )
                 SELECT rc.col_type, rc.col_name, rc.tbl::regclass::text AS tbl_name
                 FROM required_columns rc
@@ -508,8 +506,6 @@ BEGIN
                         RAISE EXCEPTION 'identity_column % does not exist in source table % (and no lookup_columns were provided)', quote_ident(v_missing.col_name), v_missing.tbl_name;
                     WHEN 'lookup_column (target)' THEN
                         RAISE EXCEPTION 'lookup_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
-                    WHEN 'lookup_column (source)' THEN
-                        RAISE EXCEPTION 'lookup_column % does not exist in source table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
                 END CASE;
             END LOOP;
         END; -- END consolidated column validation
@@ -1431,17 +1427,19 @@ BEGIN
                 v_resolver_from := 'resolved_atomic_segments_with_payloads';
                 v_final_data_payload_expr := $$COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)$$;
             ELSE -- REPLACE and DELETE modes
-                -- In REPLACE/DELETE modes, we do not inherit. Gaps remain gaps.
+                -- A column the source does not have keeps the target's value, in every mode (hug y7hbe9): the source's
+                -- columns replace the target's, the others stay. A source column given as NULL is a value. Gaps remain
+                -- gaps. As the native planner, the reference.
                 v_resolver_ctes := '';
                 v_resolver_from := 'resolved_atomic_segments_with_payloads';
-                v_final_data_payload_expr := $$CASE WHEN s_data_payload = '"__DELETE__"'::jsonb THEN NULL ELSE COALESCE(s_data_payload, t_data_payload) END$$;
+                v_final_data_payload_expr := $$CASE WHEN s_data_payload = '"__DELETE__"'::jsonb THEN NULL WHEN s_data_payload IS NULL THEN t_data_payload ELSE COALESCE(t_data_payload, '{}'::jsonb) || s_data_payload END$$;
             END IF;
     
-            -- For destructive timeline mode, the final payload is always the source payload. This overrides any complex logic from above.
+            -- DELETE_MISSING_TIMELINE: the source states the entity's whole timeline, so time no source row covers is not
+            -- kept; covered time is resolved as in the mode (hug y7hbe9: before, only the source payload was kept, which
+            -- cleared the target's values of columns the source does not have, and PATCH's kept values).
             IF delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
-                v_resolver_ctes := '';
-                v_resolver_from := 'resolved_atomic_segments_with_payloads';
-                v_final_data_payload_expr := 's_data_payload';
+                v_final_data_payload_expr := format($$CASE WHEN s_data_payload IS NULL THEN NULL ELSE (%s) END$$, v_final_data_payload_expr);
             END IF;
     
             -- Layer on optional destructive delete modes for missing entities.

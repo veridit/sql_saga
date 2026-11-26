@@ -61,12 +61,12 @@ CANDIDATE_LIB_DIR=${UPGRADE_CANDIDATE_LIB_DIR:-}
 RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
 NEW_VERSION=${UPGRADE_NEW_VERSION:-$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$REPO/sql_saga.control")}
 # The era catalog layout of the candidate (catalog_format): the release that last changed it, not the version.
-catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14|1.15) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
+catalog_format_of() { case "$1" in 1.3) echo 1.3 ;; 1.4|1.5|1.6|1.7) echo 1.4 ;; 1.8) echo 1.8 ;; 1.9|1.10|1.11|1.12|1.13|1.14|1.15|1.16) echo 1.9 ;; *) echo "unknown catalog layout for $1" ;; esac; }
 NEW_CATALOG_FORMAT=$(catalog_format_of "$NEW_VERSION")
 # A new release must be added to the map above: an unknown layout made gates compare against an error string.
 case "$NEW_CATALOG_FORMAT" in unknown*) echo "HARNESS ERROR: $NEW_CATALOG_FORMAT: add it to catalog_format_of" >&2; exit 2 ;; esac
 # Released baselines: tag|version|commit. Only those older than NEW_VERSION are upgrade paths.
-RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf v1.14|1.14|87085d0"
+RELEASED_BASELINES="v1.0|1.0|9e39fcc v1.1|1.1|9c72e66 v1.2|1.2|835058e v1.3|1.3|102e0df v1.4|1.4|8759b7b v1.5|1.5|545839a v1.6|1.6|252c0f7 v1.7|1.7|bc0fc53 v1.8|1.8|ea6542e v1.9|1.9|fb9b351 v1.10|1.10|39da88a v1.11|1.11|61343fa v1.12|1.12|676370d v1.13|1.13|a96e1cf v1.14|1.14|87085d0 v1.15|1.15|7011af1"
 chain_path() {  # chain_path <from> <to>: the released versions from <from> to <to>, joined by --
     local spec v on=0 out=""
     for spec in $RELEASED_BASELINES "x|$NEW_VERSION|x"; do
@@ -303,7 +303,7 @@ SQL
         echo "    FAIL [expected RED] candidate update scripts (expected '$wanted_steps', got '$shipped_steps')"; artifact_fails=$((artifact_fails + 1))
     fi
     if "${SQL_SAGA_PYTHON:-python3}" "$REPO/devops/chain_steps.py" --check "$RELEASE_ARTIFACT_DIR" >"$ARTIFACT_WORK/chain_steps.log" 2>&1; then
-        echo "    ok    versions/ steps are the documented transformation of the steps v1.0 to v1.14 shipped"
+        echo "    ok    versions/ steps are the documented transformation of the steps v1.0 to v1.15 shipped"
     else
         echo "    FAIL [prerequisite] versions/ steps: $(head -1 "$ARTIFACT_WORK/chain_steps.log")"; artifact_fails=$((artifact_fails + 1))
     fi
@@ -3715,6 +3715,8 @@ INSERT INTO nk_one (id, old_code, new_code, valid_from, valid_until) VALUES
         "$(v13_probe "$NK1_DB" "UPDATE nk_one SET new_code = 'y' WHERE id = 1 AND valid_from = '2020-01-01'")"
     assert_integrity "$NK1_DB"
 
+    # The conflicting state is reachable only before 1.15: from a baseline that holds the guard, its fixture is refused.
+    if version_lt "$BASELINE_VERSION" 1.15; then
     NK1_BAD_DB=${PREFIX}_nkone115_conflict
     v13_db "$NK1_BAD_DB" "$NK1_FIXTURE
 UPDATE nk_one SET old_code = 'q' WHERE id = 1 AND valid_from = '2025-01-01';"
@@ -3731,6 +3733,7 @@ UPDATE nk_one SET old_code = 'q' WHERE id = 1 AND valid_from = '2025-01-01';"
     check "after correcting the rows the update succeeds" "" \
         "$(q "$NK1_BAD_DB" "UPDATE nk_one SET old_code = 'x' WHERE id = 1 AND old_code = 'q'; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     assert_integrity "$NK1_BAD_DB"
+    fi
 fi
 
 # 1.15: a natural key with mutually exclusive columns allows at most one of them per row (hug bjd8v7). Since 1.0 the
@@ -3759,6 +3762,8 @@ INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES
         "$(v13_probe "$XC_DB" "INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, NULL, NULL, '2010-01-01', '2011-01-01')")"
     assert_integrity "$XC_DB"
 
+    # The conflicting state is reachable only before 1.15: from a baseline that holds the CHECK, its fixture is refused.
+    if version_lt "$BASELINE_VERSION" 1.15; then
     XC_BAD_DB=${PREFIX}_xorcheck_conflict
     v13_db "$XC_BAD_DB" "$XC_FIXTURE
 INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, 20, 30, '2020-01-01', 'infinity');"
@@ -3778,6 +3783,28 @@ INSERT INTO xc (id, lu, es, valid_from, valid_until) VALUES (4, 20, 30, '2020-01
     check "after correcting the row the update succeeds" "" \
         "$(q "$XC_BAD_DB" "UPDATE xc SET es = NULL WHERE id = 4; ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
     assert_integrity "$XC_BAD_DB"
+    fi
+fi
+
+# 1.16: a column the source does not have keeps the target's value in every mode, on both planners (hug y7hbe9). Before,
+# the PL/pgSQL planner refused a source without a natural key column, and under REPLACE (and DELETE_MISSING_TIMELINE)
+# cleared the target's values of columns the source does not have. The native planner is the reference.
+if ! version_lt "$NEW_VERSION" 1.16; then
+    section "$BASELINE_VERSION PL/pgSQL planner keeps columns the source does not have after the update to $NEW_VERSION" "expected RED"
+    ABS_DB=${PREFIX}_absent116
+    v13_db "$ABS_DB" "CREATE TABLE ab (id integer NOT NULL, name text, region text, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('ab', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('ab', ARRAY['id']::name[], key_type => 'primary');
+INSERT INTO ab (id, name, region, valid_from, valid_until) VALUES (1, 'a', 'North', '2020-01-01', '2024-01-01'), (1, 'a', 'South', '2024-01-01', '2026-01-01');
+CREATE TABLE ab_src (row_id integer, id integer, name text, valid_from date, valid_until date);
+INSERT INTO ab_src VALUES (1, 1, 'b', '2023-01-01', '2026-01-01');"
+    v13_restart "$ABS_DB"
+    check "update succeeds" "" "$(q "$ABS_DB" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep -m1 '^ERROR')"
+    ABS_MERGE="SET sql_saga.temporal_merge.use_plpgsql_planner = true; BEGIN; CALL sql_saga.temporal_merge(target_table => 'ab', source_table => 'ab_src', mode => 'MERGE_ENTITY_REPLACE'); SELECT string_agg(name || '/' || coalesce(region, '-') || ' ' || valid_from || '..' || valid_until, ', ' ORDER BY valid_from) FROM ab; ROLLBACK"
+    check "MERGE_ENTITY_REPLACE without a region column keeps North and South" \
+        "a/North 2020-01-01..2023-01-01, b/North 2023-01-01..2024-01-01, b/South 2024-01-01..2026-01-01" \
+        "$(q "$ABS_DB" "$ABS_MERGE" | grep -v '^\(SET\|BEGIN\|CALL\|ROLLBACK\)$' | tail -1)"
+    assert_integrity "$ABS_DB"
 fi
 
 # 1.14: a disabled era synchronization trigger (valid_from/valid_until stop following the range column) refuses the

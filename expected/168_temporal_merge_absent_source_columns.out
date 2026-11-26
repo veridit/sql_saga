@@ -1,0 +1,54 @@
+\set ECHO none
+\set QUIET 0
+\set VERBOSITY terse
+\echo '==== The native planner (the reference): code/name/region per piece'
+==== The native planner (the reference): code/name/region per piece
+\echo '-- no_region: the source has no region column, so every mode keeps North and South; the new time has none.'
+-- no_region: the source has no region column, so every mode keeps North and South; the new time has none.
+\echo '-- no_code: the source has no code column; the entity keeps code A everywhere, the new time included.'
+-- no_code: the source has no code column; the entity keeps code A everywhere, the new time included.
+\echo '-- null_region: region is NULL in the source, a value for UPSERT and REPLACE, kept by PATCH.'
+-- null_region: region is NULL in the source, a value for UPSERT and REPLACE, kept by PATCH.
+SELECT source, mode, pieces FROM result WHERE planner = 'native' ORDER BY source, mode;
+   source    |                     mode                     |                                                                          pieces                                                                           
+-------------+----------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ no_code     | MERGE_ENTITY_PATCH                           | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | MERGE_ENTITY_PATCH+DELETE_MISSING_TIMELINE   | A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | MERGE_ENTITY_REPLACE                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | MERGE_ENTITY_REPLACE+DELETE_MISSING_TIMELINE | A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | MERGE_ENTITY_UPSERT                          | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | MERGE_ENTITY_UPSERT+DELETE_MISSING_TIMELINE  | A/Alpha2/East [2023-01-01,2027-01-01)
+ no_code     | PATCH_FOR_PORTION_OF                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2026-01-01)
+ no_code     | REPLACE_FOR_PORTION_OF                       | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2026-01-01)
+ no_code     | UPDATE_FOR_PORTION_OF                        | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/East [2023-01-01,2026-01-01)
+ no_region   | MERGE_ENTITY_PATCH                           | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | MERGE_ENTITY_PATCH+DELETE_MISSING_TIMELINE   | A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | MERGE_ENTITY_REPLACE                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | MERGE_ENTITY_REPLACE+DELETE_MISSING_TIMELINE | A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | MERGE_ENTITY_UPSERT                          | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | MERGE_ENTITY_UPSERT+DELETE_MISSING_TIMELINE  | A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ no_region   | PATCH_FOR_PORTION_OF                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01)
+ no_region   | REPLACE_FOR_PORTION_OF                       | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01)
+ no_region   | UPDATE_FOR_PORTION_OF                        | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01)
+ null_region | MERGE_ENTITY_PATCH                           | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ null_region | MERGE_ENTITY_PATCH+DELETE_MISSING_TIMELINE   | A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01), A/Alpha2/- [2026-01-01,2027-01-01)
+ null_region | MERGE_ENTITY_REPLACE                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/- [2023-01-01,2027-01-01)
+ null_region | MERGE_ENTITY_REPLACE+DELETE_MISSING_TIMELINE | A/Alpha2/- [2023-01-01,2027-01-01)
+ null_region | MERGE_ENTITY_UPSERT                          | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/- [2023-01-01,2027-01-01)
+ null_region | MERGE_ENTITY_UPSERT+DELETE_MISSING_TIMELINE  | A/Alpha2/- [2023-01-01,2027-01-01)
+ null_region | PATCH_FOR_PORTION_OF                         | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/North [2023-01-01,2024-01-01), A/Alpha2/South [2024-01-01,2026-01-01)
+ null_region | REPLACE_FOR_PORTION_OF                       | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/- [2023-01-01,2026-01-01)
+ null_region | UPDATE_FOR_PORTION_OF                        | A/Alpha/North [2020-01-01,2023-01-01), A/Alpha2/- [2023-01-01,2026-01-01)
+(27 rows)
+
+\echo '==== The PL/pgSQL planner gives the same result for every case (no rows)'
+==== The PL/pgSQL planner gives the same result for every case (no rows)
+SELECT n.source, n.mode, n.pieces AS native, p.pieces AS plpgsql
+FROM result AS n JOIN result AS p USING (source, mode)
+WHERE n.planner = 'native' AND p.planner = 'plpgsql' AND n.pieces IS DISTINCT FROM p.pieces
+ORDER BY n.source, n.mode;
+ source | mode | native | plpgsql 
+--------+------+--------+---------
+(0 rows)
+
+\set ECHO none
