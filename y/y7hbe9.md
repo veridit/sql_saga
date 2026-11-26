@@ -1,7 +1,7 @@
 ---
 id: y7hbe9
 title: "PL/pgSQL planner clears target columns the source does not have"
-state: "doing"
+state: "done"
 type: "bug"
 priority: ""
 assignee: ["sabertooth"]
@@ -11,11 +11,10 @@ rank: "zzzzzzz"
 created: 2026-11-25
 updated: 2026-11-25
 parent: "0t4v31"
-doing_since: "2026-11-26T22:39"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/.jcode/scratch/saga_master"
+done_at: "2026-11-27T00:37"
 ---
 
 ## Goal
@@ -43,5 +42,7 @@ StatBus uses MERGE_ENTITY_REPLACE/REPLACE_FOR_PORTION_OF in import procedures (l
 
 check 1: test 168 (3 sources x 9 modes, both planners): before the fix PL/pgSQL differs in 10 of 27 cases (and refused a source without the natural key column); commit 6d3856a
 check 2: after: 0 differences; make test fast 153/153, isolation 4/4, test-generator OK; upgrade gate RED without the fix, matrix GREEN 16 baselines 6525 checks
+Reflection (unanswered, 2026-11-27, sabertooth)
 ## History
 - 2026-11-26T22:39 todo -> doing/active (take)
+- 2026-11-27T00:37 doing/active -> done (done); was doing_since: 2026-11-26T22:39
