@@ -173,10 +173,10 @@ PATCH and REPLACE is which columns the `SET` names and how.
 |---|---|---|---|---|
 | `MERGE_ENTITY_UPSERT` | `UPDATE SET c = s.c` | `INSERT` | `INSERT` | |
 | `MERGE_ENTITY_PATCH` | `UPDATE SET c = COALESCE(s.c, t.c)` | `INSERT` | `INSERT` | |
-| `MERGE_ENTITY_REPLACE` | `UPDATE SET` every column (open question 5) | `INSERT` | `INSERT` | |
+| `MERGE_ENTITY_REPLACE` | `UPDATE SET` every column the source has (open question 5) | `INSERT` | `INSERT` | |
 | `UPDATE_FOR_PORTION_OF` | `UPDATE SET c = s.c` | | | |
 | `PATCH_FOR_PORTION_OF` | `UPDATE SET c = COALESCE(s.c, t.c)` | | | |
-| `REPLACE_FOR_PORTION_OF` | `UPDATE SET` every column (open question 5) | | | |
+| `REPLACE_FOR_PORTION_OF` | `UPDATE SET` every column the source has (open question 5) | | | |
 | `DELETE_FOR_PORTION_OF` | `DELETE` | | | |
 | `INSERT_NEW_ENTITIES` | | | `INSERT` | |
 | `delete_mode => DELETE_MISSING_TIMELINE` | | | | `TIMELINE NOT MATCHED BY SOURCE THEN DELETE` |
@@ -503,11 +503,12 @@ conditions; the expected result follows from the clause order rule.)
    abort for one bad row. SQL fails the statement. `RETURNING merge_action()` with the source row's columns covers the
    written pieces; skipped and refused rows have no standard channel. PostgreSQL's `COPY ... ON_ERROR` is the nearest
    precedent.
-5. **REPLACE.** With a `SET` list, "replace" is "name every column", and a column not named keeps its value. sql_saga's
-   two planners disagree on `MERGE_ENTITY_REPLACE` when the source lacks a target column: the default planner keeps it
-   (so REPLACE behaves as UPSERT), the PL/pgSQL planner clears it, natural key included (hug y7hbe9,
-   [repro/replace_absent_column_planners.sql](repro/replace_absent_column_planners.sql)). The rule must be settled in
-   sql_saga before it is proposed anywhere.
+5. **Absent columns and NULL.** A column the source has and sets to NULL is a value: UPSERT and REPLACE write it, PATCH
+   keeps the target's value. A column the source does not have says nothing, in every mode, and keeps the target's
+   value. With a `SET` list this is visible: "replace" names every column the source has, and a column not named keeps
+   its value. sql_saga's native planner, the reference implementation, follows this rule; its PL/pgSQL planner clears
+   absent columns under REPLACE (a natural key included) and is being corrected to match (hug y7hbe9,
+   [repro/replace_absent_column_planners.sql](repro/replace_absent_column_planners.sql)).
 6. **Triggers, RETURNING and canonical timelines.** The FOR PORTION OF review objected to statement triggers firing per
    leftover row. A temporal statement writes and merges many pieces. Open: which rows row triggers and `RETURNING` see
    (the pieces written, or the canonical pieces after merging); whether a statement that writes the period column

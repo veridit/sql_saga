@@ -1,0 +1,3 @@
+comment = 'pg_dump config-table FK ordering reproducer'
+default_version = '1.0'
+relocatable = false
