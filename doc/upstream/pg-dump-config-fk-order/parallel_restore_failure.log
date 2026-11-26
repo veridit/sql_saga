@@ -1,3 +1,0 @@
-pg_restore: error: COPY failed for table "child": ERROR:  insert or update on table "child" violates foreign key constraint "child_parent_id_fkey"
-DETAIL:  Key (parent_id)=(500000) is not present in table "parent".
-pg_restore: error: a worker process died unexpectedly
