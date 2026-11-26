@@ -259,7 +259,8 @@ truncate, forged triggers, inheritance and partitions, predicated keys, plan cac
 search_path hijack, history ownership, predicate identity, health caller, view trigger replay, worker entry guard,
 caller context), `149` PostgreSQL parity, `156` regular era named system_time, `157` for_portion_of view delete,
 `158` batched for_portion_of view writes, `159` batched current view inserts, `160` history table persistence, `161` provenance columns, `162` temporal_merge typed data payload, `163` temporal_merge
-delete modes, `164` temporal_merge concurrency, `165` identity and natural key agreement). Concurrent sessions are isolation tests in `isolation/specs/` with
+delete modes, `164` temporal_merge concurrency, `165` identity and natural key agreement, `166` one value per natural key, `167` XOR natural key
+check, `168` absent source columns). Concurrent sessions are isolation tests in `isolation/specs/` with
 expected output in `isolation/expected/`, run by `make test-isolation` (PostgreSQL's `pg_isolation_regress`). Benchmarks
 are selected by the word `benchmark` in the test name, not by number.
 
