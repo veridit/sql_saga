@@ -37,3 +37,5 @@ file:pgsql_bugs_report.txt (3665 bytes, sha256:403fb398) the approved report tex
 file:config_fk_order.control (100 bytes, sha256:47942e1a) reproducer: a two-table extension whose configuration tables reference each other
 
 file:config_fk_order--1.0.sql (384 bytes, sha256:d9e6f03f) reproducer: a two-table extension whose configuration tables reference each other
+
+file:parallel_restore_failure.log (269 bytes, sha256:20002445) pg_restore -j 2 failing on the reproducer, PostgreSQL 18.3
