@@ -31,3 +31,5 @@ Files (in the repository): doc/upstream/pg-dump-config-fk-order/README.md (index
 - [ ] Bug number or list message link recorded in a note
 
 ## Notes
+
+file:pgsql_bugs_report.txt (3665 bytes, sha256:403fb398) the approved report text (2026-11-13), for the pgsql-bugs form
