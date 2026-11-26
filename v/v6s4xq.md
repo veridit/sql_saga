@@ -1,18 +1,17 @@
 ---
 id: v6s4xq
 title: "Draft temporal_merge semantics and SQL syntax proposal"
-state: "doing"
+state: "todo"
 type: spike
 priority: ""
-assignee: ["sabertooth"]
+assignee: []
 labels: []
 group: ""
 rank: "zzzzy"
 created: 2026-11-24
 updated: 2026-11-24
 parent: "0t4v31"
-doing_since: "2026-11-25T10:35"
-stage: "active"
+stage: "ready"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/sql_saga"
@@ -48,3 +47,4 @@ Revised after independent review (tmp/review_temporal_dml.md, 4 must-fix, 8 shou
 file:review_temporal_dml.md (14035 bytes, sha256:a5d9b96a) independent design review, folded in at 5687123
 ## History
 - 2026-11-25T10:35 todo -> doing/active (take)
+- 2026-11-26T22:39 doing/active -> todo/ready (give back; was assignee: sabertooth); was doing_since: 2026-11-25T10:35
