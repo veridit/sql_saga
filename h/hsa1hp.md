@@ -33,3 +33,7 @@ Files (in the repository): doc/upstream/pg-dump-config-fk-order/README.md (index
 ## Notes
 
 file:pgsql_bugs_report.txt (3665 bytes, sha256:403fb398) the approved report text (2026-11-13), for the pgsql-bugs form
+
+file:config_fk_order.control (100 bytes, sha256:47942e1a) reproducer: a two-table extension whose configuration tables reference each other
+
+file:config_fk_order--1.0.sql (384 bytes, sha256:d9e6f03f) reproducer: a two-table extension whose configuration tables reference each other
