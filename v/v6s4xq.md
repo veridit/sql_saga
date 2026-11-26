@@ -45,6 +45,7 @@ check 1: doc/upstream/temporal-dml.md: mode matrix maps all 8 modes + 3 delete m
 check 2: principle 10 + M13 row: serial result at READ COMMITTED, mechanism server's choice, sql_saga 1.15 protocol as evidence (test 164, isolation specs)
 Revised after independent review (tmp/review_temporal_dml.md, 4 must-fix, 8 should-fix): pointwise principle 3, two-step MERGE matching, BY SOURCE scope, CANONICAL...IGNORING. Commits 7366923, 5687123. Waits on the owner's reading before the first message (t1z6f5).
 file:review_temporal_dml.md (14035 bytes, sha256:a5d9b96a) independent design review, folded in at 5687123
+Back to todo 2026-11-26: the design is complete and its checks are ticked; it waits for the owner's reading before done. Work moved to y7hbe9.
 ## History
 - 2026-11-25T10:35 todo -> doing/active (take)
 - 2026-11-26T22:39 doing/active -> todo/ready (give back; was assignee: sabertooth); was doing_since: 2026-11-25T10:35
