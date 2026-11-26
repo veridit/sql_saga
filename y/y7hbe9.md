@@ -1,16 +1,21 @@
 ---
 id: y7hbe9
 title: "PL/pgSQL planner clears target columns the source does not have"
-state: todo
+state: "doing"
 type: "bug"
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzzz"
 created: 2026-11-25
 updated: 2026-11-25
 parent: "0t4v31"
+doing_since: "2026-11-26T22:39"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/.jcode/scratch/saga_master"
 ---
 
 ## Goal
@@ -34,3 +39,7 @@ Found drafting doc/upstream/temporal-dml.md (open question 5). Repro: doc/upstre
 ## Notes
 
 StatBus uses MERGE_ENTITY_REPLACE/REPLACE_FOR_PORTION_OF in import procedures (legal_unit, location, contact, statistical variables, legal relationship), on the native planner: so the native behaviour (absent column kept) is what StatBus relies on. Changing native would change StatBus imports; check their source tables carry every column before deciding.
+
+
+## History
+- 2026-11-26T22:39 todo -> doing/active (take)
