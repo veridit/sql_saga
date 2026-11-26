@@ -1,8 +1,8 @@
 ---
 id: y7hbe9
-title: "Planners disagree on REPLACE when the source lacks a target column"
+title: "PL/pgSQL planner clears target columns the source does not have"
 state: todo
-type: feature
+type: "bug"
 priority: ""
 assignee: []
 labels: []
@@ -14,16 +14,16 @@ parent: "0t4v31"
 ---
 
 ## Goal
-MERGE_ENTITY_REPLACE and REPLACE_FOR_PORTION_OF give the same result on both planners for a target column the source does not have.
+The PL/pgSQL planner keeps a target column the source table does not have, in every mode, as the native planner does.
 
 ## Purpose
-REPLACE must mean one thing; today the default planner behaves as UPSERT and the PL/pgSQL planner clears the column, even a natural key column.
+A column the source has and sets to NULL is a value; a column it does not have says nothing. The PL/pgSQL planner confuses the two in REPLACE and clears data, natural keys included.
 
 ## Principle
-Decide the rule first (the syntax design says REPLACE states every column the statement names, and a column the source does not have is not named, so it keeps its value), then make both planners follow it, test first.
+Owner's decision 2026-11-26: the native (Rust) planner is the reference implementation and the PL/pgSQL planner must match it; it was the reference once and is behind here. No change to the native planner or to StatBus behaviour.
 
 ## Details
-Found while drafting doc/upstream/temporal-dml.md. Repro: doc/upstream/repro/replace_absent_column_planners.sql. Native: region kept per piece (North/South), new time NULL. PL/pgSQL: one piece 2023-2027 with region NULL and code NULL (natural key cleared). Native REPLACE is then identical to UPSERT for every case I ran; where should they differ? Proposed rule: REPLACE sets every column the source has, NULL included, and ignores columns it does not have; UPSERT is the same except it keeps target pieces separate... to be decided with the owner in the syntax review.
+Found drafting doc/upstream/temporal-dml.md (open question 5). Repro: doc/upstream/repro/replace_absent_column_planners.sql. Target entity 1: North [2020,2024), South [2024,2026); source has no region column: (Alpha2, [2023,2027)). Native: region North / South kept per piece, the new time [2026,2027) NULL. PL/pgSQL: one piece [2023,2027) with region NULL and code NULL (a natural key cleared). Seen for MERGE_ENTITY_REPLACE and REPLACE_FOR_PORTION_OF. StatBus uses the REPLACE modes on the native planner, so it already gets the rule. Fix in src/2k_temporal_merge_plan.sql, where REPLACE builds the payload over all target columns instead of the source's. Then check every mode for the same confusion. A source column that is present and NULL keeps its meaning per mode (REPLACE/UPSERT: a value; PATCH: keep).
 
 ## Depends on
 
