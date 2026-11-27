@@ -43,6 +43,7 @@ StatBus uses MERGE_ENTITY_REPLACE/REPLACE_FOR_PORTION_OF in import procedures (l
 check 1: test 168 (3 sources x 9 modes, both planners): before the fix PL/pgSQL differs in 10 of 27 cases (and refused a source without the natural key column); commit 6d3856a
 check 2: after: 0 differences; make test fast 153/153, isolation 4/4, test-generator OK; upgrade gate RED without the fix, matrix GREEN 16 baselines 6525 checks
 Reflection (unanswered, 2026-11-27, sabertooth)
+CI 45912005987 green on 6d3856a.
 ## History
 - 2026-11-26T22:39 todo -> doing/active (take)
 - 2026-11-27T00:37 doing/active -> done (done); was doing_since: 2026-11-26T22:39
