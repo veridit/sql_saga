@@ -16,6 +16,10 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v5
+        with:
+          # The generator check reads the released steps from the release tags (chain_steps.py --check).
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up PostgreSQL 18 and sql_saga
         uses: ./.github/actions/setup-sql-saga
