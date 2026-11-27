@@ -32,11 +32,12 @@ Situation: src/2k_temporal_merge_plan.sql is 3,091 lines of PL/pgSQL beside 5,85
 ## Depends on
 
 ## Acceptance
-- [ ] The owner has chosen (a) or (b), recorded in a note
+- [x] The owner has chosen (a) or (b), recorded in a note
 
 ## Notes
 
 
 Owner's decision 2026-11-27: (a) keep the PL/pgSQL planner as an internal test oracle; the native planner is the reference and the only one in production. Cost measured: the 8 comparison tests take about 29 s of the 220 s fast suite; each behaviour change is written in both planners (y7hbe9: 22 lines).
+check 1: owner chose (a), 2026-11-27, see note
 ## History
 - 2026-11-27T01:36 todo -> doing/active (take)
