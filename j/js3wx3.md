@@ -1,15 +1,20 @@
 ---
 id: js3wx3
 title: "Run the regression tests on the PL/pgSQL planner as a separate step"
-state: todo
+state: "doing"
 type: feature
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzzzq"
 created: 2026-11-27
 updated: 2026-11-27
+doing_since: "2026-11-27T02:25"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/.jcode/scratch/saga_master"
 ---
 
 ## Goal
@@ -32,3 +37,7 @@ First run 2026-11-27 (PGOPTIONS -c sql_saga.temporal_merge.use_plpgsql_planner=t
 - [ ] CI runs it as a separate job; the main job's time is unchanged
 
 ## Notes
+
+
+## History
+- 2026-11-27T02:25 todo -> doing/active (take)
