@@ -28,8 +28,10 @@ Measured on CI 45924407021: regular tests 5.8 min, restore 29 min, upgrade 50 mi
 
 ## Acceptance
 - [x] CI shows the parallel jobs, all green, the upgrade matrix one job per baseline generated from devops/upgrade_test.sh
-- [ ] total wall time measured and recorded
+- [x] total wall time measured and recorded
 
 ## Notes
 
 check 1: CI 45992276515 at 9e8f540: 21 jobs green (Tests, Tests PL/pgSQL planner, Restore current + old_dumps, Upgrade artifacts, 16 'Upgrade from <baseline>' jobs from UPGRADE_ONLY=list_baselines). Follow-up fixes: 5575aa3 Tests job fetches tags for chain_steps --check; 9e8f540 drops the runner's Microsoft apt source (403 under parallel start).
+
+check 2: Wall time 13m52s (11:39:33 to 11:53:25), down from about 86 min for the single job. Longest jobs: Restore (current/old_dumps) about 13 min; upgrade baselines 3-5 min each; Tests 5 min.
