@@ -12,6 +12,9 @@ runs:
     - name: Install PostgreSQL 18 from PGDG
       shell: bash
       run: |
+        # The runner image carries Microsoft's package source, which we do not use and which refuses (403) some of
+        # many jobs starting at once; apt-get update then fails the job. Drop it first.
+        sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/microsoft-prod.sources
         sudo apt-get install -y postgresql-common ca-certificates
         sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
         sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3 acl
