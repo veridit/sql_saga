@@ -39,7 +39,7 @@ check 1: CI 45992276515 at 9e8f540: 21 jobs green (Tests, Tests PL/pgSQL planner
 check 2: Wall time 13m52s (11:39:33 to 11:53:25), down from about 86 min for the single job. Longest jobs: Restore (current/old_dumps) about 13 min; upgrade baselines 3-5 min each; Tests 5 min.
 
 
-Reflection (unanswered, 2026-11-27, sabertooth)
+Reflection (open, 2026-11-27, sabertooth): The handoff named the likely cause (missing fetch-depth/fetch-tags) correctly. One gap: 'hug task done' on an untaken todo task fails with 'todo -> done is not a move', and the hint to take it first only appears after the check commands, so it cost one extra round.
 ## History
 - 2026-11-27T12:54 todo -> doing/active (take)
 - 2026-11-27T12:54 doing/active -> done (done); was doing_since: 2026-11-27T12:54
