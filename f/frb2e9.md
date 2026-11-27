@@ -1,7 +1,7 @@
 ---
 id: frb2e9
 title: "Split CI into parallel jobs; the upgrade check as a matrix of releases"
-state: "doing"
+state: "done"
 type: chore
 priority: ""
 assignee: ["sabertooth"]
@@ -10,9 +10,8 @@ group: ""
 rank: "zzzzzzzv"
 created: 2026-11-27
 updated: 2026-11-27
-doing_since: "2026-11-27T12:54"
-stage: "active"
 model: "claude-opus"
+done_at: "2026-11-27T12:54"
 ---
 
 ## Goal
@@ -40,5 +39,7 @@ check 1: CI 45992276515 at 9e8f540: 21 jobs green (Tests, Tests PL/pgSQL planner
 check 2: Wall time 13m52s (11:39:33 to 11:53:25), down from about 86 min for the single job. Longest jobs: Restore (current/old_dumps) about 13 min; upgrade baselines 3-5 min each; Tests 5 min.
 
 
+Reflection (unanswered, 2026-11-27, sabertooth)
 ## History
 - 2026-11-27T12:54 todo -> doing/active (take)
+- 2026-11-27T12:54 doing/active -> done (done); was doing_since: 2026-11-27T12:54
