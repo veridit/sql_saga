@@ -41,7 +41,7 @@ First run 2026-11-27 (PGOPTIONS -c sql_saga.temporal_merge.use_plpgsql_planner=t
 check 1: 18fc10f: make test-plpgsql 152/152 pass (fast list minus PLPGSQL_NATIVE_ONLY=097), output in tmp/plpgsql
 check 2: f8b2e33: 126/132 (per-role cache), 133 (schema fingerprint in key), 164 (source keys cast to target type) red before on PL/pgSQL run, green after; 067 green; make test fast 153/153
 check 3: 18fc10f: separate job test-plpgsql in regression.yml; main job steps unchanged
-Reflection (unanswered, 2026-11-27, ram)
+Reflection (open, 2026-11-27, ram): nothing misled; the brief named each failing test, which made red/green direct
 ## History
 - 2026-11-27T02:25 todo -> doing/active (take)
 - 2026-11-27T02:45 doing/active -> done (done); was doing_since: 2026-11-27T02:25
