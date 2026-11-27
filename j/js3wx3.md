@@ -42,6 +42,7 @@ check 1: 18fc10f: make test-plpgsql 152/152 pass (fast list minus PLPGSQL_NATIVE
 check 2: f8b2e33: 126/132 (per-role cache), 133 (schema fingerprint in key), 164 (source keys cast to target type) red before on PL/pgSQL run, green after; 067 green; make test fast 153/153
 check 3: 18fc10f: separate job test-plpgsql in regression.yml; main job steps unchanged
 Reflection (open, 2026-11-27, ram): nothing misled; the brief named each failing test, which made red/green direct
+Pushed 58594bd, f8b2e33, 18fc10f. CI 45924407021 green: main job 1 h 26 min, new PL/pgSQL planner job 7 min 42 s, in parallel.
 ## History
 - 2026-11-27T02:25 todo -> doing/active (take)
 - 2026-11-27T02:45 doing/active -> done (done); was doing_since: 2026-11-27T02:25
