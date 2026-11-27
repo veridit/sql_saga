@@ -23,6 +23,8 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Planner-neutral: error CONTEXT names the planner function (native or PL/pgSQL), so it is not shown.
+\set SHOW_CONTEXT never
 BEGIN;
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
@@ -281,21 +283,6 @@ CALL sql_saga.temporal_merge(
     primary_identity_columns => '{id}'::text[]
 );
 ERROR:  Source table "source_boundary" must have either the range column "valid_range" or the component column "<NULL>".
-CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
-                target_table => temporal_merge.target_table::oid,
-                source_table => temporal_merge.source_table::oid,
-                mode => temporal_merge.mode::text,
-                era_name => temporal_merge.era_name::text,
-                identity_columns => v_identity_cols_discovered,
-                row_id_column => temporal_merge.row_id_column::text,
-                founding_id_column => temporal_merge.founding_id_column::text,
-                delete_mode => temporal_merge.delete_mode::text,
-                lookup_keys => v_natural_identity_keys_discovered,
-                ephemeral_columns => temporal_merge.ephemeral_columns,
-                p_log_trace => v_log_trace,
-                p_log_sql => v_log_sql
-            )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 336 at PERFORM
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Workaround: Use a view to compute the range from boundary columns ---'
 --- Workaround: Use a view to compute the range from boundary columns ---

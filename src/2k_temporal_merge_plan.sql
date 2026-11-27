@@ -66,6 +66,9 @@ DECLARE
     -- Other planner variables
     --
     v_plan_key_text TEXT;
+    v_plan_cache_name TEXT;
+    v_plan_cache_oid regclass;
+    v_schema_fingerprint TEXT;
     v_plan_sqls JSONB;
     v_source_table_ident TEXT;  -- Actual source table name
     v_causal_col name;
@@ -111,6 +114,9 @@ DECLARE
     -- carries: [{"name": key, "cols": [...]}]. A source row giving more than one of a set gets an ERROR of its own.
     v_xor_sets jsonb;
     v_xor_conflict_expr text;
+    -- A source without the era's temporal columns is reported after the column existence checks, in the native
+    -- planner's order, so both planners name the same first problem.
+    v_source_temporal_error text;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -123,11 +129,18 @@ BEGIN
                   HINT = 'Use delete_mode => ''NONE'', or a MERGE_ENTITY_* mode.';
     END IF;
 
-    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
-        CREATE TEMP TABLE temporal_merge_plan_cache (
-            cache_key TEXT PRIMARY KEY,
-            plan_sqls JSONB NOT NULL
-        );
+    -- The plan cache is one temp table per role: pg_temp.temporal_merge_plan_cache_<oid of current_user>. The SQL
+    -- it holds runs with the rights of current_user, so only that role may write it. A role switch in the session
+    -- (SET ROLE, SECURITY DEFINER) gets its own table, like the native per-backend cache keyed by role. A table of
+    -- that name owned by another role (made in advance to plant SQL: cache poisoning) is refused, never read.
+    v_plan_cache_name := 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_catalog.pg_roles AS r WHERE r.rolname = current_user);
+    v_plan_cache_oid := to_regclass(format('pg_temp.%I', v_plan_cache_name));
+    IF v_plan_cache_oid IS NULL THEN
+        EXECUTE format('CREATE TEMP TABLE %I (cache_key TEXT PRIMARY KEY, plan_sqls JSONB NOT NULL)', v_plan_cache_name);
+    ELSIF (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = v_plan_cache_oid)
+          IS DISTINCT FROM (SELECT r.oid FROM pg_catalog.pg_roles AS r WHERE r.rolname = current_user) THEN
+        RAISE EXCEPTION 'sql_saga: the plan cache pg_temp.% is not owned by the current role %', v_plan_cache_name, current_user
+            USING HINT = 'Drop that table; temporal_merge creates its own.';
     END IF;
 
     v_causal_col := COALESCE(founding_id_column, row_id_column);
@@ -343,7 +356,7 @@ BEGIN
 
         -- Must have at least a `valid_from` or `range` column.
         IF NOT v_source_has_valid_from AND NOT v_source_has_range_col THEN
-             RAISE EXCEPTION 'Source table "%" must have either the range column "%" or the component column "%".', sql_saga.__internal_display_name(source_table), v_range_col, v_valid_from_col;
+             v_source_temporal_error := format('Source table "%s" must have either the range column "%s" or the component column "%s".', sql_saga.__internal_display_name(source_table), v_range_col, COALESCE(v_valid_from_col::text, '<NULL>'));
         END IF;
 
         -- Build expressions for `_from` and `_until` components.
@@ -370,8 +383,8 @@ BEGIN
         END IF;
 
         -- Must have a source for `_until` if there's no range column.
-        IF NOT v_source_has_range_col AND v_until_expr IS NULL THEN
-            RAISE EXCEPTION 'Source table "%" must have a "%", "%", or "%" column.', sql_saga.__internal_display_name(source_table), v_range_col, v_valid_until_col, v_valid_to_col;
+        IF NOT v_source_has_range_col AND v_until_expr IS NULL AND v_source_temporal_error IS NULL THEN
+            v_source_temporal_error := format('Source table "%s" must have a "%s", "%s", or "%s" column.', sql_saga.__internal_display_name(source_table), v_range_col, v_valid_until_col, COALESCE(v_valid_to_col::text, '<NULL>'));
         END IF;
 
         -- Combine expressions, prioritizing the range column but falling back to components.
@@ -429,7 +442,38 @@ BEGIN
     -- between sessions: a shared cache of executable SQL lets one role make another role run SQL
     -- of its choosing (cache poisoning).
     -- The cache key includes source_table OID for within-session uniqueness.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    -- The schema fingerprint is the native planner's (native/src/fingerprint.rs), read on every call: source
+    -- columns, target name, columns, types, defaults, identity, generated, primary key, era provenance columns and
+    -- mutually exclusive key sets. DDL on either table, its ROLLBACK and DDL from other sessions change it, so a
+    -- stale plan is never run.
+    SELECT md5(jsonb_build_array(
+           (SELECT COALESCE(jsonb_agg(jsonb_build_array(a.attname, a.atttypid, a.atttypmod) ORDER BY a.attnum), '[]'::jsonb)
+              FROM pg_catalog.pg_attribute AS a
+              WHERE a.attrelid = source_table AND a.attnum > 0 AND NOT a.attisdropped),
+           (SELECT jsonb_build_array(n.nspname, c.relname)
+              FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+              WHERE c.oid = target_table),
+           (SELECT COALESCE(jsonb_agg(jsonb_build_array(a.attname, a.atttypid, a.atttypmod,
+                        a.attnotnull, a.attidentity, a.attgenerated, pg_catalog.pg_get_expr(d.adbin, d.adrelid)) ORDER BY a.attnum), '[]'::jsonb)
+              FROM pg_catalog.pg_attribute AS a
+              LEFT JOIN pg_catalog.pg_attrdef AS d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+              WHERE a.attrelid = target_table AND a.attnum > 0 AND NOT a.attisdropped),
+           (SELECT to_jsonb(i.indkey::int2[]) FROM pg_catalog.pg_index AS i
+              WHERE i.indrelid = target_table AND i.indisprimary),
+           (SELECT COALESCE(jsonb_agg(jsonb_build_array(e.era_name, e.provenance_columns) ORDER BY e.era_name), '[]'::jsonb)
+              FROM sql_saga.era AS e
+              JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
+              WHERE c.oid = target_table),
+           (SELECT COALESCE(jsonb_agg(jsonb_build_array(uk.unique_key_name, uk.mutually_exclusive_columns) ORDER BY uk.unique_key_name), '[]'::jsonb)
+              FROM sql_saga.unique_keys AS uk
+              JOIN pg_catalog.pg_class AS c ON c.relname = uk.table_name
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = uk.table_schema
+              WHERE c.oid = target_table AND uk.mutually_exclusive_columns IS NOT NULL)
+         )::text)
+    INTO v_schema_fingerprint;
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+        v_schema_fingerprint,
         target_table::oid,
         source_table::oid,
         identity_columns,
@@ -447,9 +491,9 @@ BEGIN
         source_table::regclass::text -- Add source table name to key to differentiate plans for different temp tables.
     );
 
-    SELECT plan_sqls INTO v_plan_sqls
-    FROM pg_temp.temporal_merge_plan_cache
-    WHERE cache_key = v_plan_key_text;
+    EXECUTE format('SELECT plan_sqls FROM pg_temp.%I WHERE cache_key = $1', v_plan_cache_name)
+    INTO v_plan_sqls
+    USING v_plan_key_text;
     
     IF v_plan_sqls IS NULL THEN -- Cache miss: PREPARE all sql's
         -- On cache miss, proceed with validation and planning.
@@ -509,6 +553,10 @@ BEGIN
                 END CASE;
             END LOOP;
         END; -- END consolidated column validation
+
+        IF v_source_temporal_error IS NOT NULL THEN
+            RAISE EXCEPTION '%', v_source_temporal_error;
+        END IF;
     
         IF v_causal_col IS NULL THEN
             RAISE EXCEPTION 'The causal identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
@@ -923,6 +971,10 @@ BEGIN
             v_non_temporal_lookup_cols_select_list := (
                 SELECT COALESCE(string_agg(
                     CASE
+                        -- A source key column of another type (e.g. text for a numeric key) is read as the target
+                        -- type, as the native planner and the lock step read it: '1' and '1.0' name one entity.
+                        WHEN sa.attname IS NOT NULL AND (sa.atttypid, sa.atttypmod) IS DISTINCT FROM (ta.atttypid, ta.atttypmod)
+                            THEN format('source_table.%1$I::%2$s AS %1$I', c.col, format_type(ta.atttypid, ta.atttypmod))
                         WHEN sa.attname IS NOT NULL THEN format('source_table.%I', c.col) -- Column exists in source
                         ELSE format('NULL::%s AS %I', format_type(ta.atttypid, ta.atttypmod), c.col) -- Column exists only in target
                     END,
@@ -2999,8 +3051,8 @@ BEGIN
             END;
     
             -- Store in the session cache with actual table names
-            INSERT INTO pg_temp.temporal_merge_plan_cache (cache_key, plan_sqls)
-            VALUES (v_plan_key_text, v_plan_sqls);
+            EXECUTE format('INSERT INTO pg_temp.%I (cache_key, plan_sqls) VALUES ($1, $2)', v_plan_cache_name)
+            USING v_plan_key_text, v_plan_sqls;
         END;
     END IF; -- IF v_plan_sqls IS NULL THEN -- Full cache miss
 

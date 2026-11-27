@@ -61,9 +61,8 @@ BEGIN
     );
 
     -- Find the plan SQLs for the source table of this scenario.
-    SELECT c.plan_sqls INTO plan_sqls
-    FROM pg_temp.temporal_merge_plan_cache c
-    WHERE c.cache_key LIKE '%' || 'tmpc.source1'::regclass::text;
+    EXECUTE format('SELECT c.plan_sqls FROM pg_temp.%I AS c WHERE c.cache_key LIKE $1', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_roles AS r WHERE r.rolname = current_user))
+    INTO plan_sqls USING '%' || 'tmpc.source1'::regclass::text;
 
     -- Clean up temp tables created by the first run so we can re-execute them.
     CALL sql_saga.temporal_merge_drop_temp_tables();
@@ -144,9 +143,8 @@ BEGIN
     );
 
     -- Find the plan SQLs for the source table of this scenario.
-    SELECT c.plan_sqls INTO plan_sqls
-    FROM pg_temp.temporal_merge_plan_cache c
-    WHERE c.cache_key LIKE '%' || 'tmpc.source_nk_not_null'::regclass::text;
+    EXECUTE format('SELECT c.plan_sqls FROM pg_temp.%I AS c WHERE c.cache_key LIKE $1', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_roles AS r WHERE r.rolname = current_user))
+    INTO plan_sqls USING '%' || 'tmpc.source_nk_not_null'::regclass::text;
 
     -- Clean up temp tables created by the first run so we can re-execute them.
     CALL sql_saga.temporal_merge_drop_temp_tables();
@@ -233,9 +231,8 @@ BEGIN
     );
 
     -- Find the plan SQLs for the source table of this scenario.
-    SELECT c.plan_sqls INTO plan_sqls
-    FROM pg_temp.temporal_merge_plan_cache c
-    WHERE c.cache_key LIKE '%' || 'tmpc.source_nk'::regclass::text;
+    EXECUTE format('SELECT c.plan_sqls FROM pg_temp.%I AS c WHERE c.cache_key LIKE $1', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_roles AS r WHERE r.rolname = current_user))
+    INTO plan_sqls USING '%' || 'tmpc.source_nk'::regclass::text;
 
     -- Clean up temp tables created by the first run so we can re-execute them.
     CALL sql_saga.temporal_merge_drop_temp_tables();

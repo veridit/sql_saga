@@ -46,7 +46,7 @@ BEGIN
     -- The plan cache only exists when the PL/pgSQL planner was used.
     -- The native Rust planner inserts directly into temporal_merge_plan
     -- and does not populate the plan cache. Skip gracefully in that case.
-    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
+    IF to_regclass(format('pg_temp.%I', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_roles AS r WHERE r.rolname = current_user))) IS NULL THEN
         -- Native Rust planner was used. Report cache stats instead of EXPLAIN replay.
         INSERT INTO benchmark_explain_output VALUES ('--- Native planner: EXPLAIN replay not available (no plan cache) ---');
 
@@ -83,9 +83,8 @@ BEGIN
     END IF;
 
     -- Find the plan SQLs for the source table of this scenario.
-    SELECT c.plan_sqls INTO plan_sqls
-    FROM pg_temp.temporal_merge_plan_cache c
-    WHERE c.cache_key LIKE '%' || p_source_table::text;
+    EXECUTE format('SELECT c.plan_sqls FROM pg_temp.%I AS c WHERE c.cache_key LIKE $1', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_roles AS r WHERE r.rolname = current_user))
+    INTO plan_sqls USING '%' || p_source_table::text;
 
     IF plan_sqls IS NULL THEN
         RAISE EXCEPTION 'Could not find plan in cache for source table %', p_source_table;

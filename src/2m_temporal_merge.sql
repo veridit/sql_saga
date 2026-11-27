@@ -446,7 +446,10 @@ COMMENT ON PROCEDURE sql_saga.temporal_merge IS 'Executes a set-based temporal m
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_drop_cache()
 LANGUAGE plpgsql AS $procedure$
 BEGIN
-    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_plan_cache; END IF;
+    -- The current role's plan cache (one per role, see temporal_merge_plan). Other roles' caches are theirs to drop.
+    IF to_regclass(format('pg_temp.%I', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_catalog.pg_roles AS r WHERE r.rolname = current_user))) IS NOT NULL THEN
+        EXECUTE format('DROP TABLE pg_temp.%I', 'temporal_merge_plan_cache_' || (SELECT r.oid FROM pg_catalog.pg_roles AS r WHERE r.rolname = current_user));
+    END IF;
     IF to_regclass('pg_temp.temporal_merge_index_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_index_cache; END IF;
     CALL sql_saga.temporal_merge_drop_temp_tables();
 END;

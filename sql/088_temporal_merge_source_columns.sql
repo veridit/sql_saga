@@ -1,4 +1,6 @@
 \i sql/include/test_setup.sql
+-- Planner-neutral: error CONTEXT names the planner function (native or PL/pgSQL), so it is not shown.
+\set SHOW_CONTEXT never
 -- temporal_merge validates its key columns before planning: an identity or natural-identity column missing from the
 -- source or from the target is refused with a message naming it (scenarios 1-4, expected errors in SAVEPOINT
 -- expect_error blocks), as is update_source_with_identity when the identity column is missing from the source

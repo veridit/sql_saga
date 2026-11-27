@@ -1,4 +1,6 @@
 \i sql/include/test_setup.sql
+-- Planner-neutral: error CONTEXT names the planner function (native or PL/pgSQL), so it is not shown.
+\set SHOW_CONTEXT never
 
 BEGIN;
 

@@ -23,6 +23,8 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Planner-neutral: error CONTEXT names the planner function (native or PL/pgSQL), so it is not shown.
+\set SHOW_CONTEXT never
 BEGIN;
 SAVEPOINT scenario_1;
 -- This test verifies that the planner correctly raises an error when a source table
@@ -73,21 +75,6 @@ CALL sql_saga.temporal_merge(
     row_id_column => 'row_id'
 );
 ERROR:  Source table "source_units" must have a "valid_range", "valid_until", or "valid_to" column.
-CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
-                target_table => temporal_merge.target_table::oid,
-                source_table => temporal_merge.source_table::oid,
-                mode => temporal_merge.mode::text,
-                era_name => temporal_merge.era_name::text,
-                identity_columns => v_identity_cols_discovered,
-                row_id_column => temporal_merge.row_id_column::text,
-                founding_id_column => temporal_merge.founding_id_column::text,
-                delete_mode => temporal_merge.delete_mode::text,
-                lookup_keys => v_natural_identity_keys_discovered,
-                ephemeral_columns => temporal_merge.ephemeral_columns,
-                p_log_trace => v_log_trace,
-                p_log_sql => v_log_sql
-            )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 336 at PERFORM
 \echo '## State of target table after merge (should be unchanged)'
 ## State of target table after merge (should be unchanged)
 -- This will also error because the transaction is aborted.
@@ -165,21 +152,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_UPSERT'
 );
 ERROR:  Source table "source_units" must have a "valid_range", "valid_until", or "<NULL>" column.
-CONTEXT:  SQL statement "SELECT sql_saga.temporal_merge_plan_native(
-                target_table => temporal_merge.target_table::oid,
-                source_table => temporal_merge.source_table::oid,
-                mode => temporal_merge.mode::text,
-                era_name => temporal_merge.era_name::text,
-                identity_columns => v_identity_cols_discovered,
-                row_id_column => temporal_merge.row_id_column::text,
-                founding_id_column => temporal_merge.founding_id_column::text,
-                delete_mode => temporal_merge.delete_mode::text,
-                lookup_keys => v_natural_identity_keys_discovered,
-                ephemeral_columns => temporal_merge.ephemeral_columns,
-                p_log_trace => v_log_trace,
-                p_log_sql => v_log_sql
-            )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 336 at PERFORM
 \echo '## State of target table after merge'
 ## State of target table after merge
 TABLE target_units ORDER BY id, valid_from;

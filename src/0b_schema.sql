@@ -408,7 +408,7 @@ COMMENT ON TYPE sql_saga.updatable_view_type IS 'Defines the semantic type of an
 CREATE TYPE sql_saga.trigger_action AS ENUM ('enable', 'disable');
 
 -- There is deliberately no persistent plan cache shared between sessions. The PL/pgSQL planner
--- caches generated plans per session only (pg_temp.temporal_merge_plan_cache): a shared cache of
+-- caches generated plans per session and role only (pg_temp.temporal_merge_plan_cache_<role oid>): a shared cache of
 -- executable SQL would let one role make another role run SQL of its choosing (cache poisoning).
 -- The default native planner caches in-process.
 COMMENT ON TYPE sql_saga.trigger_action IS 'Defines the action for the manage_temporal_fk_triggers procedure.';
