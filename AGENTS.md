@@ -74,6 +74,11 @@ make expected                           # Update expected/*.out from results/ (a
 make expected TESTS="test1 test2"      # Update specific tests only
 ```
 
+**PL/pgSQL planner run:** `make install && make test-plpgsql` (or `TESTS="001_install X"`) runs the fast tests on the
+PL/pgSQL planner, the test oracle, against the same `expected/*.out`, output in `tmp/plpgsql/` (its own CI job). A
+difference is a bug in one planner or noise to remove from the test (e.g. `\set SHOW_CONTEXT never` around errors),
+never a second expected file. The few native-only tests are listed with reasons in `PLPGSQL_NATIVE_ONLY` (Makefile).
+
 ### Running Single Test
 ```bash
 # Most tests require 001_install to run first

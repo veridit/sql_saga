@@ -162,6 +162,20 @@ test-native-symbols: all
 .PHONY: test setup_test_files
 test: setup_test_files installcheck
 
+# test-plpgsql runs the fast tests (or TESTS=...) on the PL/pgSQL planner, the test oracle, against the same
+# expected/*.out. Output goes to tmp/plpgsql/ (results/, regression.diffs), so the regular results/ is untouched.
+# Native-only tests, skipped here (keep this list short: make a test planner-neutral instead where possible):
+#   097_temporal_merge_cache: asserts the native planner's per-connection cache counters.
+PLPGSQL_NATIVE_ONLY = 097_temporal_merge_cache
+PLPGSQL_OUTDIR = tmp/plpgsql
+.PHONY: test-plpgsql
+test-plpgsql: setup_test_files
+	@mkdir -p $(PLPGSQL_OUTDIR)
+	PGOPTIONS="-c sql_saga.temporal_merge.use_plpgsql_planner=true" $(pg_regress_installcheck) $(REGRESS_OPTS) \
+		--outputdir=$(PLPGSQL_OUTDIR) \
+		$(filter-out $(PLPGSQL_NATIVE_ONLY),$(if $(TESTS),$(patsubst sql/%,%,$(TESTS)),$(REGRESS_FAST_LIST))) \
+		|| { cat $(PLPGSQL_OUTDIR)/regression.diffs 2>/dev/null | head -n 200; exit 1; }
+
 
 
 # expected updates the .out files for the last run test suite.

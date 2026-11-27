@@ -97,3 +97,52 @@ jobs:
         run: |
           if [ -f regression.diffs ]; then cat regression.diffs; fi
           if [ -f isolation/output/regression.diffs ]; then cat isolation/output/regression.diffs; fi
+
+  test-plpgsql:
+    # The PL/pgSQL planner is the test oracle: the fast regression tests run on it against the same expected output,
+    # in a job of its own so the main job's time is unchanged (make test-plpgsql, native-only tests skipped).
+    name: PostgreSQL 18, PL/pgSQL planner
+    runs-on: ubuntu-24.04
+
+    env:
+      PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
+
+    steps:
+      - name: Install PostgreSQL 18 from PGDG
+        run: |
+          sudo apt-get install -y postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3
+
+      - name: Start PostgreSQL 18
+        run: |
+          sudo pg_lsclusters -h | awk '{print $1, $2}' | while read ver name; do sudo pg_dropcluster --stop "$ver" "$name" 2>/dev/null || true; done
+          sudo pg_createcluster 18 main --start --port 5432
+          sudo -u postgres createuser -s $(whoami)
+
+      - name: Add pg_config to PATH
+        run: echo "/usr/lib/postgresql/18/bin" >> $GITHUB_PATH
+
+      - name: Check out the repo
+        uses: actions/checkout@v5
+
+      - name: Allow runner to install extensions
+        run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+
+      - name: Build and install sql_saga
+        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Run regression tests on the PL/pgSQL planner (excluding benchmarks and native-only tests)
+        run: make test-plpgsql PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Show regression diffs on failure
+        if: failure()
+        run: if [ -f tmp/plpgsql/regression.diffs ]; then cat tmp/plpgsql/regression.diffs; fi
