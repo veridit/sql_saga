@@ -1,7 +1,7 @@
 ---
 id: 6qhssr
 title: "Decide whether to retire the PL/pgSQL planner"
-state: "doing"
+state: "done"
 type: spike
 priority: ""
 assignee: ["sabertooth"]
@@ -10,11 +10,10 @@ group: ""
 rank: "zzzzzzzh"
 created: 2026-11-26
 updated: 2026-11-26
-doing_since: "2026-11-27T01:36"
-stage: "active"
 model: "claude-opus"
 branch: "master"
 worktree: "/Users/jhf/ssb/.jcode/scratch/saga_master"
+done_at: "2026-11-27T01:36"
 ---
 
 ## Goal
@@ -39,5 +38,7 @@ Situation: src/2k_temporal_merge_plan.sql is 3,091 lines of PL/pgSQL beside 5,85
 
 Owner's decision 2026-11-27: (a) keep the PL/pgSQL planner as an internal test oracle; the native planner is the reference and the only one in production. Cost measured: the 8 comparison tests take about 29 s of the 220 s fast suite; each behaviour change is written in both planners (y7hbe9: 22 lines).
 check 1: owner chose (a), 2026-11-27, see note
+Reflection (unanswered, 2026-11-27, sabertooth)
 ## History
 - 2026-11-27T01:36 todo -> doing/active (take)
+- 2026-11-27T01:36 doing/active -> done (done); was doing_since: 2026-11-27T01:36
