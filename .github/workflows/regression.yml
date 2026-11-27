@@ -1,53 +1,27 @@
 name: make installcheck
 on: [push, pull_request, workflow_dispatch]
 
+# Independent checks run as parallel jobs (hug frb2e9): the regular tests, the same tests on the PL/pgSQL planner, the
+# restore round trips in two groups, the candidate's artifact gate, and one upgrade job per released baseline. Every
+# job sets up its own disposable PostgreSQL 18 (.github/actions/setup-sql-saga). Benchmarks are not run in CI: shared
+# runners are too noisy to compare timings, and they need server settings (devops/benchmark_settings.sh).
+
+env:
+  PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
+
 jobs:
   test:
-    name: PostgreSQL 18 + Rust
+    name: Tests
     runs-on: ubuntu-24.04
-
-    env:
-      PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
-
     steps:
-      - name: Install PostgreSQL 18 from PGDG
-        run: |
-          sudo apt-get install -y postgresql-common ca-certificates
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3 acl
-
-      - name: Start PostgreSQL 18
-        run: |
-          sudo pg_lsclusters -h | awk '{print $1, $2}' | while read ver name; do sudo pg_dropcluster --stop "$ver" "$name" 2>/dev/null || true; done
-          sudo pg_createcluster 18 main --start --port 5432
-          sudo -u postgres createuser -s $(whoami)
-
-      - name: Add pg_config to PATH
-        run: echo "/usr/lib/postgresql/18/bin" >> $GITHUB_PATH
-
       - name: Check out the repo
         uses: actions/checkout@v5
-        with:
-          # The upgrade matrix builds released v1.0 through v1.4 tags.
-          fetch-depth: 0
-          fetch-tags: true
 
-      - name: Allow runner to install extensions
-        run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native -> target
+      - name: Set up PostgreSQL 18 and sql_saga
+        uses: ./.github/actions/setup-sql-saga
 
       - name: Test the update-step generator and the released steps
         run: make test-generator PG_CONFIG=${{ env.PG_CONFIG }}
-
-      - name: Build and install sql_saga (C library, internal native library, SQL)
-        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Native unit tests
         run: make test-native PG_CONFIG=${{ env.PG_CONFIG }}
@@ -65,17 +39,6 @@ jobs:
 
       - name: Run isolation tests (temporal_merge under concurrent writers)
         run: make test-isolation PG_CONFIG=${{ env.PG_CONFIG }}
-
-      - name: Run pg_dump/pg_restore round trips
-        # Serial, single-transaction and --no-owner restores must succeed with identical ACLs,
-        # policies and tenant isolation. Parallel restore is reported as a known PostgreSQL
-        # limitation and does not fail the job (see doc/decision-log.md).
-        run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
-
-      - name: Run the upgrade matrix from every released version
-        # Builds every release tag privately, updates each through the chain of steps to the candidate and compares
-        # with a fresh install of it, including ACLs and generated objects (devops/upgrade_test.sh).
-        run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Run concurrent function-attribution isolation test
         run: make test-function-attribution-concurrency PG_CONFIG=${{ env.PG_CONFIG }}
@@ -99,46 +62,16 @@ jobs:
           if [ -f isolation/output/regression.diffs ]; then cat isolation/output/regression.diffs; fi
 
   test-plpgsql:
-    # The PL/pgSQL planner is the test oracle: the fast regression tests run on it against the same expected output,
-    # in a job of its own so the main job's time is unchanged (make test-plpgsql, native-only tests skipped).
-    name: PostgreSQL 18, PL/pgSQL planner
+    # The PL/pgSQL planner is the test oracle: the fast regression tests run on it against the same expected output
+    # (make test-plpgsql, native-only tests skipped).
+    name: Tests, PL/pgSQL planner
     runs-on: ubuntu-24.04
-
-    env:
-      PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
-
     steps:
-      - name: Install PostgreSQL 18 from PGDG
-        run: |
-          sudo apt-get install -y postgresql-common ca-certificates
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3
-
-      - name: Start PostgreSQL 18
-        run: |
-          sudo pg_lsclusters -h | awk '{print $1, $2}' | while read ver name; do sudo pg_dropcluster --stop "$ver" "$name" 2>/dev/null || true; done
-          sudo pg_createcluster 18 main --start --port 5432
-          sudo -u postgres createuser -s $(whoami)
-
-      - name: Add pg_config to PATH
-        run: echo "/usr/lib/postgresql/18/bin" >> $GITHUB_PATH
-
       - name: Check out the repo
         uses: actions/checkout@v5
 
-      - name: Allow runner to install extensions
-        run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: native -> target
-
-      - name: Build and install sql_saga
-        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
+      - name: Set up PostgreSQL 18 and sql_saga
+        uses: ./.github/actions/setup-sql-saga
 
       - name: Run regression tests on the PL/pgSQL planner (excluding benchmarks and native-only tests)
         run: make test-plpgsql PG_CONFIG=${{ env.PG_CONFIG }}
@@ -146,3 +79,78 @@ jobs:
       - name: Show regression diffs on failure
         if: failure()
         run: if [ -f tmp/plpgsql/regression.diffs ]; then cat tmp/plpgsql/regression.diffs; fi
+
+  restore:
+    # Serial, single-transaction and --no-owner restores must succeed with identical ACLs, policies and tenant
+    # isolation. Parallel restore is reported as a known PostgreSQL limitation and does not fail the job (see
+    # doc/decision-log.md). Two groups: the cases of this build, and dumps made by released builds.
+    name: Restore (${{ matrix.cases }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cases: [current, old_dumps]
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+        with:
+          # The old-dump cases build released tags.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up PostgreSQL 18 and sql_saga
+        uses: ./.github/actions/setup-sql-saga
+
+      - name: Run pg_dump/pg_restore round trips
+        run: make test-restore CASES=${{ matrix.cases }} PG_CONFIG=${{ env.PG_CONFIG }}
+
+  upgrade-artifacts:
+    # The candidate's artifact gate (released steps byte-identical, the chain documented) and the extension-script
+    # section, once; the upgrade paths run in the matrix below. Also lists the baselines for that matrix, from
+    # devops/upgrade_test.sh, so a new release cannot be left out by hand.
+    name: Upgrade artifacts
+    runs-on: ubuntu-24.04
+    outputs:
+      baselines: ${{ steps.list.outputs.baselines }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: List the released baselines
+        id: list
+        run: echo "baselines=$(PG_CONFIG=true UPGRADE_ONLY=list_baselines devops/upgrade_test.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PostgreSQL 18 and sql_saga
+        uses: ./.github/actions/setup-sql-saga
+
+      - name: Candidate artifact gate
+        run: UPGRADE_ONLY=artifacts make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Extension scripts that change managed tables
+        run: UPGRADE_ONLY=extension_scripts make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
+
+  upgrade:
+    # Builds the released tag privately, updates its database through the chain of steps to the candidate and compares
+    # with a fresh install, including ACLs and generated objects (devops/upgrade_test.sh), one baseline per job.
+    name: Upgrade from ${{ matrix.baseline }}
+    needs: upgrade-artifacts
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        baseline: ${{ fromJSON(needs.upgrade-artifacts.outputs.baselines) }}
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set up PostgreSQL 18 and sql_saga
+        uses: ./.github/actions/setup-sql-saga
+
+      - name: Upgrade path from ${{ matrix.baseline }}
+        run: UPGRADE_ONLY_BASELINES=${{ matrix.baseline }} make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}

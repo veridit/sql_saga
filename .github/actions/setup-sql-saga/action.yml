@@ -1,0 +1,44 @@
+name: Set up PostgreSQL 18 and sql_saga
+description: >
+  Installs PostgreSQL 18 from PGDG on a fresh cluster, the Rust toolchain, and builds and installs sql_saga
+  (C library, internal native library, SQL). Shared by every job of the regression workflow.
+inputs:
+  pg-config:
+    description: Path of pg_config
+    default: /usr/lib/postgresql/18/bin/pg_config
+runs:
+  using: composite
+  steps:
+    - name: Install PostgreSQL 18 from PGDG
+      shell: bash
+      run: |
+        sudo apt-get install -y postgresql-common ca-certificates
+        sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+        sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config python3 acl
+
+    - name: Start PostgreSQL 18
+      shell: bash
+      run: |
+        sudo pg_lsclusters -h | awk '{print $1, $2}' | while read ver name; do sudo pg_dropcluster --stop "$ver" "$name" 2>/dev/null || true; done
+        sudo pg_createcluster 18 main --start --port 5432
+        sudo -u postgres createuser -s $(whoami)
+
+    - name: Add pg_config to PATH
+      shell: bash
+      run: echo "$(dirname ${{ inputs.pg-config }})" >> $GITHUB_PATH
+
+    - name: Allow runner to install extensions
+      shell: bash
+      run: sudo chown -R $(whoami) $(${{ inputs.pg-config }} --pkglibdir) $(${{ inputs.pg-config }} --sharedir)/extension
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: native -> target
+
+    - name: Build and install sql_saga (C library, internal native library, SQL)
+      shell: bash
+      run: make PG_CONFIG=${{ inputs.pg-config }} && make install PG_CONFIG=${{ inputs.pg-config }}

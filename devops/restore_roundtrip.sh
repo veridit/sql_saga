@@ -1101,6 +1101,11 @@ select_cases() {
     local c
     CASES=()
     [ $# -eq 0 ] && set -- "${ALL_CASES[@]}"
+    # Two groups CI runs as parallel jobs: current (the cases of this build) and old_dumps (dumps of released builds).
+    case "$*" in
+        current) set -- $(printf '%s\n' "${ALL_CASES[@]}" | grep -v '^old_dump_') ;;
+        old_dumps) set -- $(printf '%s\n' "${ALL_CASES[@]}" | grep '^old_dump_') ;;
+    esac
     for c in "$@"; do
         if [ "${SPLIT_ONLY:-0}" = 1 ] && ! is_split_case "$c"; then
             SKIPPED+=("$c (SPLIT_ONLY=1: not in SPLIT_CASES)")

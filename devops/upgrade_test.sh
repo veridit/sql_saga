@@ -27,6 +27,8 @@
 #   libpq (PGHOST, PGPORT, PGUSER, ...)  needs a superuser (extension_control_path is superuser-only)
 #   UPGRADE_NEW_VERSION        default: the repository's default_version, the candidate version every baseline must reach
 #   UPGRADE_ONLY_BASELINES     optional space-separated list of baseline versions to run (default: all)
+#   UPGRADE_ONLY               artifacts: the candidate artifact gate only; extension_scripts: that section only;
+#                              list_baselines: print the baseline versions as a JSON array (the CI matrix) and exit
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
@@ -87,6 +89,13 @@ baseline_specs() {  # the released baselines older than NEW_VERSION
         echo "$spec"
     done
 }
+# The baseline versions as a JSON array, for CI to run one upgrade path per job (UPGRADE_ONLY_BASELINES).
+if [ "${UPGRADE_ONLY:-}" = list_baselines ]; then
+    printf '['; sep=''
+    for spec in $(baseline_specs); do v=${spec#*|}; printf '%s"%s"' "$sep" "${v%%|*}"; sep=','; done
+    printf ']\n'
+    exit 0
+fi
 # The public entry point first verifies the complete candidate artifact set, then runs the same
 # assertion suite independently from each released baseline. Keeping each path in a child process
 # gives it a unique database/role prefix and cleanup trap without requiring bash newer than 3.2.
@@ -317,8 +326,11 @@ SQL
     if [ "${UPGRADE_ONLY:-}" = artifacts ]; then exit 0; fi
 
     overall=0
-    extension_scripts_section
-    case $? in 0) ;; 1) overall=1 ;; *) exit 2 ;; esac
+    # The extension-script section needs no baseline: run it in the full run, not in each per-baseline CI job.
+    if [ -z "${UPGRADE_ONLY_BASELINES:-}" ]; then
+        extension_scripts_section
+        case $? in 0) ;; 1) overall=1 ;; *) exit 2 ;; esac
+    fi
     for spec in $(baseline_specs); do
         tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
         echo
