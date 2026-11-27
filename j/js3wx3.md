@@ -33,12 +33,13 @@ First run 2026-11-27 (PGOPTIONS -c sql_saga.temporal_merge.use_plpgsql_planner=t
 
 ## Acceptance
 - [x] make test-plpgsql passes, benchmarks excluded, native-only tests skipped by a written list
-- [ ] each of the PL/pgSQL bugs (2)-(5) fixed; make test fast still passes
+- [x] each of the PL/pgSQL bugs (2)-(5) fixed; make test fast still passes
 - [ ] CI runs it as a separate job; the main job's time is unchanged
 
 ## Notes
 
 
 check 1: 18fc10f: make test-plpgsql 152/152 pass (fast list minus PLPGSQL_NATIVE_ONLY=097), output in tmp/plpgsql
+check 2: f8b2e33: 126/132 (per-role cache), 133 (schema fingerprint in key), 164 (source keys cast to target type) red before on PL/pgSQL run, green after; 067 green; make test fast 153/153
 ## History
 - 2026-11-27T02:25 todo -> doing/active (take)
