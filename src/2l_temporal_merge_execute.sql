@@ -1337,7 +1337,7 @@ BEGIN
 
             PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_execute.source_table AND attname = temporal_merge_execute.feedback_status_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
             IF NOT FOUND THEN
-                RAISE EXCEPTION 'feedback_status_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge_execute.feedback_status_column, temporal_merge_execute.source_table::text;
+                RAISE EXCEPTION 'feedback_status_column "%" does not exist in source table % or is not of type jsonb', temporal_merge_execute.feedback_status_column, temporal_merge_execute.source_table::text;
             END IF;
 
             v_feedback_set_clause := v_feedback_set_clause || format(
@@ -1354,7 +1354,7 @@ BEGIN
 
             PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_execute.source_table AND attname = temporal_merge_execute.feedback_error_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
             IF NOT FOUND THEN
-                RAISE EXCEPTION 'feedback_error_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge_execute.feedback_error_column, temporal_merge_execute.source_table::text;
+                RAISE EXCEPTION 'feedback_error_column "%" does not exist in source table % or is not of type jsonb', temporal_merge_execute.feedback_error_column, temporal_merge_execute.source_table::text;
             END IF;
 
             IF v_feedback_set_clause <> '' THEN

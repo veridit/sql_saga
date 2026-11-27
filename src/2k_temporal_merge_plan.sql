@@ -497,9 +497,9 @@ BEGIN
                 -- Raise specific error message based on column type
                 CASE v_missing.col_type
                     WHEN 'row_id_column' THEN
-                        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %', v_missing.col_name, v_missing.tbl_name;
                     WHEN 'founding_id_column' THEN
-                        RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                        RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %', v_missing.col_name, v_missing.tbl_name;
                     WHEN 'identity_column (target)' THEN
                         RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
                     WHEN 'identity_column (source)' THEN
@@ -522,7 +522,7 @@ BEGIN
           AND NOT attisdropped AND attnum > 0;
           
         IF v_causal_column_type IS NULL THEN
-            RAISE EXCEPTION 'Causal column "%" does not exist in source table %s', v_causal_col, source_table::text;
+            RAISE EXCEPTION 'Causal column "%" does not exist in source table %', v_causal_col, source_table::text;
         END IF;
         IF v_causal_col = ANY(v_lookup_columns) THEN
             RAISE EXCEPTION 'The causal column (%) cannot be one of the natural identity columns (%)', v_causal_col, v_lookup_columns;
