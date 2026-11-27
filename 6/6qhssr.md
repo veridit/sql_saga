@@ -1,15 +1,20 @@
 ---
 id: 6qhssr
 title: "Decide whether to retire the PL/pgSQL planner"
-state: todo
+state: "doing"
 type: spike
 priority: ""
-assignee: []
+assignee: ["sabertooth"]
 labels: []
 group: ""
 rank: "zzzzzzzh"
 created: 2026-11-26
 updated: 2026-11-26
+doing_since: "2026-11-27T01:36"
+stage: "active"
+model: "claude-opus"
+branch: "master"
+worktree: "/Users/jhf/ssb/.jcode/scratch/saga_master"
 ---
 
 ## Goal
@@ -30,3 +35,7 @@ Situation: src/2k_temporal_merge_plan.sql is 3,091 lines of PL/pgSQL beside 5,85
 - [ ] The owner has chosen (a) or (b), recorded in a note
 
 ## Notes
+
+
+## History
+- 2026-11-27T01:36 todo -> doing/active (take)
